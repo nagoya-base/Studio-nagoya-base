@@ -42,6 +42,13 @@ var SwitchBotAccessCore = (function () {
   /** 追加の判断なしに「この record はもう何も送らない」状態。 */
   var TERMINAL = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED, STATE.FAILED, STATE.ABANDONED];
 
+  /**
+   * 早期回収（Issue #912）。実鍵の不在が確認済みの状態だけ（FAILED/ABANDONED は不在確認の証拠が無いので対象外＝従来の30日）。
+   * 回収は「終了後の猶予」を置く。猶予は遅延Webhook・直前の通知/配送の確定を待つ最短の保持（既定は1時間周期の sweep 1周期分）。
+   */
+  var EARLY_PURGE_STATES = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED];
+  var EARLY_PURGE_GRACE_SEC = 3600;
+
   var EVIDENCE = {
     WEBHOOK_SUCCESS: 'WEBHOOK_SUCCESS',
     KEYLIST_CONFIRMED: 'KEYLIST_CONFIRMED',
@@ -1045,15 +1052,52 @@ var SwitchBotAccessCore = (function () {
         } else {
           alert(rec, 'EXPIRED_CHECK_FAILED');
         }
-      } else if (TERMINAL.indexOf(rec.state) !== -1 && rec.updatedAt && now - rec.updatedAt > retention) {
-        deps.store.del(k);
-        deps.store.del(dlvKey(rec.id));
-        deps.secrets.del('SECRET_' + rec.id);
-        // 通知の重複抑止マーカーも破棄（ID 再利用時に新しい操作の通知を抑止しない）
-        deps.store.keys().forEach(function (ak) {
-          if (ak.indexOf('ALERT_' + rec.id + '_') === 0) deps.store.del(ak);
-        });
+      } else if (TERMINAL.indexOf(rec.state) !== -1 && rec.updatedAt) {
+        var early = now - rec.updatedAt <= retention && earlyPurgeable(rec, now);
+        if (now - rec.updatedAt > retention || early) {
+          deps.store.del(k);
+          deps.store.del(dlvKey(rec.id));
+          deps.secrets.del('SECRET_' + rec.id);
+          // 通知の重複抑止マーカーも破棄（ID 再利用時に新しい操作の通知を抑止しない）
+          deps.store.keys().forEach(function (ak) {
+            if (ak.indexOf('ALERT_' + rec.id + '_') === 0) deps.store.del(ak);
+          });
+          if (early) {
+            // この操作に紐づく Webhook 記録も一緒に整理する（参照元の OP を消した後は誰も読まない。遅延到着分は通常の期限回収に任せる）
+            if (rec.commandId) deps.store.del(evtKey(normDev(rec.deviceId), 'createKey', rec.commandId));
+            if (rec.deleteCommandId) deps.store.del(evtKey(normDev(rec.deviceId), 'deleteKey', rec.deleteCommandId));
+          }
+        }
       }
+    }
+
+    /** 配送がもう動かない状態か。削除済みの操作は再配送されない（配送は ISSUED_CONFIRMED のみ）。送信中・結果不明は管理者判断が要るため未完了。 */
+    function deliverySettled(recId) {
+      var d = load(dlvKey(recId));
+      if (!d) return true;
+      return d.state === DLV.DELIVERED || d.state === DLV.SUPPRESSED || d.state === DLV.NOT_SENT;
+    }
+
+    /**
+     * 30日を待たず回収してよいか（Issue #912）。すべて満たすときだけ true。
+     *  - この操作が、実鍵の不在確認済みの終端（DELETED_CONFIRMED / ALREADY_ABSENT / ARCHIVED_EXPIRED）で、猶予を過ぎている
+     *  - 同じ予約の全ての操作も同じ状態・猶予経過・配送完了（変更・再発行・未削除の旧鍵・配送中が1つでもあれば全体を保持。
+     *    変更案内の文面分岐 deliveryKind が過去の操作を参照するため、残りが動いている間は消さない）
+     *  - 予約が、取消・非対象、または利用可能時間の終了後（有効な予約の途中で管理者が削除した鍵などは、再発行判断を30日側に残す）
+     * ロック（予約・Keypad）下で呼ぶ。
+     */
+    function earlyPurgeable(rec, now) {
+      if (EARLY_PURGE_STATES.indexOf(rec.state) === -1) return false;
+      var idx = bookingIndex(rec.bookingId);
+      var head = idx.head;
+      if (!head || idx.ops.indexOf(rec.id) === -1) return false;
+      if (head.desired === true && !(typeof head.endSec === 'number' && head.endSec <= now)) return false;
+      return idx.ops.every(function (id) {
+        var r = load(recKey(id));
+        if (!r) return true; // 回収済み
+        return EARLY_PURGE_STATES.indexOf(r.state) !== -1 && typeof r.updatedAt === 'number' &&
+          now - r.updatedAt >= EARLY_PURGE_GRACE_SEC && deliverySettled(r.id);
+      });
     }
 
     // ---- 管理者復旧（フラグ OFF でも使える） ----
@@ -1168,7 +1212,7 @@ var SwitchBotAccessCore = (function () {
   }
 
   return {
-    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
+    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL, EARLY_PURGE_GRACE_SEC: EARLY_PURGE_GRACE_SEC, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
     maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad, validatePasscode: validatePasscode,
     evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued, classifyId: classifyId,
     parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine

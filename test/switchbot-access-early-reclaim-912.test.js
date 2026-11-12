@@ -1,0 +1,213 @@
+/*
+ * Issue #912: 実鍵の不在が確認できた操作履歴を、30日を待たず次の定期sweepで回収する。
+ * 実API・実機には接続しない。予約ID・端末ID・宛先などの実データは使わない（すべてダミー）。
+ */
+'use strict';
+
+var test = require('node:test');
+var assert = require('node:assert');
+var crypto = require('node:crypto');
+var H = require('./helpers/switchbot-access-world');
+var C = H.Core, Infra = H.Infra, S = C.STATE;
+
+var DEV = 'AAAAAAAAAAAA37DD';
+var NOW = C.jstToEpochSec('2030-01-10', '13:00');
+var HOUR = 3600, DAY = 86400;
+
+function mem(init) {
+  var m = Object.assign({}, init || {});
+  return {
+    m: m,
+    get: function (k) { return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },
+    set: function (k, v) { m[k] = String(v); },
+    del: function (k) { delete m[k]; },
+    keys: function () { return Object.keys(m); }
+  };
+}
+function engineOf(store, secrets, now) {
+  return C.createEngine({
+    store: store, secrets: secrets,
+    lock: function (keys, fn) { return fn(); },
+    api: { listDevices: function () { throw new Error('NO_API_IN_THIS_TEST'); } },
+    notifyAdmin: function () {}, deliverCode: function () {}, deliveryGate: function () { return { ok: true }; },
+    sha256Hex: function (s) { return crypto.createHash('sha256').update(s).digest('hex'); },
+    randomInt: function (n) { return crypto.randomInt(n); },
+    nowSec: function () { return now.v; }
+  }, { enabled: true, commercialUseApproved: true, eligiblePaymentStatuses: ['paid'], eligibleBrands: ['studio'], graceBeforeSec: 600, graceAfterSec: 900,
+       keypads: [{ brand: 'studio', facility: 'main', room: 'A', deviceId: DEV }] });
+}
+function opRec(bk, rev, state, ageSec, over) {
+  var id = bk + ':' + rev + ':****37DD:ISSUE#1';
+  return Object.assign({ id: id, bookingId: bk, revision: rev, op: 'ISSUE', deviceId: DEV, name: 'SNB-' + bk, state: state, updatedAt: NOW - ageSec,
+    commandId: 'C-' + bk + rev, deleteCommandId: 'D-' + bk + rev, endSec: NOW - 2 * DAY, startSec: NOW - 3 * DAY, evidence: [], history: [] }, over || {});
+}
+/** 1予約ぶんの状態を作る。ops は [{rev,state,ageSec,over,dlv}]。head は索引の最新予約状態。 */
+function seed(store, secrets, bk, head, ops, touchedAgo) {
+  var ids = [];
+  ops.forEach(function (o) {
+    var r = opRec(bk, o.rev, o.state, o.ageSec, o.over);
+    ids.push(r.id);
+    store.set('OP_' + r.id, JSON.stringify(r));
+    secrets.set('SECRET_' + r.id, 'x');
+    store.set('ALERT_' + r.id + '_DELIVERY_UNKNOWN', '1');
+    store.set('EVT_' + C.normDev(DEV) + '_createKey_' + r.commandId, JSON.stringify({ receivedAtSec: NOW - o.ageSec }));
+    store.set('EVT_' + C.normDev(DEV) + '_deleteKey_' + r.deleteCommandId, JSON.stringify({ receivedAtSec: NOW - o.ageSec }));
+    if (o.dlv) store.set('DLV_' + r.id, JSON.stringify({ id: 'DLV_' + r.id, opId: r.id, bookingId: bk, state: o.dlv, attempts: 1, history: [] }));
+  });
+  store.set('BK_' + bk, JSON.stringify({ bookingId: bk, head: head, ops: ids, touchedAt: NOW - (touchedAgo === undefined ? 3 * HOUR : touchedAgo) }));
+  store.set('TRK_' + bk, JSON.stringify({ revision: 1, seenAt: NOW - 3 * HOUR }));
+  return ids;
+}
+function opKeys(store, bk) { return store.keys().filter(function (k) { return k.indexOf('OP_' + bk + ':') === 0; }); }
+function relatedKeys(store, bk) { return store.keys().filter(function (k) { return k.indexOf(bk) !== -1; }); }
+
+var ENDED = { revision: 1, cancelled: false, desired: true, startSec: NOW - 3 * DAY, endSec: NOW - 2 * DAY, deviceId: DEV };
+var CANCELLED = { revision: 2, cancelled: true, desired: false, startSec: null, endSec: null, deviceId: null };
+
+function run(store, secrets, now) {
+  var e = engineOf(store, secrets, now);
+  e.sweep();
+  var rep = {};
+  var removed = Infra.garbageCollect(store, { keys: function () { return secrets.keys(); }, del: function (k) { secrets.del(k); } }, now.v, H.baseCfg(), rep);
+  return { removed: removed, rep: rep };
+}
+
+test('削除確認済み（取消後の DELETED_CONFIRMED）は、猶予後の次のsweepでOP・配送・秘密・通知・Webhook記録まで回収される', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  seed(st, se, 'BK-A', CANCELLED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 2 * HOUR, dlv: 'DELIVERED' }]);
+  seed(st, se, 'BK-B', CANCELLED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 2 * HOUR, dlv: 'DELIVERED' }]);
+  st.set('ACCESS_ENABLED', 'true'); st.set('META_ENV', 'production'); st.set('HB_SYNC', '{"at":1}');
+  run(st, se, now);
+  assert.deepStrictEqual(opKeys(st, 'BK-A'), []);
+  assert.deepStrictEqual(st.keys().filter(function (k) { return /^(DLV_|ALERT_|EVT_)/.test(k) && k.indexOf('BK-A') !== -1; }), []);
+  assert.deepStrictEqual(se.keys().filter(function (k) { return k.indexOf('BK-A') !== -1; }), [], '秘密も破棄');
+  // 取消の head（AFTER_CANCEL の根拠）は30日側に残す
+  assert.ok(st.get('BK_BK-A') !== null, '取消予約のBK索引（head）は残る');
+  // 常設キーは変更されない
+  assert.strictEqual(st.get('ACCESS_ENABLED'), 'true');
+  assert.strictEqual(st.get('META_ENV'), 'production');
+  assert.ok(st.get('HB_SYNC') !== null);
+});
+
+test('猶予（1時間）未満は回収せず、ちょうど猶予を過ぎたら回収する', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  seed(st, se, 'BK-A', CANCELLED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: C.EARLY_PURGE_GRACE_SEC - 1, dlv: 'DELIVERED' }]);
+  run(st, se, now);
+  assert.strictEqual(opKeys(st, 'BK-A').length, 1, '猶予未満は保持（遅延Webhook・直前の確定を待つ）');
+  now.v += 1;
+  run(st, se, now);
+  assert.strictEqual(opKeys(st, 'BK-A').length, 0);
+});
+
+test('同じ予約に未解決・未削除・結果不明の操作が1つでもあれば、古い削除済み操作も保持する（変更・再発行・配送の根拠）', function () {
+  ['ISSUED_CONFIRMED', 'UNKNOWN', 'DELETE_SENT', 'DELETE_PENDING', 'SENT_WAIT_WEBHOOK', 'PLANNED', 'EXPIRED', 'FAILED', 'ABANDONED'].forEach(function (sib) {
+    var st = mem(), se = mem(), now = { v: NOW };
+    seed(st, se, 'BK-A', { revision: 2, cancelled: false, desired: true, startSec: NOW + DAY, endSec: NOW + 2 * DAY, deviceId: DEV }, [
+      { rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * HOUR, dlv: 'DELIVERED' },
+      { rev: 2, state: sib, ageSec: 5 * HOUR }
+    ]);
+    // 兄弟の操作が未完了/未確認でも、取消済みでも同じ（猶予後・終了後に限らず、全てが安全な終端になるまで残す）
+    st.set('BK_BK-A', JSON.stringify(Object.assign(JSON.parse(st.get('BK_BK-A')), { head: CANCELLED })));
+    run(st, se, now);
+    assert.strictEqual(opKeys(st, 'BK-A').length, 2, sib + ' が残る間は旧操作も保持');
+  });
+});
+
+test('有効な予約の途中（利用可能時間の終了前）で削除された鍵は早期回収しない（再発行判断を残す）。終了後なら回収する', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  seed(st, se, 'BK-A', { revision: 1, cancelled: false, desired: true, startSec: NOW - DAY, endSec: NOW + DAY, deviceId: DEV },
+    [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * HOUR, dlv: 'DELIVERED' }]);
+  run(st, se, now);
+  assert.strictEqual(opKeys(st, 'BK-A').length, 1);
+  now.v += 2 * DAY; // 利用可能時間の終了後
+  run(st, se, now);
+  assert.strictEqual(opKeys(st, 'BK-A').length, 0);
+});
+
+test('期限切れで不在確認済み（ARCHIVED_EXPIRED）・既に不在（ALREADY_ABSENT）も、終了後なら回収する', function () {
+  [S.ARCHIVED_EXPIRED, S.ALREADY_ABSENT].forEach(function (state) {
+    var st = mem(), se = mem(), now = { v: NOW };
+    seed(st, se, 'BK-A', ENDED, [{ rev: 1, state: state, ageSec: 2 * HOUR, dlv: 'DELIVERED' }]);
+    run(st, se, now);
+    assert.strictEqual(opKeys(st, 'BK-A').length, 0, state);
+  });
+});
+
+test('配送が送信中・結果不明（UNKNOWN）の操作は回収しない。配送済み・抑止済み・未送信（鍵が失効済みで以後送られない）は回収する', function () {
+  [['SENDING', 1], ['UNKNOWN', 1], ['DELIVERED', 0], ['SUPPRESSED', 0], ['NOT_SENT', 0], [null, 0]].forEach(function (c) {
+    var st = mem(), se = mem(), now = { v: NOW };
+    seed(st, se, 'BK-A', CANCELLED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 2 * HOUR, dlv: c[0] || undefined }]);
+    run(st, se, now);
+    assert.strictEqual(opKeys(st, 'BK-A').length, c[1], 'DLV=' + c[0]);
+  });
+});
+
+test('不在確認の証拠がない終端（FAILED / ABANDONED）は30日のまま。30日超なら従来どおり回収する', function () {
+  [S.FAILED, S.ABANDONED].forEach(function (state) {
+    var st = mem(), se = mem(), now = { v: NOW };
+    seed(st, se, 'BK-A', CANCELLED, [{ rev: 1, state: state, ageSec: 2 * HOUR }]);
+    run(st, se, now);
+    assert.strictEqual(opKeys(st, 'BK-A').length, 1, state + ' は早期回収しない');
+    now.v += 31 * DAY;
+    run(st, se, now);
+    assert.strictEqual(opKeys(st, 'BK-A').length, 0, state + ' は30日後に回収');
+  });
+});
+
+test('予約索引（head）が無い・操作が索引に載っていない記録は、安全側に倒して早期回収しない', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  var ids = seed(st, se, 'BK-A', CANCELLED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * HOUR }]);
+  st.set('BK_BK-A', JSON.stringify({ bookingId: 'BK-A', head: null, ops: ids, touchedAt: NOW }));
+  run(st, se, now);
+  assert.strictEqual(opKeys(st, 'BK-A').length, 1, 'head なし');
+  st.set('BK_BK-A', JSON.stringify({ bookingId: 'BK-A', head: CANCELLED, ops: [], touchedAt: NOW }));
+  run(st, se, now);
+  assert.strictEqual(opKeys(st, 'BK-A').length, 1, '索引外');
+});
+
+test('利用終了後の予約は、全操作の回収後に BK 索引・追跡記録もまとめて回収される（参照切れなし）', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  seed(st, se, 'BK-A', ENDED, [
+    { rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * HOUR, dlv: 'DELIVERED' },
+    { rev: 2, state: S.ARCHIVED_EXPIRED, ageSec: 2 * HOUR, dlv: 'DELIVERED' }
+  ]);
+  var res = run(st, se, now);
+  assert.deepStrictEqual(relatedKeys(st, 'BK-A'), [], '関連キーがすべて消える');
+  assert.strictEqual(res.removed.BK, 1);
+  assert.strictEqual(res.removed.TRK, 1);
+  assert.strictEqual(res.rep.unclassified, 0);
+});
+
+test('利用終了後でも、未解決の操作が残る予約の BK・TRK は保持する。取消の予約は BK 索引を30日残す', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  seed(st, se, 'BK-U', ENDED, [{ rev: 1, state: S.UNKNOWN, ageSec: 2 * HOUR }]);
+  seed(st, se, 'BK-C', CANCELLED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 2 * HOUR, dlv: 'DELIVERED' }]);
+  run(st, se, now);
+  assert.ok(st.get('BK_BK-U') !== null && st.get('TRK_BK-U') !== null && opKeys(st, 'BK-U').length === 1, '未解決は保持');
+  assert.ok(st.get('BK_BK-C') !== null && st.get('TRK_BK-C') !== null, '取消の BK/TRK は30日側');
+  now.v += 31 * DAY;
+  run(st, se, now);
+  assert.strictEqual(st.get('BK_BK-C'), null);
+});
+
+test('回収は冪等で、再実行しても他の予約・常設キー・API使用量判定のキーを変更しない', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  seed(st, se, 'BK-A', ENDED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * HOUR, dlv: 'DELIVERED' }]);
+  seed(st, se, 'BK-LIVE', { revision: 1, cancelled: false, desired: true, startSec: NOW + DAY, endSec: NOW + 2 * DAY, deviceId: DEV },
+    [{ rev: 1, state: S.ISSUED_CONFIRMED, ageSec: 5 * HOUR, dlv: 'DELIVERED', over: { startSec: NOW + DAY, endSec: NOW + 2 * DAY } }]);
+  st.set('APICOUNT_20300110', '5'); st.set('KEYREADY', '{"at":1}'); st.set('NOTIFYFAIL', '0'); st.set('LOCKFAIL', '0');
+  var before = relatedKeys(st, 'BK-LIVE').concat(['APICOUNT_20300110', 'KEYREADY', 'NOTIFYFAIL', 'LOCKFAIL']).map(function (k) { return k + '=' + st.get(k); });
+  run(st, se, now);
+  var mid = st.keys().length;
+  run(st, se, now);
+  assert.strictEqual(st.keys().length, mid, '2回目は何も消さない');
+  var after = relatedKeys(st, 'BK-LIVE').concat(['APICOUNT_20300110', 'KEYREADY', 'NOTIFYFAIL', 'LOCKFAIL']).map(function (k) { return k + '=' + st.get(k); });
+  assert.deepStrictEqual(after.sort(), before.sort());
+  assert.deepStrictEqual(relatedKeys(st, 'BK-A'), []);
+});
+
+test('早期回収は変更APIを呼ばない（読取・状態削除のみ。API呼出しの注入は即失敗するスタブ）', function () {
+  var st = mem(), se = mem(), now = { v: NOW };
+  seed(st, se, 'BK-A', ENDED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * HOUR, dlv: 'DELIVERED' }]);
+  assert.doesNotThrow(function () { run(st, se, now); });
+});

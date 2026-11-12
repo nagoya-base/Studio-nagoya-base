@@ -1186,6 +1186,17 @@ var SwitchBotAccessInfra = (function () {
     });
     var keys = store.keys();
 
+    // 早期回収の対象予約（Issue #912）: 全OPが回収済みで、利用可能時間が終了した予約。BK 索引と追跡記録を30日待たず整理する。
+    // 取消・非対象の予約（endSec なし）は、遅延した古い確定イベントを AFTER_CANCEL で弾く head を残すため従来の30日。
+    var earlyBookings = {};
+    keys.forEach(function (k) {
+      if (k.indexOf('BK_') !== 0) return;
+      var bi = safeParse(store.get(k));
+      if (!bi || !bi.head || typeof bi.head.endSec !== 'number' || bi.head.endSec > nowSec) return;
+      var anyLive = (bi.ops || []).some(function (id) { return !!opIds[id]; });
+      if (!anyLive && !unresolvedBookings[bi.bookingId]) earlyBookings[bi.bookingId] = true;
+    });
+
     keys.forEach(function (k) {
       var v = store.get(k);
       if (v === null || v === undefined) return;
@@ -1208,7 +1219,7 @@ var SwitchBotAccessInfra = (function () {
         if (live.length) return; // OP が残る間は保持
         if (unresolvedBookings[idx.bookingId]) return;
         if (typeof idx.touchedAt !== 'number') { idx.touchedAt = nowSec; store.set(k, JSON.stringify(idx)); return; } // 年齢不明は今から数える
-        if (nowSec - idx.touchedAt > ret.bkSec) { store.del(k); removed.BK++; }
+        if (nowSec - idx.touchedAt > ret.bkSec || (earlyBookings[idx.bookingId] && nowSec - idx.touchedAt >= Core.EARLY_PURGE_GRACE_SEC)) { store.del(k); removed.BK++; }
         return;
       }
       // --- Webhook 記録 ---
@@ -1243,7 +1254,8 @@ var SwitchBotAccessInfra = (function () {
         var t = safeParse(v);
         var bid = k.slice(4);
         if (unresolvedBookings[bid]) return;
-        if (!t || typeof t.seenAt !== 'number' || nowSec - t.seenAt > ret.trackSec) { store.del(k); removed.TRK++; }
+        if (!t || typeof t.seenAt !== 'number' || nowSec - t.seenAt > ret.trackSec ||
+            (earlyBookings[bid] && nowSec - t.seenAt >= Core.EARLY_PURGE_GRACE_SEC)) { store.del(k); removed.TRK++; }
         return;
       }
       // --- 管理者通知の送達記録（送達済みのみ回収。未送達は保持） ---
