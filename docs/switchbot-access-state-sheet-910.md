@@ -57,7 +57,9 @@
 
 ### 2.3 実測の取り方（運営者・読取専用、書込みなし）
 
-1. 先に**現在のトリガーとGC実行状況を読取りで確認**: GAS `accessReadOnlyDiagnostics`（書込み・ロック・通信なし）。見る値: `store.keys / bytes / ratio / valueRatio / byPrefix / ops.total / ops.unresolved / ops.unreadable`、`HB_CLEANUP` の最終実行（日次GCが動いているか）、`unclassifiedKeys`。
+1. 先に**現在のトリガーとGC実行状況を読取りで確認**。稼働（`ACCESS_ENABLED=true`）のまま使えるのは **`accessAdminStatus`**（管理者のみ・SwitchBot API呼出しなし。ロック取得記録 `HB_ADMIN` / `LOCKFAIL` 以外は書かない）。見る値: `byState`（未解決OP数）、`storage.keys / bytes / ratio / byPrefix`、`heartbeatAt.CLEANUP`（日次GCの最終実行）、`deliveries`、`notifyOutboxPending`、`triggers`（有効なジョブ数）。個別の中身を見ずに件数だけ欲しい場合は `accessAdminInventorySummary`（#857。ON のまま可）。
+   - **`accessReadOnlyDiagnostics` は使えない**: `ACCESS_ENABLED` が OFF 以外だと設定確認の段階で停止し、ストアを読まない（本番導入前の診断）。ON の本番では上記の `accessAdminStatus` を使う。OFF の環境（検証GAS等）でのみ `store.valueRatio / ops.unreadable` を含む詳細が得られる。
+   - **`unclassifiedKeys`（未分類キー件数）と `valueRatio`（1値9KB比）は、現行の `accessAdminStatus` には出ない**（前者は日次GCの戻り値内のみ、後者は診断のみ）。これを運営者が読取りで得られるようにすることを**前提実装タスク**（§7 #5）とする。実装までは、日次GCが動いていること（`heartbeatAt.CLEANUP`）と `storage.ratio` で代替監視する。
 2. 結果は**固定コード・集計値のみ**を #910 に貼る（ID・値は貼らない）。
 3. 成長率 = 同じ手順を日次で数日分（`byPrefix` の差分）。未解決OPの増減も記録。
 
@@ -160,11 +162,11 @@
 
 | # | Issue案 | 内容 | 本番影響 |
 | --- | --- | --- | --- |
-| 1 | 実測（運営者） | §2.3 の読取専用手順で件数・使用率・未解決OP・トリガー/GC状況を #910 に固定コードで記録 | なし |
+| 1 | 実測（運営者） | §2.3 の手順（`accessAdminStatus` / `accessAdminInventorySummary`、ONのまま可）で件数・使用率・未解決OP・トリガー/GC状況を #910 に固定コードで記録 | なし |
 | 2 | `drive.file` 検証 | **本番外**の検証GASで、`drive.file` による自作シートへの書込み・台帳への書込み不可を実機確認 | なし |
 | 3 | ミラー実装 | `accessStateMirrorJob`、サニタイズ、固定列、スナップショット上書き、`HB_MIRROR`、失敗分類、テスト。**`appsscript.json` は変更するが運営者の再承認まで本番デプロイしない** | デプロイ承認後、OFFのまま追加（鍵処理は無変更） |
 | 4 | 再承認・初期化の運営手順 | OFFのままのエディタ再承認、ミラーシート作成、共有設定、トリガー追加、健全性確認 | 運営者操作 |
-| 5 | ①の監視追加 | 未解決OP滞留・9KB比・使用率の警告、50件は基準にしない | なし（OFF/ON問わず安全） |
+| 5 | ①の監視追加（**前提実装**） | `accessAdminStatus` に `unclassifiedKeys` と `valueRatio` を追加（ONのまま読める）、未解決OP滞留・9KB比・使用率の警告、50件は基準にしない | なし（読取りのみ。OFF/ON問わず安全） |
 | 6 | 案③再評価（条件付き） | §6 の条件を満たした場合のみ | — |
 
 ## 8. 運営者に決めていただく点
@@ -185,9 +187,9 @@
 | メール配送・再試行 | 配送状態の表示が `DLV_` と一致。表示にメール・宛先・本文・暗証番号が出ない（総当りで全出力を走査して `SECRET_`値・メール形式・完全deviceIdが無いことを検証） |
 | Webhook・回収 | `INBOX_` 退避がミラー有無で不変。GC(#887)後の再ミラーで、消えたキーの行が消える・未解決/保護状態の行は残る |
 | ミラー固有 | 一方向性（シート値を読み戻すコードが無い）、台帳IDへの書込み拒否、書込み先ID固定、401/403/429/5xx/タイムアウトの固定コード分類と非致命、`HB_MIRROR` が `unclassified` に出ない、スナップショットが部分書込みで古い/新しいが混在しない（全タブ一括または先頭に更新時刻の整合確認） |
-| 診断/権限 | `accessReadOnlyDiagnostics` が書込み系を呼ばない不変、マニフェストの新スコープでデプロイ検査が手動承認を要求（既存ゲートの回帰） |
+| 診断/権限 | `accessReadOnlyDiagnostics` が書込み系を呼ばない不変、`accessAdminStatus` の追加項目が値・キー名を出さない、マニフェストの新スコープでデプロイ検査が手動承認を要求（既存ゲートの回帰） |
 | 負荷 | 想定最大件数（`estimateStorage`）でのミラーの実行時間・UrlFetch回数が `runBudgetSec` 内、鍵ジョブのロック保持時間が増えない |
 
 ## 10. この調査でやっていないこと
 
-本番GAS・シート・Propertiesの読取り、設定変更、デプロイ、トリガー操作、OAuth再承認、`ACCESS_ENABLED` の変更は行っていません。§2.3 の実測は運営者の読取専用操作として別途お願いします。
+本番GAS・シート・Propertiesの読取り、設定変更、デプロイ、トリガー操作、OAuth再承認、`ACCESS_ENABLED` の変更は行っていません。§2.3 の実測は運営者の読取操作（`accessAdminStatus` 等。ロック取得記録以外は書かない）として別途お願いします。
