@@ -573,11 +573,11 @@ test('Issue #422: 前日リマインドの利用案内ページ — SNBは従来
   var t = loadTemplates();
   var opts = { now: new Date('2026-09-30T18:00:00+09:00') };
   var snb = t.buildReminderMail(sampleRecord({ brand: 'snb' }), CONFIG, DUMMY_ACCESS_GUIDE, opts);
-  assert.ok(snb.body.indexOf('キーボックスの位置を写真で確認: https://example.com/how-to') !== -1);
+  assert.ok(snb.body.indexOf('詳しい利用案内を見る: https://example.com/how-to') !== -1);
   var mens = t.buildReminderMail(sampleRecord({ brand: 'mens' }), CONFIG, DUMMY_ACCESS_GUIDE, opts);
-  assert.ok(mens.body.indexOf('キーボックスの位置を写真で確認: https://nagoya-base.github.io/Studio-nagoya-base/mens/how-to/') !== -1);
+  assert.ok(mens.body.indexOf('詳しい利用案内を見る: https://nagoya-base.github.io/Studio-nagoya-base/mens/how-to/') !== -1);
   var sx = t.buildReminderMail(sampleRecord({ brand: 'studio_x' }), CONFIG, DUMMY_ACCESS_GUIDE, opts);
-  assert.ok(sx.body.indexOf('キーボックスの位置を写真で確認: https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/') !== -1);
+  assert.ok(sx.body.indexOf('詳しい利用案内を見る: https://nagoya-base.github.io/Studio-nagoya-base/studio-x/how-to/') !== -1);
   assert.ok(sx.body.indexOf('example.com/how-to') === -1);
 });
 

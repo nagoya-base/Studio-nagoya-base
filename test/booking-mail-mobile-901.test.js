@@ -92,7 +92,7 @@ test('来場案内: 住所・建物・部屋・地図・3ステップ・退室�
   var m = T.buildReminderMail(rec(), CONFIG, GUIDE, { now: JST('2026-11-12T08:53:00'), perBookingCode: true });
   ['住所: 愛知県名古屋市中区テスト1-2-3', '建物: テストビル', '部屋番号: 101', '1. 建物の正面入口へ', '2. 指定位置のキーボックスを開ける',
     '3. 解錠して入室', 'キーボックス位置: エレベーター脇の壁面', 'キーボックス番号: KB-DUMMY-1', '入室方法: キーボックスの鍵で解錠',
-    'キーボックスの位置を写真で確認: https://example.com/how-to/', '案内PDF: https://example.com/guide.pdf', '施錠し、鍵を使った場合は元の場所へ戻して'
+    '詳しい利用案内を見る: https://example.com/how-to/', '案内PDF: https://example.com/guide.pdf', '施錠し、鍵を使った場合は元の場所へ戻して'
   ].forEach(function (s) { assert.ok(m.body.indexOf(s) !== -1, s); });
   assert.match(m.body, /https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=/);
   assert.match(m.body, /これは鍵を保管する箱の番号です。入室用の暗証番号（別メール）とは別の番号です。/);
@@ -167,7 +167,7 @@ test('来場案内: Step 2に位置→写真リンク→PDF→番号の順で集
   var m = T.buildReminderMail(rec(), CONFIG, GUIDE, { now: JST('2026-11-12T08:53:00'), perBookingCode: true });
   var t = m.body;
   var i2 = t.indexOf('2. 指定位置のキーボックスを開ける'), i3 = t.indexOf('3. 解錠して入室');
-  ['キーボックス位置:', 'キーボックスの位置を写真で確認:', '案内PDF:', 'キーボックス番号:'].reduce(function (prev, label) {
+  ['キーボックス位置:', '詳しい利用案内を見る:', '案内PDF:', 'キーボックス番号:'].reduce(function (prev, label) {
     var at = t.indexOf(label);
     assert.ok(at > prev && at < i3, label);
     return at;

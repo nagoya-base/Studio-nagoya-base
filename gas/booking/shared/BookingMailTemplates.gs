@@ -1147,10 +1147,12 @@ var BookingMailTemplates = (function () {
     if (guide.entrance) step1.rows.push(['入口からのご案内', guide.entrance]);
     var step2 = { title: '指定位置のキーボックスを開ける', lines: [], rows: [], secret: { label: 'キーボックス番号', value: guide.keyboxNumber ? guide.keyboxNumber : '（未設定）', note: keyboxNote } };
     if (guide.keyboxLocation) step2.rows.push(['キーボックス位置', guide.keyboxLocation]);
-    /* Issue #901: 位置の写真リンク・PDFはStep 2の中（位置説明の直後・番号枠の前）に置く。 */
+    /* Issue #901: 詳細案内リンク・PDFはStep 2の中（位置説明の直後・番号枠の前）に置く。
+       リンク先（ACCESS_GUIDE_URL／ブランド別の利用案内ページ／ACCESS_GUIDE_PDF_URL）の内容は
+       このテンプレートでは保証できないため、「写真で確認」などリンク先の中身を約束するラベルにしない。 */
     step2.links = [];
-    if (reminderGuideUrl) step2.links.push({ label: 'キーボックスの位置を写真で確認', url: reminderGuideUrl });
-    if (guide.pdfUrl) step2.links.push({ label: '案内PDF', htmlLabel: '案内PDF（位置・道順）を開く', url: guide.pdfUrl });
+    if (reminderGuideUrl) step2.links.push({ label: '詳しい利用案内を見る', url: reminderGuideUrl });
+    if (guide.pdfUrl) step2.links.push({ label: '案内PDF', htmlLabel: '案内PDFを開く', url: guide.pdfUrl });
     var step3 = { title: '解錠して入室', lines: [], rows: [] };
     if (guide.entryMethod) step3.rows.push(['入室方法', guide.entryMethod]);
     if (!perBookingCode) {
