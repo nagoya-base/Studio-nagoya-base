@@ -246,3 +246,17 @@ test('旧固定コードへのフォールバック禁止: 新方式対象はテ
   var strict = ctx.sandbox.BookingMailTemplates.buildReminderMail(rec, cfg, guide, { now: NOW, perBookingCode: 'true' });
   assertOld(strict.body); // 真偽値true以外は新方式にしない
 });
+
+/* Issue #901: 来場案内はHTML＋text/plainのマルチパートで送られ、両方に同じ必須事項がある。 */
+test('Issue #901: 来場案内メールはhtmlBody付きで送信され、HTMLにもキーボックス番号の取り違え防止の注記がある', function () {
+  var ctx = setup({ ACCESS_PER_BOOKING_CODE_MODE: 'ALL' });
+  var id = seed(ctx, 'H-1', 'snb');
+  var r = sendBody(ctx, id);
+  assert.strictEqual(r.result.success, true, JSON.stringify(r.result));
+  var mail = ctx.mailApp._sentEmails[ctx.mailApp._sentEmails.length - 1];
+  assert.ok(typeof mail.htmlBody === 'string' && mail.htmlBody.indexOf('<!DOCTYPE html>') === 0);
+  assert.ok(mail.htmlBody.indexOf('TEST-KEYBOX') !== -1);
+  assert.ok(mail.htmlBody.indexOf('入室用の暗証番号（別メール）とは別の番号です') !== -1);
+  assert.strictEqual(mail.htmlBody.indexOf('TEST-OLD-FIXED-CODE'), -1);
+  assert.match(mail.subject, /^【SNB】明日の来場案内｜10\/2\(金\) 10:00$/);
+});

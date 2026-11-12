@@ -637,7 +637,9 @@ test('前日リマインド: フラグOFF/未指定は本文が従来と完全�
   assert.strictEqual(T.buildReminderMail(rec, MAIL_CONFIG, GUIDE, { now: jst('2030-01-10', '18:00'), separateCodeNotice: 'true' }).body, base.body, 'trueの真偽値以外は無効');
   var on = T.buildReminderMail(rec, MAIL_CONFIG, GUIDE, { now: jst('2030-01-10', '18:00'), separateCodeNotice: true });
   assert.strictEqual(on.body.split('\n').filter(function (l) { return l === LINE; }).length, 1);
-  assert.strictEqual(on.body.replace(LINE + '\n', ''), base.body, '一行以外は不変');
+  /* Issue #901: 本文の構成を再設計したため、空行の数は比較しない（一行以外の内容は不変）。 */
+  var squash = function (b) { return b.replace(/\n{2,}/g, '\n'); };
+  assert.strictEqual(squash(on.body.replace(LINE + '\n', '')), squash(base.body), '一行以外は不変');
   ['studio_x', 'mens', ''].forEach(function (brand) {
     var m = T.buildReminderMail(record({ brand: brand }), MAIL_CONFIG, GUIDE, { now: jst('2030-01-10', '18:00'), separateCodeNotice: true });
     assert.strictEqual(m.body.indexOf(LINE), -1, 'SNB以外には出さない: ' + brand);

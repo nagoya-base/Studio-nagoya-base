@@ -505,13 +505,16 @@ var BookingMailer = (function () {
 
       var mailConfig = BookingConfig.getMailConfig();
       try {
-        MailApp.sendEmail({
+        var message = {
           to: record.email,
           subject: mail.subject,
           body: mail.body,
           name: mailConfig.displayName,
           replyTo: mailConfig.replyTo
-        });
+        };
+        /* Issue #901: 確定・来場案内はHTML＋text/plainのマルチパート。htmlBodyを持たないテンプレートは従来どおりtextのみ。 */
+        if (typeof mail.htmlBody === 'string' && mail.htmlBody) message.htmlBody = mail.htmlBody;
+        MailApp.sendEmail(message);
       } catch (sendError) {
         recordMailFailure_(bookingId, mailType, sendError, record.status, extraRedactions);
         return { success: false, error: { code: 'MAIL_SEND_FAILED', message: describeError_(sendError) } };

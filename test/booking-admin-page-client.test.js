@@ -944,7 +944,7 @@ test('renderReminderPreviewResult_: 成功時は宛先2種・件名・本文を�
   var sandbox = loadClientSandbox();
   var html = sandbox.renderReminderPreviewResult_({
     success: true,
-    subject: '【Studio X】明日のご利用案内',
+    subject: '【Studio X】明日の来場案内',
     body: 'キーボックス番号: ••••••',
     recipientEmail: 'taro@example.com',
     testRecipientEmail: 'admin@example.com',
@@ -953,7 +953,7 @@ test('renderReminderPreviewResult_: 成功時は宛先2種・件名・本文を�
 
   assert.match(html, /taro@example\.com/);
   assert.match(html, /admin@example\.com/);
-  assert.match(html, /明日のご利用案内/);
+  assert.match(html, /明日の来場案内/);
   assert.match(html, /マスクしています/);
 });
 
@@ -1260,7 +1260,7 @@ test('プレビューで解錠コードを表示済みの状態から「表示�
   state.previewButton.fire('click');
 
   scriptRun.resolveCall(0, {
-    success: true, targetDate: '2026-10-02', subject: '【Studio X】明日のご利用案内',
+    success: true, targetDate: '2026-10-02', subject: '【Studio X】明日の来場案内',
     body: 'キーボックス番号: REAL-KEYBOX\n解錠コード: REAL-CODE',
     recipientEmail: 'taro@example.com', testRecipientEmail: 'admin@example.com', revealed: true,
     eligible: true, reasonCode: 'ELIGIBLE'

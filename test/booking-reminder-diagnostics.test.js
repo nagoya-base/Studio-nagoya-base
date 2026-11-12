@@ -367,7 +367,7 @@ test('previewReminderMail: 本番テンプレートで件名・本文を生成�
 
   assert.strictEqual(result.success, true);
   assert.strictEqual(result.targetDate, '2026-10-02');
-  assert.match(result.subject, /明日のご利用案内/);
+  assert.match(result.subject, /明日の来場案内/);
   assert.match(result.subject, /SNB mens/);
   assert.strictEqual(result.body.indexOf('TEST-KEYBOX'), -1, '既定ではキーボックス番号をマスクする');
   assert.strictEqual(result.body.indexOf('TEST-CODE'), -1, '既定では解錠コードをマスクする');
