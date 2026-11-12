@@ -57,9 +57,10 @@
 
 ### 2.3 実測の取り方（運営者・読取専用、書込みなし）
 
-1. 先に**現在のトリガーとGC実行状況を読取りで確認**。稼働（`ACCESS_ENABLED=true`）のまま使えるのは **`accessAdminStatus`**（管理者のみ・SwitchBot API呼出しなし。ロック取得記録 `HB_ADMIN` / `LOCKFAIL` 以外は書かない）。見る値: `byState`（未解決OP数）、`storage.keys / bytes / ratio / byPrefix`、`heartbeatAt.CLEANUP`（日次GCの最終実行）、`deliveries`、`notifyOutboxPending`、`triggers`（有効なジョブ数）。個別の中身を見ずに件数だけ欲しい場合は `accessAdminInventorySummary`（#857。ON のまま可）。
-   - **`accessReadOnlyDiagnostics` は使えない**: `ACCESS_ENABLED` が OFF 以外だと設定確認の段階で停止し、ストアを読まない（本番導入前の診断）。ON の本番では上記の `accessAdminStatus` を使う。OFF の環境（検証GAS等）でのみ `store.valueRatio / ops.unreadable` を含む詳細が得られる。
-   - **`unclassifiedKeys`（未分類キー件数）と `valueRatio`（1値9KB比）は、現行の `accessAdminStatus` には出ない**（前者は日次GCの戻り値内のみ、後者は診断のみ）。これを運営者が読取りで得られるようにすることを**前提実装タスク**（§7 #5）とする。実装までは、日次GCが動いていること（`heartbeatAt.CLEANUP`）と `storage.ratio` で代替監視する。
+1. 先に**現在のトリガーとGC実行状況を読取りで確認**。稼働（`ACCESS_ENABLED=true`）のまま使えるのは **`accessAdminStatus`**（管理者のみ・SwitchBot API呼出しなし。ロック取得記録 `HB_ADMIN` / `LOCKFAIL` 以外は書かない）。GASエディタでは戻り値が表示されないため、**実行ログに出る許可リスト項目（`sba_logStatus_`）だけ**が現状の取得経路になる: `enabled`、`unresolved`（未解決OP数）、`heartbeatAt`（`CLEANUP`＝日次GCの最終実行を含む）、`deliveries`（配送状態の件数）、`notifyOutboxPending`、`triggers`（有効なジョブ数）。
+   - **`storage`（`keys / bytes / ratio / byPrefix`）と `byState` は、内部の戻り値にはあるが実行ログには出ない**（`test/switchbot-access-gas-shell-754.test.js` が `storage` の非出力を固定している）。`accessAdminInventorySummary`（#857）も件数集計のみで、ストレージ計測は含まない。さらに `unclassifiedKeys`（未分類キー数）と `valueRatio`（1値9KB比）は `accessAdminStatus` の戻り値にも無い。したがって**日次の `byPrefix` 増加・`storage.ratio` は現行の稼働中手順では取得できない**。
+   - **`accessReadOnlyDiagnostics` は稼働中は使えない**: `ACCESS_ENABLED` が OFF 以外だと設定確認の段階で停止し、ストアを読まない（本番導入前の診断）。OFF の環境（検証GAS等）でのみ `store.*` の詳細が得られる。
+   - 上記の欠落は**前提実装タスク**（§7 #5）とする: ログの許可リストに、`storage.keys / bytes / ratio / valueRatio`、`byPrefix`（接頭辞ごとの件数のみ。キー名・値は出さない）、`unclassifiedKeys` を**固定コード/数値のみで追加**する（読取りのみ、既存の戻り値・権限は変えない）。実装までの代替は、`heartbeatAt.CLEANUP`（日次GCが動いている）と `unresolved` の推移、およびこの調査の見積もり（§2.2）による。
 2. 結果は**固定コード・集計値のみ**を #910 に貼る（ID・値は貼らない）。
 3. 成長率 = 同じ手順を日次で数日分（`byPrefix` の差分）。未解決OPの増減も記録。
 
@@ -165,11 +166,11 @@
 
 | # | Issue案 | 内容 | 本番影響 |
 | --- | --- | --- | --- |
-| 1 | 実測（運営者） | §2.3 の手順（`accessAdminStatus` / `accessAdminInventorySummary`、ONのまま可）で件数・使用率・未解決OP・トリガー/GC状況を #910 に固定コードで記録 | なし |
+| 1 | 実測（運営者） | §2.3 の手順（`accessAdminStatus` / `accessAdminInventorySummary`、ONのまま可）で未解決OP・配送状態・トリガー/GC状況を #910 に固定コードで記録。ストレージ使用率・`byPrefix` は #5 の実装後に取得 | なし |
 | 2 | `drive.file` 検証 | **本番外**の検証GASで、`drive.file` による自作シートへの書込み・台帳への書込み不可を実機確認 | なし |
 | 3 | ミラー実装 | `accessStateMirrorJob`、サニタイズ、固定列、スナップショット上書き、`HB_MIRROR`、失敗分類、テスト。**`appsscript.json` は変更するが運営者の再承認まで本番デプロイしない** | 稼働中本番への反映手順は #4 の実機確認後に決定（鍵処理のコードは無変更）。承認前は反映しない |
 | 4 | 再承認・初期化の運営手順 | 検証GASで§4.3の(a)(b)を実機確認 → 稼働維持で再承認できる手順、できなければ承認付きメンテナンス窓の手順を確定。ミラーシート作成、共有設定、トリガー追加、健全性確認 | 運営者操作（本番はOFFにしない前提。維持できない場合のみ明示承認） |
-| 5 | ①の監視追加（**前提実装**） | `accessAdminStatus` に `unclassifiedKeys` と `valueRatio` を追加（ONのまま読める）、未解決OP滞留・9KB比・使用率の警告、50件は基準にしない | なし（読取りのみ。OFF/ON問わず安全） |
+| 5 | ①の監視追加（**前提実装**） | `accessAdminStatus` の実行ログ許可リストに `storage`（keys/bytes/ratio/valueRatio）・`byPrefix`・`unclassifiedKeys` を固定コード/数値で追加（ONのまま読める）、未解決OP滞留・9KB比・使用率の警告、50件は基準にしない | なし（読取りのみ。OFF/ON問わず安全） |
 | 6 | 案③再評価（条件付き） | §6 の条件を満たした場合のみ | — |
 
 ## 8. 運営者に決めていただく点
