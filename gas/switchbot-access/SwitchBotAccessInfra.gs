@@ -500,7 +500,68 @@ var SwitchBotAccessInfra = (function () {
     lines.push('');
     lines.push('【お問い合わせ】');
     lines.push(st.inquiryNote);
-    return { subject: subject, body: lines.join('\n') };
+    var notice = [];
+    notice.push(change ? 'ご予約内容の変更に伴い、入室用の暗証番号をあらためてお送りします。' : 'ご予約の入室用の暗証番号をお送りします。');
+    if (change) {
+      notice.push(p.previousInvalidated === true
+        ? '以前にお送りした暗証番号は使用できません。本メールの暗証番号をご利用ください。'
+        : '以前にお送りした暗証番号ではなく、本メールの暗証番号をご利用ください。');
+    }
+    var htmlBody = renderCodeMailHtml({
+      title: subject, preheader: change ? CODE_MAIL_PREHEADER_CHANGE : CODE_MAIL_PREHEADER, sender: st.senderName, notice: notice, code: p.code,
+      validText: fmtJst(p.startSec) + ' 〜 ' + fmtJst(p.endSec),
+      target: st.facilityLabel + (ref ? '（予約番号 ' + ref + '）' : ''),
+      rules: ['暗証番号は、ご案内した時間内のみご利用いただけます。', '暗証番号は、ご利用される方以外には共有しないでください。', '入室できない場合や暗証番号についてお困りの際は、お問い合わせください。'],
+      inquiry: st.inquiryNote
+    });
+    return { subject: subject, body: lines.join('\n'), htmlBody: htmlBody };
+  }
+
+  /** HTMLエスケープ（差し込み値は必ず通す）。 */
+  function escapeHtml(s) {
+    return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /** 受信トレイのスニペットに本文冒頭が出るため、固定の安全文を先頭に置く（番号・予約IDは含めない）。後続の本文が続けて抽出されないよう空白で埋める。 */
+  var CODE_MAIL_PREHEADER_PAD = new Array(60).join('&zwnj;&nbsp;');
+  var CODE_MAIL_PREHEADER = '入室用の暗証番号のご案内です。メールを開いてご確認ください。';
+  var CODE_MAIL_PREHEADER_CHANGE = '暗証番号の変更のお知らせです。メールを開いてご確認ください。';
+
+  var CODE_MAIL_DARK_CSS = '@media (prefers-color-scheme: dark){' +
+    '.m-bg{background-color:#121212 !important}' +
+    '.m-card{background-color:#1e1e1e !important;color:#f1f1f1 !important;border-color:#555 !important}' +
+    '.m-box{background-color:#262626 !important;border-color:#8ab4f8 !important;color:#f1f1f1 !important}' +
+    '.m-muted{color:#c4c4c4 !important}' +
+    '}';
+
+  /**
+   * 暗証番号メールのHTML本文（Issue #906）。1列・表組み・インラインstyle・外部画像/CSS/リンク/スクリプトなし。
+   * 先頭は見出し『入室用暗証番号』と大きな等幅数字、直下に有効時間と対象。プレヘッダーは空（番号・予約IDを出さない）。
+   */
+  function renderCodeMailHtml(m) {
+    var digits = escapeHtml(m.code); // 字間はletter-spacingで確保（コピー時に余計な文字が混ざらないよう文字は挿入しない）
+    return '<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark">' +
+      '<title>' + escapeHtml(m.title) + '</title><style>' + CODE_MAIL_DARK_CSS + '</style></head>' +
+      '<body class="m-bg" style="margin:0;padding:0;background-color:#f4f4f4;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,\'Hiragino Sans\',\'Yu Gothic\',Meiryo,sans-serif;font-size:16px;line-height:1.7;">' +
+      '<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f4;">' + escapeHtml(m.preheader) + CODE_MAIL_PREHEADER_PAD + '</div>' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-bg" style="background-color:#f4f4f4;"><tr><td align="center" style="padding:12px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-card" style="max-width:600px;background-color:#ffffff;border:1px solid #dddddd;border-radius:10px;color:#1a1a1a;"><tr><td style="padding:20px 16px;">' +
+      '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="m-box" style="margin:0 0 20px;border:2px solid #0b57d0;border-radius:10px;background-color:#eef3fd;color:#1a1a1a;"><tr><td style="padding:16px;">' +
+      '<p style="margin:0 0 6px;font-size:16px;font-weight:bold;">入室用暗証番号</p>' +
+      '<p style="margin:0 0 10px;font-size:34px;line-height:1.3;font-weight:bold;letter-spacing:4px;font-family:Menlo,Consolas,\'Courier New\',monospace;word-break:break-all;">' + digits + '</p>' +
+      '<p style="margin:0;font-size:18px;line-height:1.5;font-weight:bold;">有効時間：' + escapeHtml(m.validText) + '（JST）</p>' +
+      '<p style="margin:6px 0 0;font-size:16px;line-height:1.6;">対象：' + escapeHtml(m.target) + '</p>' +
+      '</td></tr></table>' +
+      '<p style="margin:0 0 8px;font-size:16px;line-height:1.7;">' + escapeHtml(m.sender) + 'です。</p>' +
+      m.notice.map(function (l) { return '<p style="margin:0 0 8px;font-size:16px;line-height:1.7;">' + escapeHtml(l) + '</p>'; }).join('') +
+      '<h2 style="margin:24px 0 10px;padding:2px 0 2px 10px;border-left:4px solid #0b57d0;font-size:18px;line-height:1.4;">ご利用にあたって</h2>' +
+      '<ul style="margin:0 0 8px;padding-left:22px;font-size:16px;line-height:1.7;">' +
+      m.rules.map(function (l) { return '<li style="margin:0 0 4px;">' + escapeHtml(l) + '</li>'; }).join('') + '</ul>' +
+      '<h2 style="margin:24px 0 10px;padding:2px 0 2px 10px;border-left:4px solid #0b57d0;font-size:18px;line-height:1.4;">お問い合わせ</h2>' +
+      '<p style="margin:0;font-size:16px;line-height:1.7;word-break:break-all;">' + escapeHtml(m.inquiry).replace(/\n/g, '<br>') + '</p>' +
+      '</td></tr></table></td></tr></table></body></html>';
   }
 
   // ---------- 認証 ----------
@@ -1408,7 +1469,7 @@ var SwitchBotAccessInfra = (function () {
       try { rcp = deps.resolveRecipient(bookingRef); } catch (e) { rcp = null; }
       if (!rcp || rcp.ok !== true || typeof rcp.to !== 'string' || !EMAIL_RE.test(rcp.to)) throw notSentError('DELIVERY_RECIPIENT_UNRESOLVED'); // 識別できなければ送らない
       var m = renderCodeMail({ code: code, startSec: win.startSec, endSec: win.endSec, kind: meta && meta.kind, previousInvalidated: meta && meta.previousInvalidated, bookingRef: bookingRef, settings: ds });
-      deps.sendUserMail({ to: rcp.to, subject: m.subject, body: m.body, name: ds.senderName, replyTo: ds.replyTo });
+      deps.sendUserMail({ to: rcp.to, subject: m.subject, body: m.body, htmlBody: m.htmlBody, name: ds.senderName, replyTo: ds.replyTo });
     }
     var deliverFn = typeof deps.deliverCode === 'function' ? deps.deliverCode : builtinDeliver;
     function deliveryReady() {

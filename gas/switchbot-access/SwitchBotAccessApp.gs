@@ -185,6 +185,7 @@ function sba_sendUserMail_(m) {
     throw e;
   }
   var opt = { to: m.to, subject: m.subject, body: m.body, name: m.name };
+  if (typeof m.htmlBody === 'string' && m.htmlBody) opt.htmlBody = m.htmlBody; // #906: HTML + text/plain のマルチパート
   if (m.replyTo) opt.replyTo = m.replyTo; else opt.noReply = true;
   MailApp.sendEmail(opt);
 }
