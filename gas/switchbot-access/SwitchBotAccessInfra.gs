@@ -522,8 +522,9 @@ var SwitchBotAccessInfra = (function () {
           sendStart: null, sendCall: null, gateOpen: null, postGateDelay: null, sendCycles: null, reasons: reasons
         });
       }
-      if (!idx && !trk) { rows.push(emptyRow('', ['NO_RECORD'])); return; }
+      // 台帳に同じIDが複数ある場合は、状態の有無にかかわらず誤結合を避けて未照合にする（NO_RECORD より優先）
       if (ledgerAmbiguous) { rows.push(emptyRow('', ['LEDGER_AMBIGUOUS'])); return; }
+      if (!idx && !trk) { rows.push(emptyRow('', ['NO_RECORD'])); return; }
 
       function obsOf(reasons) {
         // 追跡記録は予約単位。現在の revision で観測したものだけを使う（旧 revision の観測は混ぜない）
@@ -596,8 +597,9 @@ var SwitchBotAccessInfra = (function () {
           row.sendStart = byAdmin ? null : relTo(sendingAt, reasons);
           if (tier === 'C') {
             row.gateOpen = relTo(gateOpenAbs, reasons);
-            if (!byAdmin && sendingAt !== null && confirmedAbs !== null && gateOpenAbs !== null) {
-              var d = sendingAt - Math.max(gateOpenAbs, confirmedAbs);
+            // 起点はゲート開放。ゲート開放後に鍵の確認待ちがあれば、その時間もここに含まれる（confirmed と gateOpen を比べれば内訳が分かる）
+            if (!byAdmin && sendingAt !== null && gateOpenAbs !== null) {
+              var d = sendingAt - gateOpenAbs;
               if (d >= -1) row.postGateDelay = Math.max(0, d); else if (reasons.indexOf('ORDER_VIOLATION') === -1) reasons.push('ORDER_VIOLATION');
             }
           }

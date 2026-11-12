@@ -349,6 +349,13 @@ test('同一秒の確定は TIE（順序を確定扱いにしない）', functio
   assert.deepStrictEqual(res.rows.map(function (r) { return r.tie; }), [true, true, false]);
 });
 
+test('台帳に同じIDが複数あり状態の記録も無い行は、NO_RECORD ではなく LEDGER_AMBIGUOUS を優先する', function () {
+  var env = configured();
+  env.rows = [ledgerRow(), ledgerRow()];
+  var res = run(env);
+  res.rows.forEach(function (r) { assert.deepStrictEqual(r.reasons, ['LEDGER_AMBIGUOUS']); });
+});
+
 test('台帳に同じIDが複数ある行は LEDGER_AMBIGUOUS（誤結合しない）', function () {
   var env = configured();
   env.rows = [ledgerRow(), ledgerRow()];
@@ -507,7 +514,7 @@ test('層C（前日18:00より前に確定）: 初観測〜登録確認は null 
   assert.strictEqual(r.sendCall, 2);
 });
 
-test('層C: 発行確認がゲート開放より後なら、postGateDelay は「ゲート開放と発行確認の遅い方」から配送処理開始まで（発行の遅れを配送の遅延に混ぜない）', function () {
+test('層C: ゲート開放後に鍵の確認待ちが1時間あっても、postGateDelay はゲート開放起点で算出する（確認待ちを過小評価しない）', function () {
   var env = configured();
   var t0 = jst('2030-01-10', '15:00');
   var gate = jst('2030-01-10', '18:00');
@@ -518,9 +525,59 @@ test('層C: 発行確認がゲート開放より後なら、postGateDelay は「
   });
   var r = run(env).rows[0];
   assert.strictEqual(r.tier, 'C');
-  assert.strictEqual(r.confirmed, gate + 3600 - t0, '発行確認までの経過（t0起点）は別の列に出る');
-  assert.strictEqual(r.postGateDelay, 12, '発行確認後に配送処理が始まるまで（ゲート開放起点なら3612秒になり、発行の遅れが混ざる）');
   assert.strictEqual(r.gateOpen, gate - t0);
+  assert.strictEqual(r.confirmed, gate + 3600 - t0, '発行確認がゲート開放より後だったことは、confirmed と gateOpen の比較で分かる');
+  assert.strictEqual(r.postGateDelay, 3612, 'ゲート開放から配送処理の開始まで（確認待ち3600秒＋処理12秒）');
+});
+
+test('層C: 発行確認の履歴が欠けていても、ゲート開放と送信開始が分かれば postGateDelay を出す', function () {
+  var env = configured();
+  var t0 = jst('2030-01-10', '15:00');
+  var gate = jst('2030-01-10', '18:00');
+  env.rows = [ledgerRow({ bookingId: 'DUMMY-916-C', confirmedAt: jd('2030-01-10', '15:00'), startAt: jd('2030-01-11', '10:00'), endAt: jd('2030-01-11', '12:00') })];
+  seed(env, 'DUMMY-916-C', {
+    created: t0 + 30, obs: t0 + 30, sent: t0 + 40, webhook: t0 + 60, // confirmed なし
+    dlvHistory: [{ at: gate + 12, from: null, to: 'SENDING', basis: null }, { at: gate + 14, from: 'SENDING', to: 'DELIVERED', basis: null }]
+  });
+  var r = run(env).rows[0];
+  assert.strictEqual(r.confirmed, null);
+  assert.strictEqual(r.postGateDelay, 12);
+});
+
+test('createKey の送信時刻: 応答が遅くても sent は SENDING（リクエスト開始）で、応答の遅れは sentAck との差に出る', function () {
+  var env = configured();
+  env.rows = [ledgerRow()];
+  seedA(env, { sending: T0A + 21, sent: T0A + 49, webhook: T0A + 55, confirmed: T0A + 60 }); // API の応答に28秒かかった
+  var r = run(env).rows[0];
+  assert.strictEqual(r.sent, 21); assert.strictEqual(r.sentAck, 49);
+  assert.strictEqual(r.webhook, 55);
+});
+
+test('createKey が拒否・例外で受理されなかった: SENDING はあるので sent は出し、sentAck は null（送信していないとは表示しない）', function () {
+  var env = configured();
+  env.rows = [ledgerRow()];
+  var recId = seedA(env, { state: 'FAILED', webhook: undefined, confirmed: undefined, dlvHistory: undefined });
+  var key = 'OP_' + recId;
+  var op = JSON.parse(env.script[key]);
+  delete op.sentAtSec;
+  op.history = op.history.filter(function (h) { return h.to !== 'SENT_WAIT_WEBHOOK'; }).concat([{ at: T0A + 24, from: 'SENDING', to: 'FAILED', basis: null }]);
+  env.script[key] = JSON.stringify(op);
+  var r = run(env).rows[0];
+  assert.strictEqual(r.state, 'FAILED');
+  assert.strictEqual(r.sent, 23); assert.strictEqual(r.sentAck, null);
+});
+
+test('操作履歴に SENDING が無い（欠損）: sent は null。sentAtSec で補完しない', function () {
+  var env = configured();
+  env.rows = [ledgerRow()];
+  var recId = seedA(env);
+  var key = 'OP_' + recId;
+  var op = JSON.parse(env.script[key]);
+  op.history = op.history.filter(function (h) { return h.to !== 'SENDING'; });
+  env.script[key] = JSON.stringify(op);
+  var r = run(env).rows[0];
+  assert.strictEqual(r.sent, null);
+  assert.strictEqual(r.sentAck, 25);
 });
 
 test('層の境界: 前日18:00ちょうどの確定は C にならず、開始まで60分以内なら A・超えれば B', function () {
