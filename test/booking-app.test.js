@@ -10,6 +10,7 @@ var assert = require('node:assert');
 var fs = require('node:fs');
 var path = require('node:path');
 var loadFrontendSandbox = require('./helpers/frontend-sandbox').loadFrontendSandbox;
+var createFixedDate = require('./helpers/fixed-clock').createFixedDate;
 /* Issue #895: 利用開始まで30分以下の日付は確認チェックが必要になるため、これらのフローは十分先の日付で通す。 */
 var FUTURE_DATE = require('./helpers/future-date').futureJstDate(30);
 
@@ -1082,6 +1083,8 @@ function setupCardFlow(locale, options) {
   var fetchCallCount = 0;
 
   loadFrontendSandbox(['booking-logic.js', 'booking-app.js'], {
+    /* Issue #903: 実行時刻でIssue #895の直前予約ガードが作動しないよう、時計を当日06:00(JST)に固定 */
+    Date: createFixedDate(),
     document: documentStub,
     window: windowStub,
     fetch: function (url, fetchOptions) {
