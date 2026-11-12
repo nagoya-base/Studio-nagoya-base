@@ -1192,7 +1192,8 @@ var SwitchBotAccessInfra = (function () {
     keys.forEach(function (k) {
       if (k.indexOf('BK_') !== 0) return;
       var bi = safeParse(store.get(k));
-      if (!bi || !bi.head || typeof bi.head.endSec !== 'number' || bi.head.endSec > nowSec) return;
+      var endBasis = bi && bi.head ? Core.headEndSec(bi.head) : null; // 有効中は endSec、終了後は endedSec（取消・非対象は null）
+      if (endBasis === null || endBasis > nowSec) return;
       var anyLive = (bi.ops || []).some(function (id) { return !!opIds[id]; });
       if (!anyLive && !unresolvedBookings[bi.bookingId]) earlyBookings[bi.bookingId] = true;
     });

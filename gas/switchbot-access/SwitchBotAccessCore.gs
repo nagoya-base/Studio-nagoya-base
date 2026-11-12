@@ -49,6 +49,14 @@ var SwitchBotAccessCore = (function () {
   var EARLY_PURGE_STATES = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED];
   var EARLY_PURGE_GRACE_SEC = 3600;
 
+  /** 予約索引の head から「利用可能時間（猶予込み）の終了時刻」を返す。有効中は endSec、終了後は endedSec。取消・非対象は null。 */
+  function headEndSec(head) {
+    if (!head) return null;
+    if (typeof head.endSec === 'number') return head.endSec;
+    if (typeof head.endedSec === 'number') return head.endedSec;
+    return null;
+  }
+
   var EVIDENCE = {
     WEBHOOK_SUCCESS: 'WEBHOOK_SUCCESS',
     KEYLIST_CONFIRMED: 'KEYLIST_CONFIRMED',
@@ -140,7 +148,7 @@ var SwitchBotAccessCore = (function () {
     if (s === null || e === null || s >= e) return no('TIME_INVALID');
     var startSec = s - config.graceBeforeSec;
     var endSec = e + config.graceAfterSec;
-    if (endSec <= nowSec) return no('ALREADY_ENDED');
+    if (endSec <= nowSec) return { eligible: false, reason: 'ALREADY_ENDED', endSec: endSec }; // 終了時刻は予約索引の「終了済み」の根拠（#912）
     var kp = resolveKeypad(config, booking);
     if (!kp.deviceId) return no(kp.error);
     return { eligible: true, reason: null, startSec: startSec, endSec: endSec, deviceId: kp.deviceId };
@@ -666,7 +674,9 @@ var SwitchBotAccessCore = (function () {
         idx.head = {
           revision: booking.revision, cancelled: cancelledNow, desired: !!(elig.eligible && !cancelledNow),
           startSec: elig.eligible ? elig.startSec : null, endSec: elig.eligible ? elig.endSec : null,
-          deviceId: elig.eligible ? elig.deviceId : null
+          deviceId: elig.eligible ? elig.deviceId : null,
+          // 利用可能時間が終了した予約（取消ではない）の終了時刻。endSec は終了後に null になるため別に持つ（早期回収の根拠。#912）
+          endedSec: !cancelledNow && elig.reason === 'ALREADY_ENDED' && typeof elig.endSec === 'number' ? elig.endSec : null
         };
         idx.touchedAt = deps.nowSec(); // 索引の保持期限（#754）。未解決 OP がある間は回収側が保護する
         save(bkKey(booking.bookingId), idx);
@@ -1091,7 +1101,8 @@ var SwitchBotAccessCore = (function () {
       var idx = bookingIndex(rec.bookingId);
       var head = idx.head;
       if (!head || idx.ops.indexOf(rec.id) === -1) return false;
-      if (head.desired === true && !(typeof head.endSec === 'number' && head.endSec <= now)) return false;
+      var endBasis = headEndSec(head);
+      if (head.desired === true && !(endBasis !== null && endBasis <= now)) return false;
       return idx.ops.every(function (id) {
         var r = load(recKey(id));
         if (!r) return true; // 回収済み
@@ -1212,7 +1223,7 @@ var SwitchBotAccessCore = (function () {
   }
 
   return {
-    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL, EARLY_PURGE_GRACE_SEC: EARLY_PURGE_GRACE_SEC, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
+    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, TERMINAL: TERMINAL, EARLY_PURGE_GRACE_SEC: EARLY_PURGE_GRACE_SEC, headEndSec: headEndSec, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
     maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad, validatePasscode: validatePasscode,
     evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued, classifyId: classifyId,
     parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine

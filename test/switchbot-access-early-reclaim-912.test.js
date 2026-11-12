@@ -211,3 +211,76 @@ test('早期回収は変更APIを呼ばない（読取・状態削除のみ。AP
   seed(st, se, 'BK-A', ENDED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * HOUR, dlv: 'DELIVERED' }]);
   assert.doesNotThrow(function () { run(st, se, now); });
 });
+
+// ---------------------------------------------------------------- 実運用の周期を通す結合（レビュー指摘: 終了後の sync で endSec が null になる）
+
+var SYNC_SEC = 300, DELIVER_SEC = 300, SWEEP_SEC = 3600, WATCHDOG_SEC = 900;
+function mailWorld() {
+  var w = H.createWorld({ mail: true, cfg: { deliveryConfigured: true, delivery: H.DELIVERY_CFG } });
+  w.createMode = 'noCommandId';
+  w.deleteMode = 'noCommandId';
+  w.preload(H.DEV, 2); // 通常キー（保全対象）
+  return w;
+}
+function simOf(w, rt) {
+  var t = { sync: 0, deliver: 0, sweep: 0, watchdog: 0 };
+  return {
+    run: function (sec) {
+      for (var e = 10; e <= sec; e += 10) {
+        w.advance(10);
+        ['sync', 'deliver', 'sweep', 'watchdog'].forEach(function (j) { t[j] += 10; });
+        if (t.sync >= SYNC_SEC) { t.sync = 0; rt.syncCycle(); }
+        if (t.deliver >= DELIVER_SEC) { t.deliver = 0; rt.deliverCycle(); }
+        if (t.sweep >= SWEEP_SEC) { t.sweep = 0; rt.sweepCycle(); }
+        if (t.watchdog >= WATCHDOG_SEC) { t.watchdog = 0; rt.watchdog(); }
+      }
+    }
+  };
+}
+function propKeys(w, bk) { return w.store.keys().filter(function (k) { return k.indexOf(bk) !== -1; }); }
+
+test('結合: 通常に利用が終わった予約（台帳に残ったまま）は、鍵の削除確認後に OP・配送・BK・TRK が次のsweepで回収される。通常キーは不変', function () {
+  var w = mailWorld(); var rt = w.runtime(); var sim = simOf(w, rt);
+  var normalBefore = JSON.stringify(w.keys[H.DEV].filter(function (k) { return /^USER-/.test(k.name); }));
+  w.records = [H.record()];
+  sim.run(SYNC_SEC * 2 + 60);                            // 観測 → 発行 → 反映確認
+  w.nowMs = Date.parse('2030-01-10T18:00:00+09:00'); sim.run(DELIVER_SEC + 10); // 前日18:00の案内を1通
+  assert.strictEqual(w.userMails.length, 1);
+  assert.ok(propKeys(w, 'SNB-1').length > 0);
+  w.nowMs = Date.parse('2030-01-11T12:20:00+09:00');      // 終了12:00＋猶予15分の後
+  sim.run(3600 + 3600 + 600);                             // sync が ALREADY_ENDED を記録 → 削除確認 → 猶予1時間 → sweep
+  assert.deepStrictEqual(propKeys(w, 'SNB-1').filter(function (k) { return /^(OP_|DLV_|ALERT_|EVT_)/.test(k); }), [], '操作・配送・通知・Webhook記録は整理済み');
+  // 台帳に予約が残る間は、次の sync が空の BK/TRK を作り直す。sync を挟まず、猶予後の sweep 直後に BK/TRK が回収されることを確認する
+  w.advance(3600 + 60);
+  rt.sweepCycle();
+  var left = propKeys(w, 'SNB-1');
+  assert.deepStrictEqual(left.filter(function (k) { return /^(OP_|DLV_|ALERT_|EVT_|BK_|TRK_)/.test(k); }), [], '関連キーが30日を待たず整理される: ' + left.join(','));
+  assert.strictEqual(w.callCount('createKey'), 1, '再発行しない');
+  assert.strictEqual(w.userMails.length, 1, '二重配送しない');
+  assert.strictEqual(JSON.stringify(w.keys[H.DEV].filter(function (k) { return /^USER-/.test(k.name); })), normalBefore, '通常キーは不変');
+  // 台帳に予約が残っていても、以後 sync/sweep を回し続けて再発行・再送されない
+  sim.run(3600 * 3);
+  assert.strictEqual(w.callCount('createKey'), 1);
+  assert.strictEqual(w.userMails.length, 1);
+});
+
+test('結合: 終了後の sync は head に終了時刻（endedSec）を残し、取消（endSec なし）とは区別する', function () {
+  var w = mailWorld(); var rt = w.runtime(); var sim = simOf(w, rt);
+  w.records = [H.record()];
+  sim.run(SYNC_SEC * 2 + 60);
+  w.nowMs = Date.parse('2030-01-11T12:20:00+09:00');
+  sim.run(SYNC_SEC + 10);
+  var head = JSON.parse(w.store.get('BK_SNB-1')).head;
+  assert.strictEqual(head.endSec, null);
+  assert.strictEqual(typeof head.endedSec, 'number');
+  assert.strictEqual(C.headEndSec(head), head.endedSec);
+  // 取消は終了時刻を持たない（30日側）
+  var w2 = mailWorld(); var rt2 = w2.runtime(); var sim2 = simOf(w2, rt2);
+  w2.records = [H.record()];
+  sim2.run(SYNC_SEC * 2 + 60);
+  w2.records = [H.record({ revision: 2, status: 'CANCELLED' })];
+  sim2.run(SYNC_SEC * 3);
+  var h2 = JSON.parse(w2.store.get('BK_SNB-1')).head;
+  assert.strictEqual(h2.cancelled, true);
+  assert.strictEqual(C.headEndSec(h2), null);
+});

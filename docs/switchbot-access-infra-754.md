@@ -280,7 +280,7 @@
 | 予約が取消・非対象、または利用可能時間（猶予込み）の終了後 | 有効な予約の途中で管理者が削除した鍵は、再発行判断を30日側に残す |
 | 予約索引（head）があり、その操作が索引に載っている | 不整合は安全側（回収しない） |
 
-回収時に同時に整理: `OP_` / `DLV_` / `SECRET_`（User Properties）/ `ALERT_<OP>_*` / その操作の `EVT_`（createKey・deleteKey）。続けて同じ `garbageCollect` 内で、OPが全て回収された予約について `BK_`（利用可能時間の終了後）と `TRK_` を整理する（参照元から先に消す順序）。取消・非対象の予約の `BK_`（head）は、遅延した古い確定イベントを弾く根拠のため30日のまま。
+回収時に同時に整理: `OP_` / `DLV_` / `SECRET_`（User Properties）/ `ALERT_<OP>_*` / その操作の `EVT_`（createKey・deleteKey）。続けて同じ `garbageCollect` 内で、OPが全て回収された予約について `BK_`（利用可能時間の終了後）と `TRK_` を整理する（参照元から先に消す順序）。利用可能時間の終了は、有効中は head の `endSec`、終了後（sync が `ALREADY_ENDED` を記録したあと）は `endedSec` で判定する。取消・非対象の予約（どちらも無し）の `BK_`（head）は、遅延した古い確定イベントを弾く根拠のため30日のまま。台帳に予約が残っている間は、次の sync が空の `BK_`/`TRK_`（`desired=false`）を作り直しうる（再発行・再送はしない。次のsweepで再び回収）。
 
 **変更しないもの**: `ACCESS_ENABLED`・設定・認証情報、`APICOUNT_`（8暦日）、`HB_*`・`META_ENV`・`LOCKFAIL`・`NOTIFYFAIL`・`KEYREADY` の常設キー、未解決・結果不明・配送処理中の記録。変更APIは呼ばない（状態の削除のみ）。
 
