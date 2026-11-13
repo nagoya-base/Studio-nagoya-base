@@ -81,7 +81,7 @@ test('削除確認済み（取消後の DELETED_CONFIRMED）は、猶予後の�
   assert.deepStrictEqual(opKeys(st, 'BK-A'), []);
   assert.deepStrictEqual(st.keys().filter(function (k) { return /^(DLV_|ALERT_|EVT_)/.test(k) && k.indexOf('BK-A') !== -1; }), []);
   assert.deepStrictEqual(se.keys().filter(function (k) { return k.indexOf('BK-A') !== -1; }), [], '秘密も破棄');
-  // 取消の head（AFTER_CANCEL の根拠）は30日側に残す
+  // 取消の head（AFTER_CANCEL の根拠）は、読取範囲内／旧headでは時刻ベース（3日）側に残す
   assert.ok(st.get('BK_BK-A') !== null, '取消予約のBK索引（head）は残る');
   // 常設キーは変更されない
   assert.strictEqual(st.get('ACCESS_ENABLED'), 'true');
@@ -278,7 +278,7 @@ test('結合: 終了後の sync は head に終了時刻（endedSec）を残し�
   assert.strictEqual(head.endSec, null);
   assert.strictEqual(typeof head.endedSec, 'number');
   assert.strictEqual(C.headEndSec(head), head.endedSec);
-  // 取消は終了時刻を持たない（30日側）
+  // 取消は終了時刻を持たない（早期回収は範囲外の時刻 windowExitSec 側）
   var w2 = mailWorld(); var rt2 = w2.runtime(); var sim2 = simOf(w2, rt2);
   w2.records = [H.record()];
   sim2.run(SYNC_SEC * 2 + 60);
