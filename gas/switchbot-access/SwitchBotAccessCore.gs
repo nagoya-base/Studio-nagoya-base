@@ -43,7 +43,7 @@ var SwitchBotAccessCore = (function () {
   var TERMINAL = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED, STATE.FAILED, STATE.ABANDONED];
 
   /**
-   * 早期回収（Issue #912）。実鍵の不在が確認済みの状態だけ（FAILED/ABANDONED は不在確認の証拠が無いので対象外＝従来の30日）。
+   * 早期回収（Issue #912）。実鍵の不在が確認済みの状態だけ（FAILED/ABANDONED は不在確認の証拠が無いので対象外＝保持期限（3日）で回収）。
    * 回収は「終了後の猶予」を置く。猶予は遅延Webhook・直前の通知/配送の確定を待つ最短の保持（既定は1時間周期の sweep 1周期分）。
    */
   var EARLY_PURGE_STATES = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED];
