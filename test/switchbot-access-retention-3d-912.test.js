@@ -78,7 +78,7 @@ test('通常の BK/TRK/EVT/送達済みIALERT は、最終の確定・観測か�
   var st = mem(), now = { v: NOW };
   st.set('EVT_x_createKey_C1', JSON.stringify({ receivedAtSec: NOW - 3 * DAY }));
   st.set('IALERT_SENT_a', JSON.stringify({ event: { code: 'BOOKING_FROZEN' }, sentAt: NOW - 3 * DAY, attempts: 0 }));
-  put(st, 'BK-A', { revision: 1, cancelled: false, desired: true, startSec: NOW + DAY, endSec: NOW + 2 * DAY, deviceId: DEV }, [], 3 * DAY);
+  put(st, 'BK-A', cancelledHead(false), [], 3 * DAY); // 旧head（早期回収なし）。時刻ベースの境界だけを見る
   gc(st, now);
   ['EVT_x_createKey_C1', 'IALERT_SENT_a', 'BK_BK-A', 'TRK_BK-A'].forEach(function (k) { assert.ok(has(st, k), k + ' は3日ちょうどまで残る'); });
   now.v += 1;
@@ -421,4 +421,20 @@ test('終端OPへの管理者操作は、再送を伴わない確定（GIVE_UP /
   });
   assert.strictEqual(JSON.parse(st.get('DLV_' + id)).state, 'UNKNOWN', '拒否時は配送状態を変えない');
   assert.strictEqual(sent, 0, '送信しない');
+});
+
+test('有効な予約（利用可能時間の終了前）の BK/TRK は、3日を超えても回収しない（TRK の digest が同じ改訂での内容変更 DIGEST_MISMATCH の凍結根拠）。終了後は期限で回収する', function () {
+  var st = mem(), now = { v: NOW };
+  // 複数日予約（終了は3日後）。OPは無い（管理者が鍵を削除済み等）。TRK は5日前の観測
+  put(st, 'BK-M', { revision: 1, cancelled: false, desired: true, startSec: NOW - 5 * DAY, endSec: NOW + 3 * DAY, deviceId: DEV, endedSec: null, windowExitSec: null }, [], 5 * DAY);
+  st.set('TRK_BK-M', JSON.stringify({ revision: 1, digest: 'ORIGINAL-DIGEST', seenAt: NOW - 5 * DAY }));
+  var rep = {};
+  gc(st, now, rep);
+  assert.ok(has(st, 'BK_BK-M') && has(st, 'TRK_BK-M'), '有効な予約の BK/TRK は保持');
+  assert.strictEqual(JSON.parse(st.get('TRK_BK-M')).digest, 'ORIGINAL-DIGEST', '凍結判定の根拠（digest）を保つ');
+  assert.strictEqual(rep.retained.BK_ACTIVE_BOOKING, 1);
+  assert.strictEqual(rep.retained.TRK_ACTIVE_BOOKING, 1);
+  now.v = NOW + 3 * DAY + 1;                                   // 利用可能時間の終了後
+  gc(st, now);
+  assert.ok(!has(st, 'BK_BK-M') && !has(st, 'TRK_BK-M'), '終了後は期限（3日）超過なら回収');
 });

@@ -1399,6 +1399,14 @@ var SwitchBotAccessInfra = (function () {
     var keyReadyRefs = {};
     var krOld = safeParse(store.get('KEYREADY'));
     if (krOld && Array.isArray(krOld.refs)) krOld.refs.forEach(function (id) { if (typeof id === 'string') keyReadyRefs[id] = true; });
+    // 有効な予約（利用可能時間の終了前）の BK/TRK は期限で消さない。TRK の revision/digest は「同じ改訂での内容変更（DIGEST_MISMATCH）」の凍結根拠、
+    // BK の head は古い改訂の巻き戻し防止の根拠で、複数日にまたがる予約では3日の期限が先に来るため（#912）。
+    var activeBookings = {};
+    keys.forEach(function (k) {
+      if (k.indexOf('BK_') !== 0) return;
+      var ba = safeParse(store.get(k));
+      if (ba && ba.head && ba.head.desired === true && typeof ba.head.endSec === 'number' && ba.head.endSec > nowSec) activeBookings[String(ba.bookingId)] = true;
+    });
     var retained = {}; // 残存理由（固定コード）ごとの件数。予約ID・値・キー名は含めない
     var nextPurgeAt = null; // 次に回収対象になり得る最短時刻（時刻ベース／早期回収待ちのBK・TRK・EVT・送達済み通知）
     function keep(code, atSec) {
@@ -1435,6 +1443,7 @@ var SwitchBotAccessInfra = (function () {
         if (live.length !== (idx.ops || []).length) { idx.ops = live; store.set(k, JSON.stringify(idx)); removed.BK_OPREF++; }
         if (live.length) { keep('BK_OP_REMAINS'); return; } // OP が残る間は保持
         if (unresolvedBookings[idx.bookingId]) { keep('BK_UNRESOLVED_OP'); return; }
+        if (activeBookings[String(idx.bookingId)]) { keep('BK_ACTIVE_BOOKING'); return; }
         if (typeof idx.touchedAt !== 'number') { idx.touchedAt = nowSec; store.set(k, JSON.stringify(idx)); keep('BK_AGE_UNKNOWN', nowSec + ret.bkSec); return; } // 年齢不明は今から数える
         if (nowSec - idx.touchedAt > ret.bkSec || (earlyBookings[idx.bookingId] && nowSec - idx.touchedAt >= Core.EARLY_PURGE_GRACE_SEC)) { store.del(k); removed.BK++; return; }
         var bkAt = idx.touchedAt + ret.bkSec;
@@ -1476,6 +1485,7 @@ var SwitchBotAccessInfra = (function () {
         var t = safeParse(v);
         var bid = k.slice(4);
         if (unresolvedBookings[bid]) { keep('TRK_UNRESOLVED_OP'); return; }
+        if (activeBookings[bid]) { keep('TRK_ACTIVE_BOOKING'); return; }
         if (!t || typeof t.seenAt !== 'number' || nowSec - t.seenAt > ret.trackSec ||
             (earlyBookings[bid] && nowSec - t.seenAt >= Core.EARLY_PURGE_GRACE_SEC)) { store.del(k); removed.TRK++; }
         else keep('TRK_WAIT_RETENTION', t.seenAt + ret.trackSec);
