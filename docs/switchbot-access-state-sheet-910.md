@@ -32,13 +32,13 @@
 | 接頭辞 | 内容 | 個人情報/秘密 | 書き手・性質 | 現行の保持・回収（#887） | 推奨の正本 | ミラー |
 | --- | --- | --- | --- | --- | --- | --- |
 | `OP_<id>` | 鍵の発行/削除操作の状態（`PLANNED`〜終端） | 予約ID・deviceId（暗証番号は含まない） | 状態遷移ごとに更新。**正本の中核** | 終端OPは30日後にCore.sweepが回収。**未解決は無期限保持** | Properties | ○（予約は末尾マスク、deviceIdは末尾4桁） |
-| `BK_<bookingId>` | 予約→OP索引 | 予約ID | OP作成で更新 | OPが残る間/未解決予約は保持。OP消滅後30日 | Properties | ○（件数・OP状態の集約） |
+| `BK_<bookingId>` | 予約→OP索引 | 予約ID | OP作成で更新 | OPが残る間/未解決予約は保持。OP消滅後3日（#912。取消・非対象・終了後は台帳の読取範囲を外れた後に早期回収） | Properties | ○（件数・OP状態の集約） |
 | `DLV_<opId>` | 暗証番号メールの配送状態（`SENDING/DELIVERED/NOT_SENT/UNKNOWN/SUPPRESSED`） | OP参照のみ（宛先・本文なし） | 外部送信**前**に `SENDING` を永続化 | 参照元OPがある間保持、消えたら回収 | Properties | ○ |
-| `TRK_<bookingId>` | 台帳照合の観測記録 | 予約ID | 照合ジョブで更新 | 未解決予約は保持、最終観測から30日 | Properties | △（件数のみ） |
-| `EVT_<dev>_<event>_<cmd>` | SwitchBot Webhookの受信記録 | deviceId・commandId | doPost/同期 | 未解決OPが参照する間は保護、30日 | Properties | ✕（件数のみ） |
+| `TRK_<bookingId>` | 台帳照合の観測記録 | 予約ID | 照合ジョブで更新 | 未解決予約は保持、最終観測から3日（#912） | Properties | △（件数のみ） |
+| `EVT_<dev>_<event>_<cmd>` | SwitchBot Webhookの受信記録 | deviceId・commandId | doPost/同期 | 未解決OPが参照する間は保護、3日（#912） | Properties | ✕（件数のみ） |
 | `ALERT_<opId>_<code>` | 通知重複抑止マーカー | OP参照 | 通知時 | 参照元OPが消えたら回収 | Properties | ✕ |
 | `INBOX_*` | ロック失敗時のWebhook一時退避 | deviceId・commandId | **doPost（ホットパス）** | TTL 900秒、上限あり | **Properties（必須。Sheets書込みを入れない）** | ✕ |
-| `IALERT_*` | 管理者通知の送達記録（`sentAt`） | コード・参照 | 通知アウトボックス | 送達済みから30日、未送達は保持 | Properties | ○（未送達の有無） |
+| `IALERT_*` | 管理者通知の送達記録（`sentAt`） | コード・参照 | 通知アウトボックス | 送達済みから3日（#912）、未送達は保持 | Properties | ○（未送達の有無） |
 | `ADMINLOG_*` | 管理者操作ログ | 実行者の識別（メール等は含めない設計） | 管理者操作時 | 90日 | Properties | ○（操作種別・日時のみ） |
 | `APICOUNT_YYYYMMDD` | 日別SwitchBot API使用量 | なし | 呼出しごと**加算（ホットパス）** | JST当日＋前日〜7日前の8暦日 | Properties | ○（当日/直近の使用量・予算比） |
 | `HB_<job>` | ジョブ稼働監視（SYNC/SWEEP/DELIVER/CLEANUP/ADMIN） | なし | 各ジョブが上書き | 常設（上書き型） | Properties | ○（最終実行時刻→トリガー健全性表示） |
@@ -53,7 +53,7 @@
 
 1予約あたりの標準経路（発行→配送→削除、変更なし）で、概ね `OP×2 + BK + TRK + DLV + EVT×(2〜4) + ALERT×(0〜2)` ＝ **約8〜12キー**。変更が入るごとに発行＋削除でOPと関連キーが増える。したがって**予約が数件並ぶだけで50キーを超える**（GAS画面の表示制限に当たるのは容量不足ではなく件数）。未解決OPは期限なしで滞留するため、`unresolved` の件数が増加の主因になりうる（#887 の `estimateStorage` が同じ前提）。
 
-総量の見積もりは `estimateStorage` の式（`bookingsPerMonth × 保持30日 × (1+変更) × 2 OP` ＋未解決分）で出せる。容量は500KBに対し通常は余裕があるが、**未解決の放置と1値9KB超（`KEYREADY` / BK索引の肥大）**が先に問題になる。いずれも診断の `ratio` / `valueRatio` で既に監視済み。
+総量の見積もりは `estimateStorage` の式（`bookingsPerMonth × 保持日数（#912以降の既定は3日）× (1+変更) × 2 OP` ＋未解決分）で出せる。容量は500KBに対し通常は余裕があるが、**未解決の放置と1値9KB超（`KEYREADY` / BK索引の肥大）**が先に問題になる。いずれも診断の `ratio` / `valueRatio` で既に監視済み。
 
 ### 2.3 実測の取り方（運営者・読取専用、書込みなし）
 

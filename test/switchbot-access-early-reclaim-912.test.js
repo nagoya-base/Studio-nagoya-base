@@ -142,15 +142,15 @@ test('配送が送信中・結果不明（UNKNOWN）の操作は回収しない�
   });
 });
 
-test('不在確認の証拠がない終端（FAILED / ABANDONED）は30日のまま。30日超なら従来どおり回収する', function () {
+test('不在確認の証拠がない終端（FAILED / ABANDONED）は早期回収せず、保持期限（3日）後に回収する', function () {
   [S.FAILED, S.ABANDONED].forEach(function (state) {
     var st = mem(), se = mem(), now = { v: NOW };
     seed(st, se, 'BK-A', CANCELLED, [{ rev: 1, state: state, ageSec: 2 * HOUR }]);
     run(st, se, now);
     assert.strictEqual(opKeys(st, 'BK-A').length, 1, state + ' は早期回収しない');
-    now.v += 31 * DAY;
+    now.v += 4 * DAY;
     run(st, se, now);
-    assert.strictEqual(opKeys(st, 'BK-A').length, 0, state + ' は30日後に回収');
+    assert.strictEqual(opKeys(st, 'BK-A').length, 0, state + ' は3日後に回収');
   });
 });
 
@@ -178,14 +178,14 @@ test('利用終了後の予約は、全操作の回収後に BK 索引・追跡�
   assert.strictEqual(res.rep.unclassified, 0);
 });
 
-test('利用終了後でも、未解決の操作が残る予約の BK・TRK は保持する。取消の予約は BK 索引を30日残す', function () {
+test('利用終了後でも、未解決の操作が残る予約の BK・TRK は保持する。取消の予約（windowExitSec を持たない旧head）の BK 索引は時刻ベース（3日）で残す', function () {
   var st = mem(), se = mem(), now = { v: NOW };
   seed(st, se, 'BK-U', ENDED, [{ rev: 1, state: S.UNKNOWN, ageSec: 2 * HOUR }]);
   seed(st, se, 'BK-C', CANCELLED, [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 2 * HOUR, dlv: 'DELIVERED' }]);
   run(st, se, now);
   assert.ok(st.get('BK_BK-U') !== null && st.get('TRK_BK-U') !== null && opKeys(st, 'BK-U').length === 1, '未解決は保持');
-  assert.ok(st.get('BK_BK-C') !== null && st.get('TRK_BK-C') !== null, '取消の BK/TRK は30日側');
-  now.v += 31 * DAY;
+  assert.ok(st.get('BK_BK-C') !== null && st.get('TRK_BK-C') !== null, '取消の旧head の BK/TRK は時刻ベース側');
+  now.v += 4 * DAY;
   run(st, se, now);
   assert.strictEqual(st.get('BK_BK-C'), null);
 });
@@ -250,11 +250,15 @@ test('結合: 通常に利用が終わった予約（台帳に残ったまま）
   w.nowMs = Date.parse('2030-01-11T12:20:00+09:00');      // 終了12:00＋猶予15分の後
   sim.run(3600 + 3600 + 600);                             // sync が ALREADY_ENDED を記録 → 削除確認 → 猶予1時間 → sweep
   assert.deepStrictEqual(propKeys(w, 'SNB-1').filter(function (k) { return /^(OP_|DLV_|ALERT_|EVT_)/.test(k); }), [], '操作・配送・通知・Webhook記録は整理済み');
-  // 台帳に予約が残る間は、次の sync が空の BK/TRK を作り直す。sync を挟まず、猶予後の sweep 直後に BK/TRK が回収されることを確認する
+  // 利用日（1/11）の当日中は台帳の読取範囲内で、sync が BK/TRK を作り直すため、範囲内では BK/TRK を残す（OP・配送等は回収済み）
   w.advance(3600 + 60);
   rt.sweepCycle();
+  assert.ok(propKeys(w, 'SNB-1').some(function (k) { return k === 'BK_SNB-1'; }), '読取範囲内（利用日の当日）は BK を残す');
+  // 利用日の翌日 0:00 JST を過ぎて範囲外になったら、sync を挟まない sweep で BK/TRK も整理される
+  w.nowMs = Date.parse('2030-01-12T00:30:00+09:00');
+  rt.sweepCycle();
   var left = propKeys(w, 'SNB-1');
-  assert.deepStrictEqual(left.filter(function (k) { return /^(OP_|DLV_|ALERT_|EVT_|BK_|TRK_)/.test(k); }), [], '関連キーが30日を待たず整理される: ' + left.join(','));
+  assert.deepStrictEqual(left.filter(function (k) { return /^(OP_|DLV_|ALERT_|EVT_|BK_|TRK_)/.test(k); }), [], '範囲外になった後は30日を待たず整理される: ' + left.join(','));
   assert.strictEqual(w.callCount('createKey'), 1, '再発行しない');
   assert.strictEqual(w.userMails.length, 1, '二重配送しない');
   assert.strictEqual(JSON.stringify(w.keys[H.DEV].filter(function (k) { return /^USER-/.test(k.name); })), normalBefore, '通常キーは不変');
