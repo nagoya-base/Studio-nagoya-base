@@ -25,6 +25,9 @@ var SwitchBotAccessInfra = (function () {
   /** 公式クォータ（Apps Script Properties）。デプロイ前に最新の公式値で再確認する。値は設定で上書き可。 */
   var PROPERTIES_LIMITS = { perValueBytes: 9 * 1024, totalBytes: 500 * 1024 };
 
+  /** 通常の状態履歴の既定保持（3日）。Core.DEFAULT_RETENTION_SEC と同じ値（テストで一致を固定）。Core はこの下で解決されるため値を持つ。 */
+  var HISTORY_RETENTION_SEC = 3 * 86400;
+
   /** 既定値。いずれも「実測値」ではなく設計値（basis=UNMEASURED_DEFAULT）。限定検証（#756）で計測して置換する。 */
   var DEFAULTS = {
     syncIntervalSec: 300,
@@ -58,7 +61,10 @@ var SwitchBotAccessInfra = (function () {
     //  - inRunDeliver: 同じ実行内で ISSUED_CONFIRMED になった鍵だけ配送を試みる（true のときのみ）
     inRunConfirmMaxSec: 0,
     inRunDeliver: false,
-    retention: { bkSec: 30 * 86400, evtSec: 30 * 86400, outboxSec: 30 * 86400, trackSec: 30 * 86400, adminLogSec: 90 * 86400 }
+    // 通常の状態履歴は原則3日（Issue #912）。未解決の鍵操作・配送・UNKNOWN は期限で消さない（保護側の条件が優先）。
+    // adminLogSec は90日のまま: 管理者操作（個別削除・結果確定・代替入室対応の記録。infra-754 §10）の唯一の証跡で、参照する読取経路は無いが
+    // 書込みは管理者操作時のみで量が小さく、3日では運営の事後確認に足りないため（短縮は別途判断）。
+    retention: { bkSec: HISTORY_RETENTION_SEC, evtSec: HISTORY_RETENTION_SEC, outboxSec: HISTORY_RETENTION_SEC, trackSec: HISTORY_RETENTION_SEC, adminLogSec: 90 * 86400 }
   };
 
   /** 同期内の反映確認で待ってよい最大秒数の上限（#893）。ロックを保持したまま待つため、他ジョブの待機（lockWaitMs=20秒）を踏まえて短く固定する。 */
@@ -1386,16 +1392,34 @@ var SwitchBotAccessInfra = (function () {
     });
     var keys = store.keys();
 
-    // 早期回収の対象予約（Issue #912）: 全OPが回収済みで、利用可能時間が終了した予約。BK 索引と追跡記録を30日待たず整理する。
-    // 取消・非対象の予約（endSec なし）は、遅延した古い確定イベントを AFTER_CANCEL で弾く head を残すため従来の30日。
+    // 早期回収の対象予約（Issue #912）: 全OPが回収済みで未解決の操作が無く、早期回収の最短時刻（Core.earlyReclaimAtSec）を過ぎた予約。
+    // 利用終了後はその終了時刻、取消・非対象は台帳の読取範囲（利用日が当日・翌日）を外れてから。範囲内の間は再観測で作り直されるため消さない。
+    // 鍵準備の判定に使う追跡対象（KEYREADY.refs）の予約は、読取範囲外でも再評価されるので早期回収しない。
     var earlyBookings = {};
+    var keyReadyRefs = {};
+    var krOld = safeParse(store.get('KEYREADY'));
+    if (krOld && Array.isArray(krOld.refs)) krOld.refs.forEach(function (id) { if (typeof id === 'string') keyReadyRefs[id] = true; });
+    // 有効な予約（利用可能時間の終了前）の BK/TRK は期限で消さない。TRK の revision/digest は「同じ改訂での内容変更（DIGEST_MISMATCH）」の凍結根拠、
+    // BK の head は古い改訂の巻き戻し防止の根拠で、複数日にまたがる予約では3日の期限が先に来るため（#912）。
+    var activeBookings = {};
+    keys.forEach(function (k) {
+      if (k.indexOf('BK_') !== 0) return;
+      var ba = safeParse(store.get(k));
+      if (ba && ba.head && ba.head.desired === true && typeof ba.head.endSec === 'number' && ba.head.endSec > nowSec) activeBookings[String(ba.bookingId)] = true;
+    });
+    var retained = {}; // 残存理由（固定コード）ごとの件数。予約ID・値・キー名は含めない
+    var nextPurgeAt = null; // 次に回収対象になり得る最短時刻（時刻ベース／早期回収待ちのBK・TRK・EVT・送達済み通知）
+    function keep(code, atSec) {
+      retained[code] = (retained[code] || 0) + 1;
+      if (typeof atSec === 'number' && (nextPurgeAt === null || atSec < nextPurgeAt)) nextPurgeAt = atSec;
+    }
     keys.forEach(function (k) {
       if (k.indexOf('BK_') !== 0) return;
       var bi = safeParse(store.get(k));
-      var endBasis = bi && bi.head ? Core.headEndSec(bi.head) : null; // 有効中は endSec、終了後は endedSec（取消・非対象は null）
-      if (endBasis === null || endBasis > nowSec) return;
+      var at = bi && bi.head ? Core.earlyReclaimAtSec(bi.head) : null;
+      if (at === null || at > nowSec) return;
       var anyLive = (bi.ops || []).some(function (id) { return !!opIds[id]; });
-      if (!anyLive && !unresolvedBookings[bi.bookingId]) earlyBookings[bi.bookingId] = true;
+      if (!anyLive && !unresolvedBookings[bi.bookingId] && !keyReadyRefs[bi.bookingId]) earlyBookings[bi.bookingId] = true;
     });
 
     keys.forEach(function (k) {
@@ -1417,19 +1441,25 @@ var SwitchBotAccessInfra = (function () {
         if (!idx) return;
         var live = (idx.ops || []).filter(function (id) { return !!opIds[id]; });
         if (live.length !== (idx.ops || []).length) { idx.ops = live; store.set(k, JSON.stringify(idx)); removed.BK_OPREF++; }
-        if (live.length) return; // OP が残る間は保持
-        if (unresolvedBookings[idx.bookingId]) return;
-        if (typeof idx.touchedAt !== 'number') { idx.touchedAt = nowSec; store.set(k, JSON.stringify(idx)); return; } // 年齢不明は今から数える
-        if (nowSec - idx.touchedAt > ret.bkSec || (earlyBookings[idx.bookingId] && nowSec - idx.touchedAt >= Core.EARLY_PURGE_GRACE_SEC)) { store.del(k); removed.BK++; }
+        if (live.length) { keep('BK_OP_REMAINS'); return; } // OP が残る間は保持
+        if (unresolvedBookings[idx.bookingId]) { keep('BK_UNRESOLVED_OP'); return; }
+        if (activeBookings[String(idx.bookingId)]) { keep('BK_ACTIVE_BOOKING'); return; }
+        if (typeof idx.touchedAt !== 'number') { idx.touchedAt = nowSec; store.set(k, JSON.stringify(idx)); keep('BK_AGE_UNKNOWN', nowSec + ret.bkSec); return; } // 年齢不明は今から数える
+        if (nowSec - idx.touchedAt > ret.bkSec || (earlyBookings[idx.bookingId] && nowSec - idx.touchedAt >= Core.EARLY_PURGE_GRACE_SEC)) { store.del(k); removed.BK++; return; }
+        var bkAt = idx.touchedAt + ret.bkSec;
+        var bkEarly = idx.head ? Core.earlyReclaimAtSec(idx.head) : null;
+        if (bkEarly !== null && !keyReadyRefs[idx.bookingId]) bkAt = Math.min(bkAt, Math.max(bkEarly, idx.touchedAt + Core.EARLY_PURGE_GRACE_SEC));
+        keep(bkEarly !== null ? 'BK_WAIT_EARLY_RECLAIM' : 'BK_WAIT_RETENTION', bkAt);
         return;
       }
       // --- Webhook 記録 ---
       if (k.indexOf('EVT_') === 0) {
         var ev = safeParse(v);
         var evKey = k.slice(4);
-        if (protectedEvt[evKey]) return;
+        if (protectedEvt[evKey]) { keep('EVT_UNRESOLVED_OP'); return; }
         var at = ev && typeof ev.receivedAtSec === 'number' ? ev.receivedAtSec : null;
         if (at === null || nowSec - at > ret.evtSec) { store.del(k); removed.EVT++; }
+        else keep('EVT_WAIT_RETENTION', at + ret.evtSec);
         return;
       }
       // --- 通知重複抑止マーカー（コア） ---
@@ -1454,15 +1484,19 @@ var SwitchBotAccessInfra = (function () {
       if (k.indexOf('TRK_') === 0) {
         var t = safeParse(v);
         var bid = k.slice(4);
-        if (unresolvedBookings[bid]) return;
+        if (unresolvedBookings[bid]) { keep('TRK_UNRESOLVED_OP'); return; }
+        if (activeBookings[bid]) { keep('TRK_ACTIVE_BOOKING'); return; }
         if (!t || typeof t.seenAt !== 'number' || nowSec - t.seenAt > ret.trackSec ||
             (earlyBookings[bid] && nowSec - t.seenAt >= Core.EARLY_PURGE_GRACE_SEC)) { store.del(k); removed.TRK++; }
+        else keep('TRK_WAIT_RETENTION', t.seenAt + ret.trackSec);
         return;
       }
       // --- 管理者通知の送達記録（送達済みのみ回収。未送達は保持） ---
       if (k.indexOf('IALERT_') === 0) {
         var ia = safeParse(v);
         if (ia && typeof ia.sentAt === 'number' && nowSec - ia.sentAt > ret.outboxSec) { store.del(k); removed.IALERT++; }
+        else if (ia && typeof ia.sentAt === 'number') keep('IALERT_WAIT_RETENTION', ia.sentAt + ret.outboxSec);
+        else keep('IALERT_UNDELIVERED');
         return;
       }
       // --- 管理者操作ログ ---
@@ -1483,7 +1517,7 @@ var SwitchBotAccessInfra = (function () {
         removed.SECRET++;
       }
     });
-    if (report) report.unclassified = unclassified;
+    if (report) { report.unclassified = unclassified; report.retained = retained; report.nextPurgeAtSec = nextPurgeAt; }
     return removed;
   }
 
@@ -2380,7 +2414,7 @@ var SwitchBotAccessInfra = (function () {
       // 未分類キーは削除も通知もしない（メール送信の副作用を増やさない）。件数のみ unclassifiedKeys で報告する。
       var st = storageGate(measureStore(deps.store), cfg, cfg.storageLimits);
       if (!st.ok) infraAlert(st.code, null, null, null);
-      return { ok: true, removed: removed, unclassifiedKeys: gcReport.unclassified || 0, cleanup: { attempted: sw && sw.attempted || 0, confirmed: sw && sw.confirmed || 0, pending: sw && sw.pending || 0, stopped: sw && sw.stopped || 0, deferred: sw && sw.deferred || 0 }, storage: { ratio: st.ratio, ok: st.ok } };
+      return { ok: true, removed: removed, retained: gcReport.retained || {}, nextPurgeAtSec: typeof gcReport.nextPurgeAtSec === 'number' ? gcReport.nextPurgeAtSec : null, unclassifiedKeys: gcReport.unclassified || 0, cleanup: { attempted: sw && sw.attempted || 0, confirmed: sw && sw.confirmed || 0, pending: sw && sw.pending || 0, stopped: sw && sw.stopped || 0, deferred: sw && sw.deferred || 0 }, storage: { ratio: st.ratio, ok: st.ok } };
     }
 
     function sweepCycle() {

@@ -43,11 +43,15 @@ var SwitchBotAccessCore = (function () {
   var TERMINAL = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED, STATE.FAILED, STATE.ABANDONED];
 
   /**
-   * 早期回収（Issue #912）。実鍵の不在が確認済みの状態だけ（FAILED/ABANDONED は不在確認の証拠が無いので対象外＝従来の30日）。
+   * 早期回収（Issue #912）。実鍵の不在が確認済みの状態だけ（FAILED/ABANDONED は不在確認の証拠が無いので対象外＝保持期限（3日）で回収）。
    * 回収は「終了後の猶予」を置く。猶予は遅延Webhook・直前の通知/配送の確定を待つ最短の保持（既定は1時間周期の sweep 1周期分）。
    */
+  /** 同じ改訂・窓の再発行を妨げない終端状態（期間 A→B→A の復元）。FAILED・ARCHIVED_EXPIRED は妨げる＝予約が有効な間は記録を消さない（#912）。 */
+  var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
   var EARLY_PURGE_STATES = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED];
   var EARLY_PURGE_GRACE_SEC = 3600;
+  /** 通常の状態履歴（終端OP・BK索引・追跡・Webhook記録・送達済み通知）の既定保持。最終の確定・観測からの経過（Issue #912）。 */
+  var DEFAULT_RETENTION_SEC = 3 * 86400;
 
   /** 予約索引の head から「利用可能時間（猶予込み）の終了時刻」を返す。有効中は endSec、終了後は endedSec。取消・非対象は null。 */
   function headEndSec(head) {
@@ -55,6 +59,28 @@ var SwitchBotAccessCore = (function () {
     if (typeof head.endSec === 'number') return head.endSec;
     if (typeof head.endedSec === 'number') return head.endedSec;
     return null;
+  }
+
+  /**
+   * 予約索引（BK）・追跡（TRK）を早期回収してよくなる最短時刻（epoch秒）。回収不可（根拠なし）なら null。Issue #912。
+   * 台帳の読取範囲は「利用日(JST)が当日・翌日」＋未解決の鍵操作がある予約だけ（AccessLedgerReader.select）。範囲内にいる間は
+   * 毎周期の再観測で BK/TRK が作り直され、取消後の遅延した確定イベントを AFTER_CANCEL で弾く head も必要なので、
+   * 範囲を外れる時刻（利用日の翌日 0:00 JST = windowExitSec）より前には回収しない。範囲を外れた予約は、未解決の操作が無い限り
+   * 二度と読まれず、BK/TRK を消しても再発行・再同期の入口が無い。
+   *  - 有効な予約: 利用可能時間の終了後、かつ範囲外
+   *  - 取消・非対象: 範囲外（windowExitSec を持つ head のみ。持たない旧 head は時刻ベース保持に任せる）
+   *  - 利用終了済み: 終了後（windowExitSec を持つ head は範囲外も条件）
+   */
+  function earlyReclaimAtSec(head) {
+    if (!head) return null;
+    var endBasis = headEndSec(head);
+    var exit = typeof head.windowExitSec === 'number' ? head.windowExitSec : null;
+    if (head.desired === true) {
+      if (endBasis === null) return null;
+      return exit === null ? endBasis : Math.max(endBasis, exit);
+    }
+    if (exit !== null) return endBasis === null ? exit : Math.max(endBasis, exit);
+    return endBasis; // 旧 head（windowExitSec なし）: 終了済みのみ。取消・非対象は null（時刻ベースの保持）
   }
 
   var EVIDENCE = {
@@ -155,6 +181,11 @@ var SwitchBotAccessCore = (function () {
     var kp = resolveKeypad(config, booking);
     if (!kp.deviceId) return no(kp.error);
     return { eligible: true, reason: null, startSec: startSec, endSec: endSec, deviceId: kp.deviceId };
+  }
+
+  function windowExitSecOf(booking) {
+    var d0 = jstToEpochSec(booking && booking.date, '00:00');
+    return d0 === null ? null : d0 + 86400;
   }
 
   function validatePasscode(p) {
@@ -714,7 +745,9 @@ var SwitchBotAccessCore = (function () {
           startSec: elig.eligible ? elig.startSec : null, endSec: elig.eligible ? elig.endSec : null,
           deviceId: elig.eligible ? elig.deviceId : null,
           // 利用可能時間が終了した予約（取消ではない）の終了時刻。endSec は終了後に null になるため別に持つ（早期回収の根拠。#912）
-          endedSec: !cancelledNow && elig.reason === 'ALREADY_ENDED' && typeof elig.endSec === 'number' ? elig.endSec : null
+          endedSec: !cancelledNow && elig.reason === 'ALREADY_ENDED' && typeof elig.endSec === 'number' ? elig.endSec : null,
+          // 台帳の読取範囲（利用日が当日・翌日）から外れる時刻＝利用日(JST)の翌日 0:00。BK/TRK の早期回収は範囲外になってから（#912）
+          windowExitSec: windowExitSecOf(booking)
         };
         idx.touchedAt = deps.nowSec(); // 索引の保持期限（#754）。未解決 OP がある間は回収側が保護する
         save(bkKey(booking.bookingId), idx);
@@ -772,7 +805,6 @@ var SwitchBotAccessCore = (function () {
         }
         var same = recs.filter(function (r) { return r.op === OP.ISSUE && r.revision === booking.revision && sameWindow(r, elig); });
         // 削除済み/放棄済みの過去 record は再発行を妨げない（期間 A→B→A の復元）。未完了・FAILED・期限切れは妨げる。
-        var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
         if (same.some(function (r) { return REISSUABLE.indexOf(r.state) === -1; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
         // 新規発行直前の注入ゲート（#754: Keypad 容量・保存容量）。削除・照合は止めない。
         var gate = checkIssueGate(booking, elig);
@@ -965,7 +997,11 @@ var SwitchBotAccessCore = (function () {
     function resolveDeliveryLocked(recId, decision, actor) {
       var rec = load(recKey(recId));
       var d = load(dlvKey(recId));
-      if (!rec || !d || rec.state !== STATE.ISSUED_CONFIRMED) return { ok: false, error: 'NOT_RESOLVABLE' };
+      if (!rec || !d) return { ok: false, error: 'NOT_RESOLVABLE' };
+      // 鍵が削除・失効済みの終端OPでも、再送を伴わない確定（結果の確定・打ち切り）は許可する。配送が送信中・結果不明のまま残る終端OPは
+      // 保持期限で消さない（保護）ため、管理者が確定して保護を外せる出口が要る（#912）。再送・再案内は ISSUED_CONFIRMED のみ。
+      var nonSending = decision === 'CONFIRM_DELIVERED' || decision === 'GIVE_UP';
+      if (rec.state !== STATE.ISSUED_CONFIRMED && !(nonSending && TERMINAL.indexOf(rec.state) !== -1)) return { ok: false, error: 'NOT_RESOLVABLE' };
       var basis = 'ADMIN:' + actor;
       var openStates = [DLV.UNKNOWN, DLV.SENDING, DLV.NOT_SENT];
       if (decision === 'CONFIRM_DELIVERED') {
@@ -1012,7 +1048,7 @@ var SwitchBotAccessCore = (function () {
      */
     function sweep(opts) {
       var now = deps.nowSec();
-      var retention = typeof config.retentionSec === 'number' ? config.retentionSec : 30 * 86400;
+      var retention = typeof config.retentionSec === 'number' ? config.retentionSec : DEFAULT_RETENTION_SEC;
       var cap = opts && typeof opts.maxDeletes === 'number' ? opts.maxDeletes
         : (typeof config.expiredDeleteMaxPerSweep === 'number' ? config.expiredDeleteMaxPerSweep : 5);
       var ctx = { left: Math.max(0, cap), attempted: 0, confirmed: 0, pending: 0, stopped: 0, deferred: 0 };
@@ -1101,8 +1137,9 @@ var SwitchBotAccessCore = (function () {
           alert(rec, 'EXPIRED_CHECK_FAILED');
         }
       } else if (TERMINAL.indexOf(rec.state) !== -1 && rec.updatedAt) {
+        var aged = now - rec.updatedAt > retention && timePurgeable(rec);
         var early = now - rec.updatedAt <= retention && earlyPurgeable(rec, now);
-        if (now - rec.updatedAt > retention || early) {
+        if (aged || early) {
           deps.store.del(k);
           deps.store.del(dlvKey(rec.id));
           deps.secrets.del('SECRET_' + rec.id);
@@ -1119,6 +1156,27 @@ var SwitchBotAccessCore = (function () {
       }
     }
 
+    /**
+     * 保持期限（既定3日）で回収してよいか（Issue #912）。期限は条件の一部で、これだけでは消さない。
+     *  - 配送が送信中・結果不明のまま残る操作は、期限後も保持する（管理者が結果を確定するまで根拠を残す）
+     *  - 予約がまだ有効（利用可能時間の終了前）の間は、再発行を妨げる終端（FAILED 等。REISSUABLE 以外）を保持する（消すと同期が同じ改訂・窓で再発行する）
+     *  - 同じ予約に未終端の操作（有効な鍵・削除未確認・UNKNOWN 等）が残る間は、終端の操作も保持する
+     *    （後続の案内メールの種別判定 deliveryKind が過去の操作の配送履歴を参照するため）
+     * ロック（予約・Keypad）下で呼ぶ。
+     */
+    function timePurgeable(rec) {
+      if (!deliverySettled(rec.id)) return false;
+      // 予約がまだ有効（利用可能時間の終了前）の間は、終端OPも期限で消さない。同期は FAILED／期限切れ等の記録を「同じ改訂・窓の再発行を妨げる根拠」にしており
+      // （sync の REISSUABLE）、複数日にまたがる予約で期限が先に来ると、記録の消失後に createKey が再送されるため。
+      var h = bookingIndex(rec.bookingId).head;
+      if (REISSUABLE.indexOf(rec.state) === -1 && h && h.desired === true && !(typeof h.endSec === 'number' && h.endSec <= deps.nowSec())) return false;
+      return bookingIndex(rec.bookingId).ops.every(function (id) {
+        if (id === rec.id) return true;
+        var r = load(recKey(id));
+        return !r || TERMINAL.indexOf(r.state) !== -1;
+      });
+    }
+
     /** 配送がもう動かない状態か。削除済みの操作は再配送されない（配送は ISSUED_CONFIRMED のみ）。送信中・結果不明は管理者判断が要るため未完了。 */
     function deliverySettled(recId) {
       var d = load(dlvKey(recId));
@@ -1127,11 +1185,11 @@ var SwitchBotAccessCore = (function () {
     }
 
     /**
-     * 30日を待たず回収してよいか（Issue #912）。すべて満たすときだけ true。
+     * 保持期限を待たず回収してよいか（Issue #912）。すべて満たすときだけ true。
      *  - この操作が、実鍵の不在確認済みの終端（DELETED_CONFIRMED / ALREADY_ABSENT / ARCHIVED_EXPIRED）で、猶予を過ぎている
      *  - 同じ予約の全ての操作も同じ状態・猶予経過・配送完了（変更・再発行・未削除の旧鍵・配送中が1つでもあれば全体を保持。
      *    変更案内の文面分岐 deliveryKind が過去の操作を参照するため、残りが動いている間は消さない）
-     *  - 予約が、取消・非対象、または利用可能時間の終了後（有効な予約の途中で管理者が削除した鍵などは、再発行判断を30日側に残す）
+     *  - 予約が、取消・非対象、または利用可能時間の終了後（有効な予約の途中で管理者が削除した鍵などは、再発行判断を時刻ベース（3日）側に残す）
      * ロック（予約・Keypad）下で呼ぶ。
      */
     function earlyPurgeable(rec, now) {
@@ -1261,7 +1319,7 @@ var SwitchBotAccessCore = (function () {
   }
 
   return {
-    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, IN_RUN_BASIS: IN_RUN_BASIS, TERMINAL: TERMINAL, EARLY_PURGE_GRACE_SEC: EARLY_PURGE_GRACE_SEC, headEndSec: headEndSec, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
+    STATE: STATE, EVIDENCE: EVIDENCE, OP: OP, IN_RUN_BASIS: IN_RUN_BASIS, TERMINAL: TERMINAL, EARLY_PURGE_GRACE_SEC: EARLY_PURGE_GRACE_SEC, DEFAULT_RETENTION_SEC: DEFAULT_RETENTION_SEC, headEndSec: headEndSec, earlyReclaimAtSec: earlyReclaimAtSec, DLV: DLV, DELIVERY_DECISIONS: DELIVERY_DECISIONS,
     maskId: maskId, jstToEpochSec: jstToEpochSec, resolveKeypad: resolveKeypad, validatePasscode: validatePasscode,
     evaluateEligibility: evaluateEligibility, inspectKeyList: inspectKeyList, inspectAbsence: inspectAbsence, normDev: normDev, judgeIssued: judgeIssued, classifyId: classifyId,
     parseKeypadWebhook: parseKeypadWebhook, classifyApi: classifyApi, createEngine: createEngine
