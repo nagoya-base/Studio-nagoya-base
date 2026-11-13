@@ -184,7 +184,7 @@ test('終端OPは3日を過ぎても、同じ予約に未終端の操作（有�
   });
   var st2 = mem();
   put(st2, 'BK-S', { revision: 2, cancelled: false, desired: true, startSec: NOW, endSec: NOW + DAY, deviceId: DEV },
-    [{ rev: 1, state: S.FAILED, ageSec: 5 * DAY, dlv: 'DELIVERED' }, { rev: 2, state: S.FAILED, ageSec: 5 * DAY, dlv: 'DELIVERED' }], 5 * DAY);
+    [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * DAY, dlv: 'DELIVERED' }, { rev: 2, state: S.ABANDONED, ageSec: 5 * DAY, dlv: 'DELIVERED' }], 5 * DAY);
   engineOf(st2, now).sweep();
   assert.strictEqual(st2.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).length, 0, 'すべて終端なら3日後に回収');
 });
@@ -358,4 +358,67 @@ test('時刻が読めない予約（startAt が空）は常に読取対象。win
   var head = JSON.parse(st.get('BK_B-X')).head;
   assert.strictEqual(head.windowExitSec, null);
   assert.strictEqual(C.earlyReclaimAtSec(head), null, '早期回収しない');
+});
+
+// ---------------------------------------------------------------- Codex レビュー対応（P2 x2）
+
+test('有効な予約（利用可能時間が終了していない）の FAILED 記録は、3日を超えても保持し、同期が同じ改訂で再発行しない。終了後は期限で回収する', function () {
+  // 複数日にまたがる予約（利用開始から5日経過・終了は3日後）。FAILED は同じ改訂・窓の再発行を妨げる根拠
+  var st = mem(), now = { v: NOW };
+  var wStart = C.jstToEpochSec('2030-01-05', '10:00') - 600, wEnd = C.jstToEpochSec('2030-01-13', '12:00') + 900; // 設定の猶予（前600秒・後900秒）込みの窓
+  var head = { revision: 1, cancelled: false, desired: true, startSec: wStart, endSec: wEnd, deviceId: DEV, endedSec: null, windowExitSec: null };
+  put(st, 'BK-M', head, [{ rev: 1, state: S.FAILED, ageSec: 5 * DAY, dlv: 'NOT_SENT', over: { startSec: wStart, endSec: wEnd } }], 5 * DAY);
+  engineOf(st, now).sweep();
+  assert.strictEqual(st.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).length, 1, '有効な予約の FAILED は保持');
+  // 同期（予約が有効なまま）は FAILED を理由に再発行しない（API 注入は即失敗するスタブ。呼べば例外）
+  var eng = engineOf(st, now);
+  var out = eng.sync({ bookingId: 'BK-M', revision: 1, status: 'CONFIRMED', paymentStatus: 'paid', brand: 'studio', facility: 'main', room: 'A',
+    date: '2030-01-05', startTime: '10:00', endDate: '2030-01-13', endTime: '12:00' });
+  assert.ok(out.skipped, '再発行せず見送る: ' + JSON.stringify(out));
+  // 利用可能時間の終了後は、時刻ベースで回収する
+  now.v = wEnd + HOUR + 1;
+  var h2 = Object.assign({}, head, { desired: false, endSec: null, endedSec: wEnd });
+  var bk = JSON.parse(st.get('BK_BK-M')); bk.head = h2; st.set('BK_BK-M', JSON.stringify(bk));
+  var op = JSON.parse(st.get('OP_BK-M:1:****37DD:ISSUE#1')); op.updatedAt = now.v - 4 * DAY; st.set('OP_BK-M:1:****37DD:ISSUE#1', JSON.stringify(op));
+  engineOf(st, now).sweep();
+  assert.strictEqual(st.keys().filter(function (k) { return k.indexOf('OP_') === 0; }).length, 0, '終了後は3日超で回収');
+});
+
+test('終端OPに残った送信中・結果不明の配送は、管理者が GIVE_UP / CONFIRM_DELIVERED で確定でき、確定後は期限で回収される（永久保持にしない）', function () {
+  ['UNKNOWN', 'SENDING'].forEach(function (dlv) {
+    ['GIVE_UP', 'CONFIRM_DELIVERED'].forEach(function (decision) {
+      var st = mem(), now = { v: NOW };
+      put(st, 'BK-R', cancelledHead(true), [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * DAY, dlv: dlv }], 5 * DAY);
+      var id = 'BK-R:1:****37DD:ISSUE#1';
+      var eng = engineOf(st, now);
+      eng.sweep();
+      assert.ok(has(st, 'OP_' + id), dlv + ': 確定前は保持');
+      var r = eng.adminResolveDelivery(id, decision, 'admin-label');
+      assert.strictEqual(r.ok, true, dlv + '/' + decision + ': 終端OPでも確定できる ' + JSON.stringify(r));
+      assert.strictEqual(JSON.parse(st.get('DLV_' + id)).state, decision === 'GIVE_UP' ? 'SUPPRESSED' : 'DELIVERED');
+      eng.sweep();
+      assert.ok(!has(st, 'OP_' + id) && !has(st, 'DLV_' + id), dlv + '/' + decision + ': 確定後は3日超で回収');
+    });
+  });
+});
+
+test('終端OPへの管理者操作は、再送を伴わない確定（GIVE_UP / CONFIRM_DELIVERED）だけ。ALLOW_RESEND / REGUIDE は拒否し、メールを送らない', function () {
+  var st = mem(), now = { v: NOW };
+  put(st, 'BK-R', cancelledHead(true), [{ rev: 1, state: S.DELETED_CONFIRMED, ageSec: 5 * DAY, dlv: 'UNKNOWN' }], 5 * DAY);
+  var id = 'BK-R:1:****37DD:ISSUE#1';
+  var sent = 0;
+  var eng = C.createEngine({
+    store: st, secrets: mem(), lock: function (keys, fn) { return fn(); },
+    api: { listDevices: function () { throw new Error('NO_API_IN_THIS_TEST'); } },
+    notifyAdmin: function () {}, deliverCode: function () { sent++; }, deliveryGate: function () { return { ok: true }; },
+    sha256Hex: function (s) { return crypto.createHash('sha256').update(s).digest('hex'); }, randomInt: function (n) { return crypto.randomInt(n); },
+    nowSec: function () { return now.v; }
+  }, { enabled: true, commercialUseApproved: true, eligiblePaymentStatuses: ['paid'], eligibleBrands: ['studio'], graceBeforeSec: 600, graceAfterSec: 900,
+       keypads: [{ brand: 'studio', facility: 'main', room: 'A', deviceId: DEV }] });
+  ['ALLOW_RESEND', 'REGUIDE'].forEach(function (decision) {
+    var r = eng.adminResolveDelivery(id, decision, 'admin-label');
+    assert.strictEqual(r.ok, false, decision + ' は拒否');
+  });
+  assert.strictEqual(JSON.parse(st.get('DLV_' + id)).state, 'UNKNOWN', '拒否時は配送状態を変えない');
+  assert.strictEqual(sent, 0, '送信しない');
 });

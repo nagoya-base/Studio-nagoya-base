@@ -297,7 +297,8 @@
 | 残るもの | 理由 | 残存理由コード（sweep結果 `retained`） |
 | --- | --- | --- |
 | 未終端OP（有効な鍵・削除未確認・`UNKNOWN`・削除送信済み）と、その `BK_`/`TRK_`/`EVT_` | 鍵の実在・削除の確認根拠。成功扱いして消さない | `BK_OP_REMAINS` / `BK_UNRESOLVED_OP` / `TRK_UNRESOLVED_OP` / `EVT_UNRESOLVED_OP` |
-| 配送が `SENDING`/`UNKNOWN` の終端OP | 二重配送防止・結果確定の根拠（管理者が確定するまで） | （OPは `Core.sweep` が判断） |
+| 配送が `SENDING`/`UNKNOWN` の終端OP | 二重配送防止・結果確定の根拠。管理者が `accessAdminResolveDelivery` の `GIVE_UP` / `CONFIRM_DELIVERED` で確定すると保護が外れ、次のsweepで回収される（鍵が削除・失効済みの終端OPでも、再送を伴わないこの2決定は可。`ALLOW_RESEND`/`REGUIDE` は `ISSUED_CONFIRMED` のみ）。未確定の間は `DELIVERY_UNKNOWN` 通知の対象 | （OPは `Core.sweep` が判断） |
+| 予約がまだ有効（利用可能時間の終了前）な間の `FAILED` / `ARCHIVED_EXPIRED` の記録 | 同期は「同じ改訂・窓」の FAILED 等を再発行の妨げとして扱う。複数日にまたがる予約で期限が先に来ても消さない（消すと `createKey` が再送される）。`DELETED_CONFIRMED`/`ALREADY_ABSENT`/`ABANDONED` は再発行を妨げないため対象外。終了後は3日で回収 | 同上 |
 | 同じ予約に未終端の操作がある間の終端OP | 後続の案内メール種別（`deliveryKind`）が過去の配送履歴を参照する | 同上 |
 | 取消・非対象・利用終了後の `BK_`/`TRK_`（範囲内の間） | 下記「読取範囲」 | `BK_WAIT_EARLY_RECLAIM` |
 | 未送達の `IALERT_`、`KEYREADY`、`HB_*`、`APICOUNT_`（8暦日）、設定・認証情報 | 別目的（通知再送・予算判定・稼働監視）。3日の対象外 | `IALERT_UNDELIVERED` |

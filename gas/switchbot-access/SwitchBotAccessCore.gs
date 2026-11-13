@@ -46,6 +46,8 @@ var SwitchBotAccessCore = (function () {
    * 早期回収（Issue #912）。実鍵の不在が確認済みの状態だけ（FAILED/ABANDONED は不在確認の証拠が無いので対象外＝保持期限（3日）で回収）。
    * 回収は「終了後の猶予」を置く。猶予は遅延Webhook・直前の通知/配送の確定を待つ最短の保持（既定は1時間周期の sweep 1周期分）。
    */
+  /** 同じ改訂・窓の再発行を妨げない終端状態（期間 A→B→A の復元）。FAILED・ARCHIVED_EXPIRED は妨げる＝予約が有効な間は記録を消さない（#912）。 */
+  var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
   var EARLY_PURGE_STATES = [STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT, STATE.ARCHIVED_EXPIRED];
   var EARLY_PURGE_GRACE_SEC = 3600;
   /** 通常の状態履歴（終端OP・BK索引・追跡・Webhook記録・送達済み通知）の既定保持。最終の確定・観測からの経過（Issue #912）。 */
@@ -803,7 +805,6 @@ var SwitchBotAccessCore = (function () {
         }
         var same = recs.filter(function (r) { return r.op === OP.ISSUE && r.revision === booking.revision && sameWindow(r, elig); });
         // 削除済み/放棄済みの過去 record は再発行を妨げない（期間 A→B→A の復元）。未完了・FAILED・期限切れは妨げる。
-        var REISSUABLE = [STATE.ABANDONED, STATE.DELETED_CONFIRMED, STATE.ALREADY_ABSENT];
         if (same.some(function (r) { return REISSUABLE.indexOf(r.state) === -1; })) { out.skipped = out.skipped || 'ALREADY_PLANNED'; return; }
         // 新規発行直前の注入ゲート（#754: Keypad 容量・保存容量）。削除・照合は止めない。
         var gate = checkIssueGate(booking, elig);
@@ -996,7 +997,11 @@ var SwitchBotAccessCore = (function () {
     function resolveDeliveryLocked(recId, decision, actor) {
       var rec = load(recKey(recId));
       var d = load(dlvKey(recId));
-      if (!rec || !d || rec.state !== STATE.ISSUED_CONFIRMED) return { ok: false, error: 'NOT_RESOLVABLE' };
+      if (!rec || !d) return { ok: false, error: 'NOT_RESOLVABLE' };
+      // 鍵が削除・失効済みの終端OPでも、再送を伴わない確定（結果の確定・打ち切り）は許可する。配送が送信中・結果不明のまま残る終端OPは
+      // 保持期限で消さない（保護）ため、管理者が確定して保護を外せる出口が要る（#912）。再送・再案内は ISSUED_CONFIRMED のみ。
+      var nonSending = decision === 'CONFIRM_DELIVERED' || decision === 'GIVE_UP';
+      if (rec.state !== STATE.ISSUED_CONFIRMED && !(nonSending && TERMINAL.indexOf(rec.state) !== -1)) return { ok: false, error: 'NOT_RESOLVABLE' };
       var basis = 'ADMIN:' + actor;
       var openStates = [DLV.UNKNOWN, DLV.SENDING, DLV.NOT_SENT];
       if (decision === 'CONFIRM_DELIVERED') {
@@ -1154,12 +1159,17 @@ var SwitchBotAccessCore = (function () {
     /**
      * 保持期限（既定3日）で回収してよいか（Issue #912）。期限は条件の一部で、これだけでは消さない。
      *  - 配送が送信中・結果不明のまま残る操作は、期限後も保持する（管理者が結果を確定するまで根拠を残す）
+     *  - 予約がまだ有効（利用可能時間の終了前）の間は、再発行を妨げる終端（FAILED 等。REISSUABLE 以外）を保持する（消すと同期が同じ改訂・窓で再発行する）
      *  - 同じ予約に未終端の操作（有効な鍵・削除未確認・UNKNOWN 等）が残る間は、終端の操作も保持する
      *    （後続の案内メールの種別判定 deliveryKind が過去の操作の配送履歴を参照するため）
      * ロック（予約・Keypad）下で呼ぶ。
      */
     function timePurgeable(rec) {
       if (!deliverySettled(rec.id)) return false;
+      // 予約がまだ有効（利用可能時間の終了前）の間は、終端OPも期限で消さない。同期は FAILED／期限切れ等の記録を「同じ改訂・窓の再発行を妨げる根拠」にしており
+      // （sync の REISSUABLE）、複数日にまたがる予約で期限が先に来ると、記録の消失後に createKey が再送されるため。
+      var h = bookingIndex(rec.bookingId).head;
+      if (REISSUABLE.indexOf(rec.state) === -1 && h && h.desired === true && !(typeof h.endSec === 'number' && h.endSec <= deps.nowSec())) return false;
       return bookingIndex(rec.bookingId).ops.every(function (id) {
         if (id === rec.id) return true;
         var r = load(recKey(id));
