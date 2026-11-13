@@ -300,3 +300,62 @@ test('結合: 取消済み予約が台帳に残る間、連続同期でも TRK �
   rt.sweepCycle();
   assert.deepStrictEqual(propKeys(w, 'SNB-1').filter(function (k) { return /^(OP_|DLV_|BK_|TRK_)/.test(k); }), [], '範囲外後は翌日の清掃までに整理');
 });
+
+// ---------------------------------------------------------------- 範囲外の再読込が起きないこと（BK head 破棄の安全前提）
+// 台帳の読取（AccessLedgerReader.select）は「利用日(JST)が当日・翌日」＋ trackedIds（未解決OPのある予約・KEYREADY.refs）だけを返す。
+// head.windowExitSec（利用日の翌日0:00 JST）の前後で、実際の select の返却と一致することを固定する。
+
+var Reader = require('../gas/switchbot-access/AccessLedgerReader.gs');
+function pick(startIso, now, tracked) {
+  var cols = { bookingId: ['B-1'], startAt: [new Date(startIso)], endAt: [new Date(startIso)], brand: ['snb'], status: ['confirmed'],
+    paymentMethod: ['cash'], paymentStatus: ['paid'], revision: [1] };
+  return Reader.select(cols, now * 1000, tracked || [], ['snb']).length === 1;
+}
+
+test('読取範囲の境界: 利用日の前々日は範囲外、前日0:00〜当日中は範囲内、翌日0:00 JST（windowExitSec）ちょうどで範囲外になる', function () {
+  var start = '2030-01-10T10:00:00+09:00';
+  var exit = C.jstToEpochSec('2030-01-10', '00:00') + DAY; // = 2030-01-11 00:00 JST
+  assert.strictEqual(pick(start, C.jstToEpochSec('2030-01-07', '23:59')), false, '前々日以前は対象外（まだ読まれない）');
+  assert.strictEqual(pick(start, C.jstToEpochSec('2030-01-08', '23:59')), false, 'ちょうど2日前の23:59は対象外');
+  assert.strictEqual(pick(start, C.jstToEpochSec('2030-01-09', '00:00')), true, '前日0:00から範囲内');
+  assert.strictEqual(pick(start, exit - 1), true, '翌日0:00の1秒前は範囲内');
+  assert.strictEqual(pick(start, exit), false, '翌日0:00ちょうどで範囲外');
+  assert.strictEqual(pick(start, exit + 30 * DAY), false, '以後は読まれない');
+});
+
+test('同期が記録する windowExitSec は、select が予約を返さなくなる最初の時刻と一致する（取消・非対象・終了済みいずれも）', function () {
+  var cases = [
+    { name: '取消', booking: { status: 'CANCELLED' } },
+    { name: '非対象', booking: { brand: 'other' } },
+    { name: '有効', booking: {} }
+  ];
+  cases.forEach(function (c) {
+    var st = mem(), now = { v: C.jstToEpochSec('2030-01-09', '12:00') };
+    var eng = engineOf(st, now);
+    var b = Object.assign({ bookingId: 'B-1', revision: 1, status: 'CONFIRMED', paymentStatus: 'paid', brand: 'studio', facility: 'main', room: 'A',
+      date: '2030-01-10', startTime: '10:00', endDate: '2030-01-10', endTime: '12:00' }, c.booking);
+    eng.sync(b);
+    var head = JSON.parse(st.get('BK_B-1')).head;
+    assert.strictEqual(head.windowExitSec, C.jstToEpochSec('2030-01-11', '00:00'), c.name);
+    assert.strictEqual(pick('2030-01-10T10:00:00+09:00', head.windowExitSec - 1), true, c.name + ': 直前は範囲内');
+    assert.strictEqual(pick('2030-01-10T10:00:00+09:00', head.windowExitSec), false, c.name + ': 一致する時刻から範囲外');
+  });
+});
+
+test('trackedIds（未解決OPのある予約）は範囲外でも読取対象に残る。解決（OP回収）後は範囲外のまま読まれない', function () {
+  var start = '2030-01-10T10:00:00+09:00';
+  var late = C.jstToEpochSec('2030-02-01', '12:00');
+  assert.strictEqual(pick(start, late, []), false, '追跡なしは範囲外');
+  assert.strictEqual(pick(start, late, ['B-1']), true, '未解決OPがあれば範囲外でも読む（旧キー削除・UNKNOWN の確認が続く）');
+  assert.strictEqual(pick(start, late, ['OTHER']), false, '別予約の追跡は無関係');
+});
+
+test('時刻が読めない予約（startAt が空）は常に読取対象。windowExitSec を持たないため BK/TRK は時刻ベース（3日）でしか回収されない', function () {
+  var cols = { bookingId: ['B-X'], startAt: [''], endAt: [''], brand: ['snb'], status: ['confirmed'], paymentMethod: ['cash'], paymentStatus: ['paid'], revision: [1] };
+  assert.strictEqual(Reader.select(cols, C.jstToEpochSec('2031-01-01', '00:00') * 1000, [], ['snb']).length, 1);
+  var st = mem(), now = { v: NOW };
+  engineOf(st, now).sync({ bookingId: 'B-X', revision: 1, status: 'CANCELLED', paymentStatus: 'paid', brand: 'studio', facility: 'main', room: 'A', date: '', startTime: '', endDate: '', endTime: '' });
+  var head = JSON.parse(st.get('BK_B-X')).head;
+  assert.strictEqual(head.windowExitSec, null);
+  assert.strictEqual(C.earlyReclaimAtSec(head), null, '早期回収しない');
+});
