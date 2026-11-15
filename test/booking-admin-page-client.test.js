@@ -44,6 +44,7 @@ function createElementStub() {
      ようにする（Issue #330時点までは「例外を投げない」ことのみを保証する
      no-opで十分だったが、このIssueではclassListの状態自体を検証したいため拡張した）。 */
   var classes = {};
+  var attrs = {};
   return {
     id: '',
     type: '',
@@ -68,8 +69,8 @@ function createElementStub() {
     },
     appendChild: function () {},
     insertBefore: function () {},
-    getAttribute: function () { return null; },
-    setAttribute: function () {}
+    getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
+    setAttribute: function (name, value) { attrs[name] = String(value); }
   };
 }
 
@@ -3184,4 +3185,144 @@ test('Issue #864: 一覧応答の反映時にconsole.infoへ数値だけの計�
   Object.keys(logged).forEach(function (key) { assert.strictEqual(typeof logged[key], 'number', key); });
   assert.strictEqual(infos[0][1].indexOf('山田太郎'), -1);
   assert.strictEqual(infos[0][1].indexOf('SX-20260101'), -1);
+});
+
+
+/*
+ * Issue #923: 「決済要対応のみ表示」「テスト予約を非表示」トグル（管理UIの表示フィルタのみ）。
+ */
+function toggleFixture(sandbox, filter) {
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.filter = filter || 'all';
+  sandbox.state.bookings = [
+    booking({ bookingId: 'normal', name: '山田太郎', status: 'CONFIRMED' }),
+    booking({ bookingId: 'test-exact', name: 'テスト', status: 'CONFIRMED' }),
+    booking({ bookingId: 'test-trim', name: '  テスト　', status: 'CONFIRMED' }),
+    booking({ bookingId: 'test-partial', name: 'テスト太郎', status: 'CONFIRMED' }),
+    booking({ bookingId: 'no-name', name: undefined, status: 'CONFIRMED' }),
+    booking({ bookingId: 'null-name', name: null, status: 'CONFIRMED' }),
+    booking({ bookingId: 'pay-normal', name: '佐藤花子', status: 'CONFIRMED', paymentRecoveryRequired: true }),
+    booking({ bookingId: 'pay-test', name: 'テスト', status: 'CONFIRMED', paymentRecoveryRequired: true })
+  ];
+}
+
+test('#923 トグル初期状態: 決済要対応のみ表示=OFF、テスト予約を非表示=ON（UIのaria-checkedも一致）', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.state.paymentAttentionOnly, false);
+  assert.strictEqual(sandbox.state.hideTestBookings, true);
+  var ui = sandbox.filterToggleUi_;
+  assert.strictEqual(ui.paymentButton.getAttribute('role'), 'switch');
+  assert.strictEqual(ui.paymentButton.getAttribute('aria-checked'), 'false');
+  assert.strictEqual(ui.testButton.getAttribute('aria-checked'), 'true');
+  assert.strictEqual(ui.paymentButton.className, 'filter-toggle is-off');
+  assert.strictEqual(ui.testButton.className, 'filter-toggle is-on');
+  assert.strictEqual(ui.paymentButton.stateEl.textContent, 'OFF');
+  assert.strictEqual(ui.testButton.stateEl.textContent, 'ON');
+});
+
+test('#923 isTestBooking_: 前後trimして「テスト」と完全一致のみ。部分一致・氏名未設定は対象外', function () {
+  var sandbox = loadClientSandbox();
+  assert.strictEqual(sandbox.isTestBooking_({ name: 'テスト' }), true);
+  assert.strictEqual(sandbox.isTestBooking_({ name: '  テスト ' }), true);
+  assert.strictEqual(sandbox.isTestBooking_({ name: '\u3000テスト\u3000' }), true);
+  assert.strictEqual(sandbox.isTestBooking_({ name: 'テスト太郎' }), false);
+  assert.strictEqual(sandbox.isTestBooking_({ name: '太郎テスト' }), false);
+  assert.strictEqual(sandbox.isTestBooking_({ name: 'テ スト' }), false);
+  assert.strictEqual(sandbox.isTestBooking_({ name: '' }), false);
+  assert.strictEqual(sandbox.isTestBooking_({}), false);
+  assert.strictEqual(sandbox.isTestBooking_({ name: null }), false);
+  assert.strictEqual(sandbox.isTestBooking_(null), false);
+});
+
+test('#923 4通りの組み合わせ（決済要対応のみ × テスト非表示）', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox);
+  var all = ['no-name', 'normal', 'null-name', 'pay-normal', 'pay-test', 'test-exact', 'test-partial', 'test-trim'];
+  function ids(pay, hide) {
+    sandbox.state.paymentAttentionOnly = pay;
+    sandbox.state.hideTestBookings = hide;
+    return idsOf(sandbox.visibleBookings());
+  }
+  assert.deepStrictEqual(ids(false, false), all);
+  assert.deepStrictEqual(ids(false, true), ['no-name', 'normal', 'null-name', 'pay-normal', 'test-partial']);
+  assert.deepStrictEqual(ids(true, false), ['pay-normal', 'pay-test']);
+  assert.deepStrictEqual(ids(true, true), ['pay-normal']);
+});
+
+test('#923 既存のステータスタブ・検索・並び順と併用できる', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.todayJst = TODAY;
+  sandbox.state.bookings = [
+    booking({ bookingId: 'a', name: 'テスト', date: '2026-09-25', status: 'CONFIRMED', paymentRecoveryRequired: true }),
+    booking({ bookingId: 'b', name: '佐藤', date: '2026-09-24', status: 'CONFIRMED', paymentRecoveryRequired: true }),
+    booking({ bookingId: 'c', name: '鈴木', date: '2026-09-23', status: 'CONFIRMED', paymentRecoveryRequired: true }),
+    booking({ bookingId: 'd', name: '田中', date: '2026-09-23', status: 'CONFIRMED' }),
+    booking({ bookingId: 'e', name: '高橋', date: TODAY, status: 'CANCELLED', paymentRecoveryRequired: true })
+  ];
+  sandbox.state.paymentAttentionOnly = true;
+  sandbox.state.hideTestBookings = true;
+  sandbox.state.filter = 'upcoming';
+  assert.deepStrictEqual(sandbox.visibleBookings().map(function (x) { return x.bookingId; }), ['c', 'b'], '今後タブ＋日付順');
+  sandbox.state.filter = 'cancelled';
+  assert.deepStrictEqual(idsOf(sandbox.visibleBookings()), ['e'], 'キャンセルタブ');
+  sandbox.state.filter = 'all';
+  sandbox.state.searchQuery = '佐藤';
+  assert.deepStrictEqual(idsOf(sandbox.visibleBookings()), ['b'], '検索');
+  sandbox.state.searchQuery = '';
+  sandbox.state.sort = 'reservation';
+  assert.strictEqual(sandbox.visibleBookings().length, 3, '並び順を変えても件数は同じ');
+});
+
+test('#923 トグルのクリックでstate・aria-checked・一覧が更新され、OFFで再表示される', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox);
+  var ui = sandbox.filterToggleUi_;
+  var list = sandbox.document.getElementById('list');
+  sandbox.render();
+  assert.ok(list.innerHTML.indexOf('data-id="test-exact"') === -1);
+  ui.testButton.fire('click');
+  assert.strictEqual(sandbox.state.hideTestBookings, false);
+  assert.strictEqual(ui.testButton.getAttribute('aria-checked'), 'false');
+  assert.strictEqual(ui.testButton.stateEl.textContent, 'OFF');
+  assert.ok(list.innerHTML.indexOf('data-id="test-exact"') !== -1, 'OFFで再表示');
+  ui.paymentButton.fire('click');
+  assert.strictEqual(sandbox.state.paymentAttentionOnly, true);
+  assert.strictEqual(ui.paymentButton.getAttribute('aria-checked'), 'true');
+  assert.strictEqual(ui.paymentButton.className, 'filter-toggle is-on');
+  assert.ok(list.innerHTML.indexOf('data-id="normal"') === -1);
+  assert.ok(list.innerHTML.indexOf('data-id="pay-test"') !== -1);
+});
+
+test('#923 表示件数は絞り込み後、上部サマリー・タブ件数は全予約の集計のまま（意味を変えない）', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox, 'all');
+  var ui = sandbox.filterToggleUi_;
+  var summaryAll = sandbox.document.getElementById('summary-all-count');
+  sandbox.render();
+  assert.strictEqual(summaryAll.textContent, '8', '全件は非表示分を除外しない');
+  assert.strictEqual(sandbox.document.getElementById('tab-count-all').textContent, '8');
+  assert.strictEqual(ui.countEl.textContent, '表示中: 5件（テスト予約3件を非表示中）');
+  assert.ok(ui.noteEl.textContent.indexOf('全予約の集計') !== -1);
+  ui.testButton.fire('click');
+  assert.strictEqual(ui.countEl.textContent, '表示中: 8件');
+  assert.strictEqual(ui.noteEl.textContent, '', '両トグルOFFなら注記なし');
+  assert.strictEqual(summaryAll.textContent, '8');
+});
+
+test('#923 トグル操作は予約データを変更せず、サーバーAPIも呼ばない', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox);
+  var before = JSON.stringify(sandbox.state.bookings);
+  var callsBefore = sandbox.google.script.run.calls.length;
+  sandbox.filterToggleUi_.paymentButton.fire('click');
+  sandbox.filterToggleUi_.testButton.fire('click');
+  sandbox.visibleBookings();
+  assert.strictEqual(JSON.stringify(sandbox.state.bookings), before);
+  assert.strictEqual(sandbox.google.script.run.calls.length, callsBefore);
+});
+
+test('#923 ヘッダーの処理実行ボタンと分離: 旧「決済要対応」ボタンはヘッダーに追加されない', function () {
+  var src = fs.readFileSync(CLIENT_JS_PATH, 'utf8');
+  assert.ok(src.indexOf('payment-recovery-open-button') === -1);
+  assert.ok(src.indexOf("main.insertBefore(area, statusLine)") !== -1, 'トグルは絞り込みエリア（main内）に置く');
 });
