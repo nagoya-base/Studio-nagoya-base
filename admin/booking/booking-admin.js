@@ -2957,6 +2957,83 @@ function runResendReminder_() {
   }, '来場案内を送信しました。');
 }
 
+/* 決済要対応（Recovery）一覧の1件分のHTML（純粋関数）。予約IDの「詳細」ボタンから
+   予約詳細を開いて対応する（一覧を表示しただけでは何も変更しない）。 */
+function renderPaymentRecoveryItem_(item) {
+  var rows = (item.openRecoveryRows || []).map(function (row) {
+    return '<li>' + escapeHtml(row.occurredAt) + ' ' + escapeHtml(row.failureType) + ': ' + escapeHtml(row.errorMessage) + '</li>';
+  }).join('');
+  var ids = [
+    item.stripeCheckoutSessionId ? 'Session: ' + item.stripeCheckoutSessionId : '',
+    item.stripePaymentIntentId ? 'PaymentIntent: ' + item.stripePaymentIntentId : '',
+    item.stripeRefundId ? '返金ID: ' + item.stripeRefundId : '',
+    item.refundAttemptState ? '返金試行: ' + refundAttemptStateLabel_(item.refundAttemptState) : '',
+    item.checkoutCancelState ? '決済URL: ' + checkoutCancelStateLabel_(item.checkoutCancelState) : ''
+  ].filter(function (v) { return v; }).join(' / ');
+  return '<div class="card recovery-card">' +
+    '<div class="card-id">' + escapeHtml(item.bookingId) + (item.bookingFound ? '' : '（台帳に予約行なし）') + '</div>' +
+    (item.bookingFound
+      ? '<div class="card-sub">' + escapeHtml(item.date) + ' / ' + escapeHtml(statusLabel(item.status)) + ' / ' + escapeHtml(paymentStatusLabel(item.paymentStatus)) + '</div>'
+      : '') +
+    (ids ? '<div class="card-sub">' + escapeHtml(ids) + '</div>' : '') +
+    (item.paymentRecoveryRequiredAt
+      ? '<div class="card-price-warning">⚠ 要対応（' + escapeHtml(item.paymentRecoveryRequiredAt) + '）: ' + escapeHtml(item.paymentRecoveryReason) + '</div>'
+      : '') +
+    (rows ? '<ul class="recovery-rows">' + rows + '</ul>' : '') +
+    (item.bookingFound
+      ? '<div class="card-actions"><button type="button" class="action detail" data-recovery-detail="' + escapeHtml(item.bookingId) + '">詳細</button></div>'
+      : '') +
+    '</div>';
+}
+
+var paymentRecoveryPanel_ = null;
+
+function initPaymentRecoveryUi_() {
+  var metaRow = document.querySelector('.header-meta');
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.id = 'payment-recovery-open-button';
+  button.className = 'refresh-button';
+  /* Issue #923: 絞り込みトグル「決済要対応のみ表示」と区別するため、全Recovery案件を開く
+     別機能であることが分かる名称にする（getAdminPaymentRecoveriesの全件を表示）。 */
+  button.textContent = '決済Recovery一覧';
+  if (metaRow) metaRow.appendChild(button);
+
+  var main = document.querySelector('main');
+  var panel = document.createElement('div');
+  panel.id = 'payment-recovery-panel';
+  panel.classList.add('hidden');
+  main.insertBefore(panel, document.getElementById('list'));
+  paymentRecoveryPanel_ = panel;
+
+  button.addEventListener('click', function () {
+    if (!panel.classList.contains('hidden')) {
+      panel.classList.add('hidden');
+      return;
+    }
+    panel.classList.remove('hidden');
+    panel.innerHTML = '<div class="empty">決済要対応を取得中…</div>';
+    google.script.run
+      .withSuccessHandler(function (result) {
+        if (!result || !result.success) {
+          panel.innerHTML = '<div class="empty">取得できませんでした。</div>';
+          return;
+        }
+        panel.innerHTML = '<h3>決済要対応（' + result.items.length + '件）</h3>' +
+          (result.items.length ? result.items.map(renderPaymentRecoveryItem_).join('') : '<div class="empty">決済要対応の案件はありません</div>');
+      })
+      .withFailureHandler(function (error) {
+        panel.innerHTML = '<div class="empty">取得に失敗しました: ' + escapeHtml(error && error.message ? error.message : String(error)) + '</div>';
+      })
+      .getAdminPaymentRecoveries();
+  });
+  panel.addEventListener('click', function (event) {
+    var target = event.target && event.target.closest ? event.target.closest('button[data-recovery-detail]') : null;
+    if (!target) return;
+    openDetail(target.getAttribute('data-recovery-detail'));
+  });
+}
+
 /* Issue #923: 一覧の絞り込みトグル（「決済要対応のみ表示」「テスト予約を非表示」）と
    表示件数。検索欄の直下の絞り込みエリアにまとめ、更新・前日リマインド診断などの
    処理実行ボタン（ヘッダー）とは配置・見た目の両方で分離する。
@@ -3574,6 +3651,7 @@ initPriceEditUi_();
 initPriceNoticeUi_();
 initPaymentUi_();
 initFilterToggleUi_();
+initPaymentRecoveryUi_();
 initOptionUi_();
 
 loadBookings();

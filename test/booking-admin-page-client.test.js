@@ -157,6 +157,7 @@ function loadClientSandbox(options) {
 
   var elementsById = {};
   var elementsBySelector = {};
+  var created = [];
   var documentStub = {
     getElementById: function (id) {
       if (!elementsById[id]) elementsById[id] = createElementStub();
@@ -167,7 +168,7 @@ function loadClientSandbox(options) {
       return elementsBySelector[selector];
     },
     querySelectorAll: function () { return []; },
-    createElement: function () { return createElementStub(); },
+    createElement: function () { var el = createElementStub(); created.push(el); return el; },
     /* Issue #330: buildReminderDiagnosticsModal_がdocument.body.appendChild/
        document.createTextNodeを使うため追加した（他の要素はheader/main配下へ挿入する
        initHeaderUi_/initSearchUi_と異なり、診断モーダルはdocument.body直下へ追加するため）。 */
@@ -184,6 +185,7 @@ function loadClientSandbox(options) {
     window: { confirm: function () { return opts.confirmResult !== false; } },
     alert: function () {}
   };
+  sandbox.__created = created;
   vm.createContext(sandbox);
   vm.runInContext(scriptSrc, sandbox, { filename: CLIENT_JS_PATH });
   return sandbox;
@@ -3321,8 +3323,87 @@ test('#923 トグル操作は予約データを変更せず、サーバーAPIも
   assert.strictEqual(sandbox.google.script.run.calls.length, callsBefore);
 });
 
-test('#923 ヘッダーの処理実行ボタンと分離: 旧「決済要対応」ボタンはヘッダーに追加されない', function () {
+function createdById(sandbox, id) {
+  return sandbox.__created.filter(function (el) { return el.id === id; })[0];
+}
+
+/* PR #924 レビュー対応: 既存の決済Recovery一覧（getAdminPaymentRecoveries）は維持し、
+   絞り込みトグル「決済要対応のみ表示」とは別導線として共存させる。 */
+test('#923 Recovery一覧: 別導線のボタンとして残り、絞り込みトグルとは別要素・別名称', function () {
+  var sandbox = loadClientSandbox();
+  var button = createdById(sandbox, 'payment-recovery-open-button');
+  assert.ok(button, '決済Recovery一覧を開くボタンが存在する');
+  assert.strictEqual(button.textContent, '決済Recovery一覧');
+  assert.notStrictEqual(button, sandbox.filterToggleUi_.paymentButton);
+  assert.strictEqual(button.getAttribute('role'), null, 'スイッチではなく処理ボタン');
+  assert.strictEqual(sandbox.filterToggleUi_.paymentButton.getAttribute('aria-checked'), 'false');
+});
+
+test('#923 Recovery一覧: 台帳行あり・なし双方の案件を表示し、決済ID・エラー・返金状態を保全する', function () {
+  var sandbox = loadClientSandbox();
+  var button = createdById(sandbox, 'payment-recovery-open-button');
+  var panel = createdById(sandbox, 'payment-recovery-panel');
+  var run = sandbox.google.script.run;
+  assert.strictEqual(panel.classList.contains('hidden'), true);
+  button.fire('click');
+  assert.strictEqual(panel.classList.contains('hidden'), false);
+  assert.ok(panel.innerHTML.indexOf('取得中') !== -1, '読み込み中');
+  var call = run.calls[run.calls.length - 1];
+  assert.strictEqual(call.name, 'getAdminPaymentRecoveries');
+  run.resolveCall(run.calls.length - 1, { success: true, items: [
+    { bookingId: 'LEDGER-1', bookingFound: true, date: '2026-10-01', status: 'CONFIRMED', paymentStatus: 'paid',
+      stripeCheckoutSessionId: 'cs_1', stripePaymentIntentId: 'pi_1', stripeRefundId: 're_1', refundAttemptState: 'SUBMITTED',
+      paymentRecoveryRequiredAt: '2026-10-01 12:00', paymentRecoveryReason: 'REFUND_FAILED: x',
+      openRecoveryRows: [{ occurredAt: '2026-10-01 12:00', failureType: 'REFUND', errorMessage: 'boom' }] },
+    { bookingId: 'NO-LEDGER-2', bookingFound: false, stripeCheckoutSessionId: 'cs_2', openRecoveryRows: [] }
+  ] });
+  var html = panel.innerHTML;
+  assert.ok(html.indexOf('決済要対応（2件）') !== -1);
+  assert.ok(html.indexOf('LEDGER-1') !== -1 && html.indexOf('NO-LEDGER-2') !== -1);
+  assert.ok(html.indexOf('台帳に予約行なし') !== -1, '台帳行なしの案件も表示');
+  assert.ok(html.indexOf('cs_1') !== -1 && html.indexOf('pi_1') !== -1 && html.indexOf('re_1') !== -1 && html.indexOf('cs_2') !== -1);
+  assert.ok(html.indexOf('REFUND_FAILED: x') !== -1 && html.indexOf('boom') !== -1);
+  assert.ok(html.indexOf('data-recovery-detail="LEDGER-1"') !== -1, '台帳行ありは詳細ボタン');
+  assert.ok(html.indexOf('data-recovery-detail="NO-LEDGER-2"') === -1, '台帳行なしは詳細ボタンなし');
+});
+
+test('#923 Recovery一覧: 台帳行ありの案件は詳細へ遷移し、空・失敗・再クリックの状態も保全する', function () {
+  var sandbox = loadClientSandbox();
+  var button = createdById(sandbox, 'payment-recovery-open-button');
+  var panel = createdById(sandbox, 'payment-recovery-panel');
+  var run = sandbox.google.script.run;
+  button.fire('click');
+  run.resolveCall(run.calls.length - 1, { success: true, items: [] });
+  assert.ok(panel.innerHTML.indexOf('決済要対応の案件はありません') !== -1, '空状態');
+  button.fire('click');
+  assert.strictEqual(panel.classList.contains('hidden'), true, '再クリックで閉じる');
+  button.fire('click');
+  run.resolveCall(run.calls.length - 1, { success: false });
+  assert.ok(panel.innerHTML.indexOf('取得できませんでした') !== -1);
+  button.fire('click'); button.fire('click');
+  button.fire('click');
+  run.rejectCall(run.calls.length - 1, new Error('network down'));
+  assert.ok(panel.innerHTML.indexOf('取得に失敗しました') !== -1 && panel.innerHTML.indexOf('network down') !== -1, '失敗状態');
+  panel.fire('click', { target: { closest: function () { return { getAttribute: function () { return 'LEDGER-1'; } }; } } });
+  var detail = run.calls[run.calls.length - 1];
+  assert.strictEqual(detail.name, 'getAdminBookingDetail');
+  assert.strictEqual(detail.args[0], 'LEDGER-1');
+});
+
+test('#923 Recovery一覧とトグルは独立: 一覧を開いてもトグル状態・予約データは変わらない', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox);
+  var before = JSON.stringify(sandbox.state.bookings);
+  createdById(sandbox, 'payment-recovery-open-button').fire('click');
+  assert.strictEqual(sandbox.state.paymentAttentionOnly, false);
+  assert.strictEqual(sandbox.state.hideTestBookings, true);
+  assert.strictEqual(JSON.stringify(sandbox.state.bookings), before);
+  sandbox.filterToggleUi_.paymentButton.fire('click');
+  assert.strictEqual(createdById(sandbox, 'payment-recovery-panel').classList.contains('hidden'), false, 'トグル操作でRecovery一覧は閉じない');
+});
+
+test('#923 トグルはmain内の絞り込みエリアに置き、ヘッダーの処理実行ボタン群には追加しない', function () {
   var src = fs.readFileSync(CLIENT_JS_PATH, 'utf8');
-  assert.ok(src.indexOf('payment-recovery-open-button') === -1);
-  assert.ok(src.indexOf("main.insertBefore(area, statusLine)") !== -1, 'トグルは絞り込みエリア（main内）に置く');
+  assert.ok(src.indexOf("main.insertBefore(area, statusLine)") !== -1);
+  assert.strictEqual(createdById(loadClientSandbox(), 'filter-area').getAttribute('role'), 'group');
 });

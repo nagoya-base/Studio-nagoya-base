@@ -757,8 +757,8 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 
 /*
  * Issue #341 PR-D: 決済・返金（Stripe）／取消・返金／来場案内の各欄と、
- * （決済要対応の絞り込みはIssue #923で一覧トグルへ移行）。#price-edit-section等と同じく
- * booking-admin.js（initPaymentUi_）が1回だけDOM生成する。
+ * 決済要対応（Recovery）一覧パネル。#price-edit-section等と同じく
+ * booking-admin.js（initPaymentUi_/initPaymentRecoveryUi_）が1回だけDOM生成する。
  */
 #payment-section,
 #refund-section,
@@ -770,7 +770,8 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 
 #payment-section h3,
 #refund-section h3,
-#access-section h3 {
+#access-section h3,
+#payment-recovery-panel h3 {
   margin: 0 0 8px;
   font-size: 14px;
 }
@@ -814,6 +815,17 @@ button.revive { color: #fff; background: var(--color-pending); border-color: var
 
 #refund-section textarea {
   min-height: 64px;
+}
+
+#payment-recovery-panel {
+  margin-bottom: 16px;
+}
+
+.recovery-rows {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  word-break: break-all;
 }
 
 /* Issue #423: 予約オプション欄 */
