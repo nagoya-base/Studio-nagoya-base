@@ -1,0 +1,39 @@
+name: PR required gate
+
+# Issue #933: mainブランチ保護の「必須status check」用の、常に生成されるゲート。
+# booking-pr-tests.yml は paths フィルター付きのため、サイトだけを触るPRでは実行されず、
+# それを必須checkにするとPRが永久にPendingになる。このworkflowは paths フィルターを持たず、
+# すべてのPRで同じ名前のcheck（`required-gate`）を必ず生成する。
+# 必須checkに登録するのはこの `required-gate` だけ（booking-pr-tests の各jobは登録しない）。
+# PR CIと同じく秘密・Environment・外部APIなし（read-only）。保護設定の有効化はオーナー承認後（docs/branch-protection-933.md）。
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-required-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  required-gate:
+    name: required-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - name: Install stripe-webhook-relay dependencies
+        run: npm ci
+        working-directory: cloud-run/stripe-webhook-relay
+      - name: Run repository tests
+        run: npm test
