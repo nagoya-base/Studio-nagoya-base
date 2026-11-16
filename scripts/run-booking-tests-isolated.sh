@@ -204,10 +204,22 @@ set -euo pipefail
 home="$1"; uid="$2"; gid="$3"; shift 3
 mount --make-rprivate / || exit 97
 mount --bind "$home" "$home" || exit 97
-while IFS= read -r mp; do
+# 同じ場所に重ねたmountは最上位（mountinfoの最後）だけを対象にする。形式: "<mount単位のoptions> <mount point(8進エスケープ)>"。
+list_mounts() { awk "{o[\$5]=\$6} END{for (p in o) print o[p], p}" /proc/self/mountinfo | sort -k2; }
+while IFS=" " read -r opts raw; do
+  mp="$(printf "%b" "$raw")"
   case "$mp" in /proc|/proc/*|/sys|/sys/*|/dev|/dev/*|"$home") continue ;; esac
+  # 既に読取り専用のmount（snapのsquashfsなど）は、書込めないことが確認済みなので再mountしない（Issue #925:
+  # 再mountが "Read-only file system" で失敗してもmount自体は読取り専用のまま）。rwのmountの再mount失敗は従来どおり隔離不成立。
+  case ",$opts," in *,ro,*) continue ;; esac
   mount -o remount,bind,ro "$mp" || exit 97
-done < <(awk "{print \$5}" /proc/self/mountinfo | while IFS= read -r raw; do printf "%b\n" "$raw"; done | sort -u)
+done < <(list_mounts)
+# 除外した場所以外に、読取り専用でないmountが1つも残っていないことを再確認する（残れば隔離不成立）。
+while IFS=" " read -r opts raw; do
+  mp="$(printf "%b" "$raw")"
+  case "$mp" in /proc|/proc/*|/sys|/sys/*|/dev|/dev/*|"$home") continue ;; esac
+  case ",$opts," in *,ro,*) ;; *) echo "mount is still writable: $mp" >&2; exit 97 ;; esac
+done < <(list_mounts)
 for t in /tmp /var/tmp /dev/shm; do
   mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs "$t" || exit 97
 done

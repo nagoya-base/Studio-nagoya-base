@@ -901,6 +901,10 @@ test('#874 review: tests run isolated (separate disposable user, env -i, verifie
   assert.doesNotMatch(script, /usermod -aG|--groups|-G /);
   assert.match(script, /sudo -n unshare --mount --pid --fork --mount-proc --propagation private \\/, 'own mount and PID namespaces');
   assert.match(script, /mount -o remount,bind,ro "\$mp" \|\| exit 97/, 'every host mount is read-only for the tests');
+  // Issue #925: snap squashfs mounts (/snap/core22/*) are already read-only and must not be re-mounted, but nothing writable may remain.
+  assert.match(script, /case ",\$opts," in \*,ro,\*\) continue ;; esac\n  mount -o remount,bind,ro "\$mp" \|\| exit 97/, 'already read-only mounts are skipped; a failing remount of a writable mount still stops');
+  assert.match(script, /mount is still writable: \$mp" >&2; exit 97/, 'every mount is verified read-only afterwards (fail closed)');
+  assert.doesNotMatch(script.slice(script.indexOf("launcher='"), script.indexOf('echo "Running $mode')), /\|\| true|\|\| :/, 'the launcher never swallows a mount failure');
   assert.match(script, /mount -t tmpfs -o nosuid,nodev,mode=1777 tmpfs "\$t"/, 'private tmp areas');
   assert.match(script, /for t in \/tmp \/var\/tmp \/dev\/shm; do/);
   assert.match(script, /setpriv --reuid="\$uid" --regid="\$gid" --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all/);
