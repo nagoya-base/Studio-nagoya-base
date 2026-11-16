@@ -132,7 +132,7 @@ function doGet() {
   var auth = OpsAuth.createGasSessionAuthenticator()();
   if (!auth.ok) return HtmlService.createHtmlOutput('<p>権限がありません。</p>').setTitle('Ops');
   return HtmlService.createHtmlOutputFromFile('OpsPage')
-    .setTitle('予約確認（バックエンド検証用）')
+    .setTitle('予約確認')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 

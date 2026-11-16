@@ -343,8 +343,9 @@ test('境界: フロントはGAS・Sheets・SwitchBotに直接依存せず、秘
   });
   assert.deepStrictEqual(users, ['OpsPage.html']);
   var page = fs.readFileSync(path.join(gasDir, 'OpsPage.html'), 'utf8');
-  assert.ok(/Sitesフロントではありません/.test(page));
-  assert.ok(!/ops-client|OpsClient/.test(page), 'GAS検証画面は画面ロジックを共有・複製しない');
+  /* GAS配信画面は _ops-app/frontend/ からの生成物（手で複製・編集しない）。同期は test/ops-gas-page.test.js で検証。 */
+  assert.ok(/自動生成（scripts\/build-ops-gas-page\.js）/.test(page));
+  assert.ok(!/OpsMockAdapter/.test(page), 'GAS配信画面にモックを含めない');
 });
 
 /* 既存のGitHub Pagesビルド（Jekyll）の生成物に、モックHTML/JSが含まれないこと。
