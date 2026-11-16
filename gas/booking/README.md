@@ -6312,7 +6312,7 @@ Webhook受信・イベント台帳・入金照合・自動確定の方式は変�
 | `gas/booking/shared/SpreadsheetRepository.gs` / `RecoveryRepository.gs` | 返金試行の9列と`updateBookingRefundStateAtomic`、決済系Recovery行の判定・解消 |
 | `gas/booking/admin/BookingAdmin.gs` / `BookingAdminWeb.gs` | 管理者専用のサーバー関数（下記） |
 | `gas/booking/admin/BookingReminderTriggers.gs` | 決済未確定・Recovery未解消でスキップした予約の管理者通知 |
-| `admin/booking/booking-admin.js` / `.css` | 「決済・返金（Stripe）」「取消・返金」「来場案内」欄、「決済要対応」一覧 |
+| `admin/booking/booking-admin.js` / `.css` | 「決済・返金（Stripe）」「取消・返金」「来場案内」欄、「決済Recovery一覧」（全Recovery案件）、一覧の絞り込みトグル（決済要対応のみ表示／テスト予約を非表示。Issue #923） |
 
 Booking Adminのサーバー関数（いずれもBooking Adminプロジェクト専用。公開Web App・
 Webhookプロジェクトには配布しない。`test/booking-webhook-deployment.test.js`・

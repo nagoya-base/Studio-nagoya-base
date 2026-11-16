@@ -844,3 +844,86 @@ button.action.option-review { background: #a14a00; border-color: #a14a00; color:
 
 /* Issue #451: スタッフ設営・片付けの作業時刻 */
 .card-option-staff { font-weight: 600; color: #a14a00; }
+
+/* Issue #923: 一覧の絞り込みトグル（決済要対応のみ表示／テスト予約を非表示）。
+   ヘッダーの処理実行ボタン（更新・前日リマインド診断）とは別に、検索欄の下の
+   絞り込みエリアへ置く。ONは青、OFFはグレー。色だけに頼らずON/OFF文字・
+   スイッチのつまみ位置でも状態が分かる。タップ領域は44px以上。 */
+.filter-area {
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 4px 12px;
+  margin-bottom: 10px;
+}
+
+.filter-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  text-align: left;
+}
+
+.filter-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.toggle-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: #9ca3af;
+  transition: background 0.15s;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: left 0.15s;
+}
+
+.filter-toggle.is-on .toggle-track { background: var(--color-primary); }
+.filter-toggle.is-on .toggle-thumb { left: 21px; }
+
+.toggle-label { flex: 1; min-width: 0; }
+
+.toggle-state {
+  flex: 0 0 auto;
+  min-width: 2.5em;
+  text-align: right;
+  font-size: 12px;
+  font-weight: bold;
+  color: #6b7280;
+}
+
+.filter-toggle.is-on .toggle-state { color: var(--color-primary); }
+
+.filter-result-count {
+  padding: 8px 0 2px;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.filter-result-note {
+  padding: 0 0 8px;
+  font-size: 11px;
+  color: var(--color-text-sub);
+}
+
+.filter-result-note:empty { padding: 0; }
