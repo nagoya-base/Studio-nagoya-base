@@ -30,6 +30,11 @@ allowed_roots=("$test_home" /tmp /var/tmp /dev/shm)
 
 die() { echo "Isolated tests: $1" >&2; exit "${2:-1}"; }
 
+# 遅延計測（Issue #950）。各区間の経過ミリ秒だけを stderr に出す（パス・環境変数値・Secretは出さない）。
+# ISOLATION_TIMING 行はログ解析用。計測は隔離の判定に一切関与しない。
+_t_last="${EPOCHREALTIME//[.,]/}"
+phase() { local now="${EPOCHREALTIME//[.,]/}"; echo "ISOLATION_TIMING $1 $(( (now - _t_last) / 1000 ))ms" >&2; _t_last="$now"; }
+
 probe_env=()
 case "$mode" in
   repository-tests)
@@ -60,6 +65,7 @@ workspace_is_clean() {
     [[ -z "$(git -C "$workspace" status --porcelain --untracked-files=all --ignored)" ]]
 }
 workspace_is_clean || die "workspace is not the clean approved commit before the tests"
+phase preflight
 
 # ---- 後片付けと検証（trapで必ず実行。失敗はexit 3） ----
 # 方針: 後片付けの各コマンドの失敗・部分的な走査は握りつぶさず、すべて隔離不成立（teardown_failed=1 → exit 3）とする。
@@ -90,6 +96,7 @@ scan_owned() { # <uid> <gid> <find対象...>（findの式は固定）
       scan_result="$out"
       return 0
     fi
+    echo "ISOLATION_TIMING scan-attempt-$attempt-incomplete" >&2
     sleep 1
   done
   return 1
@@ -117,10 +124,12 @@ teardown() {
   status=0
   user_processes_exist "$uid" || status=$?
   [[ "$status" -eq 1 ]] || teardown_fail "processes of the isolated user survived or could not be listed"
+  phase teardown-kill-processes
   # sudoの試行（拒否されても）でsudo自身が作る記録ファイル（root作成・内容はタイムスタンプのみ）は既知の副作用として削除する。
   sudo -n rm -f "/run/sudo/ts/$test_user" "/run/sudo/ts/$uid" "/var/run/sudo/ts/$test_user" "/var/run/sudo/ts/$uid" ||
     teardown_fail "could not remove sudo timestamp records"
   # そのユーザー所有のファイルを全ファイルシステムで探す（/proc・/sysは除外）。許可領域外は隔離不成立。
+  phase teardown-sudo-timestamps
   if ! scan_owned "$uid" "$gid" /; then
     teardown_fail "SCAN_FAILED: the filesystem scan for files of the isolated user did not complete"
   else
@@ -138,6 +147,7 @@ teardown() {
       printf '%s' "$outside" | head -n 20 | sed 's/^/  /' >&2
     fi
   fi
+  phase teardown-full-scan-and-classify
   # 共有一時領域に残った所有ファイルを削除し、必ず再走査で0件を確認する（削除・再走査の失敗も隔離不成立）。
   for root in /tmp /var/tmp /dev/shm; do
     ok=0
@@ -147,11 +157,13 @@ teardown() {
     done
     [[ "$ok" -eq 1 ]] || teardown_fail "SHARED_TEMP_CLEANUP_FAILED: could not delete files of the isolated user in $root"
   done
+  phase teardown-shared-temp-cleanup
   if ! scan_owned "$uid" "$gid" /tmp /var/tmp /dev/shm; then
     teardown_fail "SCAN_FAILED: the re-scan of the shared temp areas did not complete"
   elif [[ -n "$scan_result" ]]; then
     teardown_fail "files of the isolated user remain in shared temp areas"
   fi
+  phase teardown-shared-temp-rescan
   sudo -n userdel --remove "$test_user" >/dev/null 2>&1 || teardown_fail "userdel failed"
   if getent group "$test_user" >/dev/null; then
     sudo -n groupdel "$test_user" >/dev/null 2>&1 || teardown_fail "groupdel failed"
@@ -160,9 +172,11 @@ teardown() {
   if id "$test_user" >/dev/null 2>&1 || getent group "$test_user" >/dev/null || [[ -e "$test_home" ]]; then
     teardown_fail "the isolated user, its group or its home still exists"
   fi
+  phase teardown-remove-user-and-home
   if ! workspace_is_clean; then
     teardown_fail "the workspace changed during the tests"
   fi
+  phase teardown-workspace-check
 }
 
 finish() {
@@ -177,6 +191,7 @@ finish() {
   exit "$status"
 }
 
+phase preflight-checks
 sudo -n useradd --create-home --home-dir "$test_home" --shell /bin/bash --user-group "$test_user"
 trap finish EXIT
 # cron/atの登録はホストのファイルを変えずに防ぐ: spool（/var/spool）はnamespace内で読取り専用、crontab/atの
@@ -186,6 +201,7 @@ sudo -n rm -f "$test_home/repo/.git/config.lock"
 sudo -n chown -R "$test_user:$test_user" "$test_home/repo"
 sudo -n mkdir -p "$test_home/tmp"
 sudo -n chown "$test_user:$test_user" "$test_home/tmp"
+phase setup-user-and-copy-workspace
 
 # 依存取得のためのproxy／CA設定だけは引き継ぐ（GitHub-hosted runnerでは通常未設定。Secretではない）。
 net_env=()
@@ -234,6 +250,7 @@ sudo -n unshare --mount --pid --fork --mount-proc --propagation private \
   env -i HOME="$test_home" PATH="$PATH" LANG=C.UTF-8 CI=true TMPDIR="$test_home/tmp" \
     BUNDLE_DEPLOYMENT=true BUNDLE_PATH="$test_home/bundle" ${probe_env[@]+"${probe_env[@]}"} ${net_env[@]+"${net_env[@]}"} \
     bash -c "cd \"\$HOME/repo\" && $inner" || status=$?
+phase run-in-namespace
 if [[ "$status" -eq 97 ]]; then
   echo "Isolated tests: the isolation namespace could not be set up." >&2
   teardown_failed=1

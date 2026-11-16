@@ -169,3 +169,36 @@ jobs:
           for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
             if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
           done | diff "$RUNNER_TEMP/host-state-before.txt" -
+
+  # Issue #950（計測専用・原則として最終版では削除する）: 隔離jobと同じ種類の新しいVMで、隔離後の全走査
+  # （find /）が「冷えたディスク」でどこにどれだけ時間を使うかを、トップレベルのディレクトリ別に測る。
+  # 出力はパス名・件数・秒のみ（Secret・環境変数値は出さない）。ファイルは一切変更しない。
+  isolation-scan-diag-serial:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cold scan time per top-level directory (serial, same find expression as the teardown scan)
+        run: |
+          set -u
+          df -i / /mnt 2>/dev/null || true
+          findmnt -rno TARGET,FSTYPE | sort | head -n 60
+          total_s=$EPOCHREALTIME
+          for d in /*; do
+            case "$d" in /proc|/sys) continue ;; esac
+            s=$EPOCHREALTIME
+            n="$(sudo -n find "$d" \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -o -printf . 2>/dev/null | wc -c)"
+            e=$EPOCHREALTIME
+            printf 'SCAN_DIAG serial %-14s entries=%-9s %6dms\n' "$d" "$n" "$(( (${e//[.,]/} - ${s//[.,]/}) / 1000 ))"
+          done
+          e=$EPOCHREALTIME
+          printf 'SCAN_DIAG serial TOTAL %dms\n' "$(( (${e//[.,]/} - ${total_s//[.,]/}) / 1000 ))"
+  isolation-scan-diag-parallel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cold scan time (one find per top-level directory, 4 in parallel)
+        run: |
+          set -u
+          s=$EPOCHREALTIME
+          ls -1d /* | grep -vE '^/(proc|sys)$' | \
+            xargs -P 4 -I{} sh -c 'sudo -n find "{}" \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -print >/dev/null 2>&1; echo "{}" >/dev/null'
+          e=$EPOCHREALTIME
+          printf 'SCAN_DIAG parallel4 TOTAL %dms\n' "$(( (${e//[.,]/} - ${s//[.,]/}) / 1000 ))"
