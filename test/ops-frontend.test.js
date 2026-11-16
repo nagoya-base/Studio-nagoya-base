@@ -214,6 +214,21 @@ test('画面: 日時は日本時間で表示し、利用の進行（利用中・
   assert.ok(/利用中/.test(html) && /終了済み/.test(html) && /開始済み（終了不明）/.test(html));
 });
 
+test('画面: 日またぎ・複数日の予約は終了日も併記し、同日なら時刻のみ。終了なしは未入力', function () {
+  assert.strictEqual(C.endLabel('2026-12-04T22:00:00+09:00', '2026-12-05T01:00:00+09:00'), '2026-12-05 01:00（翌日以降）');
+  assert.strictEqual(C.endLabel('2026-12-04T10:00:00+09:00', '2026-12-04T12:00:00+09:00'), '12:00');
+  assert.strictEqual(C.endLabel('2026-12-04T10:00:00+09:00', '2026-12-06T12:00:00+09:00'), '2026-12-06 12:00（翌日以降）');
+  /* UTCでは同日でもJSTでは日付が違うケース（JSTで判定する） */
+  assert.strictEqual(C.endLabel('2026-12-04T23:00:00+09:00', '2026-12-05T00:30:00+09:00'), '2026-12-05 00:30（翌日以降）');
+  assert.strictEqual(C.endLabel('2026-12-04T10:00:00+09:00', null), null);
+  var a = fakeApi(), ctl = C.createController(a);
+  ctl.load({});
+  a.pending.list[0].ok(okList([item({ bookingId: 'NIGHT', startAt: '2026-12-04T22:00:00+09:00', endAt: '2026-12-05T01:00:00+09:00', date: '2026-12-04' })]));
+  var html = C.renderView(ctl.state);
+  assert.ok(/22:00〜2026-12-05 01:00（翌日以降）/.test(html), html);
+  assert.ok(!/22:00〜01:00/.test(html));
+});
+
 test('画面: 詳細を開いたまま再取得すると詳細も取り直し、閉じた後は取得しない。遅延応答は最新のみ採用', function () {
   var a = fakeApi(), ctl = C.createController(a);
   ctl.openDetail('A'); ctl.openDetail('B');

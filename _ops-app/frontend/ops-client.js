@@ -42,6 +42,15 @@
     return withDate ? d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' ' + clock : clock;
   }
 
+  /* 一覧の終了表示。JSTで開始と終了の日付が違う（日またぎ・複数日）場合は、終了日も併記して
+     「22:00〜01:00」のような逆転した時間帯に見えないようにする。 */
+  function endLabel(startAt, endAt) {
+    var end = jstText(endAt, true);
+    if (end === null) return null;
+    var start = jstText(startAt, true);
+    return start !== null && start.slice(0, 10) !== end.slice(0, 10) ? end + '（翌日以降）' : end.slice(11);
+  }
+
   /* 手動再取得・連続操作で、遅れて返った古い応答が最新結果を上書きしないようにする。 */
   function createController(api, onChange) {
     var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null, mock: api && api.kind === 'mock' };
@@ -120,7 +129,7 @@
     var phase = PHASE_LABELS[item.phase];
     return '<li><button type="button" class="card" data-id="' + esc(item.bookingId) + '">' +
       '<div class="top"><span class="tag">' + esc(item.serviceLabel) + '</span><span class="tag">' + esc(item.statusLabel) + '</span>' + (phase ? '<span class="tag">' + esc(phase) + '</span>' : '') + '</div>' +
-      '<div class="when">' + esc(item.date) + ' ' + show(jstText(item.startAt)) + '〜' + show(jstText(item.endAt)) + '</div>' +
+      '<div class="when">' + esc(item.date) + ' ' + show(jstText(item.startAt)) + '〜' + show(endLabel(item.startAt, item.endAt)) + '</div>' +
       '<div>' + show(item.name) + ' / ' + show(item.people, '名') + '</div>' +
       '<div class="note">' + esc(item.bookingId) + '</div></button></li>';
   }
@@ -220,6 +229,6 @@
     return ctl;
   }
 
-  return { esc: esc, jstText: jstText, createController: createController, renderBanner: renderBanner, renderView: renderView,
+  return { esc: esc, jstText: jstText, endLabel: endLabel, createController: createController, renderBanner: renderBanner, renderView: renderView,
     optionsHtml: optionsHtml, paramsFromInputs: paramsFromInputs, mount: mount, SERVICES: SERVICES, STATUSES: STATUSES, PHASE_LABELS: PHASE_LABELS };
 });
