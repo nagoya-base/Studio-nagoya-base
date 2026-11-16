@@ -202,6 +202,26 @@ function logAdminBookingsTiming_(timing) {
   Logger.log('getAdminBookings timing ' + JSON.stringify(timing));
 }
 
+/*
+ * Issue #929: 管理一覧の「テスト予約を表示」トグル用の判定。氏名とメールの両方が一致する場合のみ
+ * true（AND条件）。メールは一覧へ返さない（PII方針）ため、判定はサーバー側で行い真偽値のみ返す。
+ *  1. 氏名: 前後trimして ADMIN_TEST_BOOKING_NAMES_ のいずれかと完全一致（大小文字区別。
+ *     'ETST'は指定どおり。'test'等は追加しない）。
+ *  2. メール: 前後trim・英字大小文字無視で ADMIN_TEST_BOOKING_EMAIL_ と完全一致。
+ * 表示フィルタ専用で、予約データ・決済・集計には影響しない。
+ */
+var ADMIN_TEST_BOOKING_NAMES_ = ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'];
+var ADMIN_TEST_BOOKING_EMAIL_ = 'koishi.s@gmail.com';
+
+function isAdminTestBooking_(record) {
+  if (!record) return false;
+  if (record.name === null || record.name === undefined) return false;
+  if (record.email === null || record.email === undefined) return false;
+  var name = String(record.name).trim();
+  var email = String(record.email).trim().toLowerCase();
+  return ADMIN_TEST_BOOKING_NAMES_.indexOf(name) !== -1 && email === ADMIN_TEST_BOOKING_EMAIL_;
+}
+
 function getAdminBookings() {
   var startedAt = Date.now();
   var timing = {};
@@ -278,7 +298,9 @@ function getAdminBookings() {
       paymentLinkSent: Booking.hasPaymentLinkBeenSent(record),
       paymentStatus: paymentSummary.paymentStatus,
       refundDecisionRequired: paymentSummary.refundDecisionRequired,
-      paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired
+      paymentRecoveryRequired: paymentSummary.paymentRecoveryRequired,
+      /* Issue #929: テスト予約判定（真偽値のみ。emailそのものは一覧へ返さない）。 */
+      isTestBooking: isAdminTestBooking_(record)
     };
     /* Issue #668: 大人数利用（5〜7名）の予約だけ承認状態・人数加算・支払期限を付ける（通常予約はキー自体を付けず従来の応答のまま）。 */
     if (Booking.isLargePartyRecord(record)) {

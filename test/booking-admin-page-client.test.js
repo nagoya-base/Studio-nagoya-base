@@ -211,7 +211,6 @@ function booking(overrides) {
 }
 
 var TODAY = '2026-09-22';
-var TEST_EMAIL = 'koishi.s@gmail.com';
 
 test('人数変更: 再計算結果を確認してから同じ見積りで確定する', function () {
   var sandbox = loadClientSandbox(), run = sandbox.google.script.run;
@@ -3199,14 +3198,14 @@ function toggleFixture(sandbox, filter) {
   sandbox.state.filter = filter || 'all';
   sandbox.state.bookings = [
     booking({ bookingId: 'normal', name: '山田太郎', status: 'CONFIRMED' }),
-    booking({ bookingId: 'test-exact', name: 'テスト', email: TEST_EMAIL, status: 'CONFIRMED' }),
-    booking({ bookingId: 'test-trim', name: '  テスト　', email: ' Koishi.S@Gmail.com ', status: 'CONFIRMED' }),
-    booking({ bookingId: 'test-partial', name: 'テスト太郎', email: TEST_EMAIL, status: 'CONFIRMED' }),
-    booking({ bookingId: 'test-other-email', name: 'テスト', email: 'other@example.com', status: 'CONFIRMED' }),
+    booking({ bookingId: 'test-exact', name: 'テスト', isTestBooking: true, status: 'CONFIRMED' }),
+    booking({ bookingId: 'test-trim', name: '  テスト　', isTestBooking: true, status: 'CONFIRMED' }),
+    booking({ bookingId: 'test-partial', name: 'テスト太郎', isTestBooking: false, status: 'CONFIRMED' }),
+    booking({ bookingId: 'test-other-email', name: 'テスト', isTestBooking: false, status: 'CONFIRMED' }),
     booking({ bookingId: 'no-name', name: undefined, status: 'CONFIRMED' }),
     booking({ bookingId: 'null-name', name: null, status: 'CONFIRMED' }),
     booking({ bookingId: 'pay-normal', name: '佐藤花子', status: 'CONFIRMED', paymentRecoveryRequired: true }),
-    booking({ bookingId: 'pay-test', name: 'テスト', email: TEST_EMAIL, status: 'CONFIRMED', paymentRecoveryRequired: true })
+    booking({ bookingId: 'pay-test', name: 'テスト', isTestBooking: true, status: 'CONFIRMED', paymentRecoveryRequired: true })
   ];
 }
 
@@ -3229,35 +3228,17 @@ test('#927 トグル初期状態: 3項目すべてOFF（UIのaria-checked・ON/O
   assert.deepStrictEqual(labels, ['決済要対応のみ表示', 'テスト予約を表示', '決済Recovery一覧を表示']);
 });
 
-test('#929 isTestBooking_: 指定6氏名 × 指定メール（大小文字・前後空白の揺れ含む）はテスト予約', function () {
+test('#929 isTestBooking_: サーバーが返すisTestBooking===trueのみ対象。氏名だけでは隠さない', function () {
   var sandbox = loadClientSandbox();
-  ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'].forEach(function (name) {
-    [TEST_EMAIL, 'KOISHI.S@GMAIL.COM', '  Koishi.S@Gmail.com\t'].forEach(function (email) {
-      assert.strictEqual(sandbox.isTestBooking_({ name: name, email: email }), true, name + ' / ' + email);
-      assert.strictEqual(sandbox.isTestBooking_({ name: '  ' + name + '\u3000', email: email }), true, 'trim: ' + name);
-    });
-  });
-});
-
-test('#929 isTestBooking_: 氏名が該当でもメールが別人・空・未設定なら対象外', function () {
-  var sandbox = loadClientSandbox();
-  ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'].forEach(function (name) {
-    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: 'other@example.com' }), false);
-    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: 'xkoishi.s@gmail.com' }), false);
-    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: '' }), false);
-    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: null }), false);
-    assert.strictEqual(sandbox.isTestBooking_({ name: name }), false);
-  });
-});
-
-test('#929 isTestBooking_: 指定メールでも氏名が別文字列・部分一致・空・未指定表記なら対象外', function () {
-  var sandbox = loadClientSandbox();
-  ['テスト太郎', '太郎テスト', 'テ スト', 'test', 'TEst', 'tEST', 'etst', '主人', 'ぬし様', 'ＴＥＳＴ', '', null, undefined].forEach(function (name) {
-    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: TEST_EMAIL }), false, String(name));
-  });
-  assert.strictEqual(sandbox.isTestBooking_({ email: TEST_EMAIL }), false);
-  assert.strictEqual(sandbox.isTestBooking_(null), false);
+  assert.strictEqual(sandbox.isTestBooking_({ isTestBooking: true }), true);
+  assert.strictEqual(sandbox.isTestBooking_({ isTestBooking: false }), false);
   assert.strictEqual(sandbox.isTestBooking_({}), false);
+  assert.strictEqual(sandbox.isTestBooking_({ isTestBooking: 'true' }), false);
+  ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'].forEach(function (name) {
+    assert.strictEqual(sandbox.isTestBooking_({ name: name }), false, '氏名のみ（フラグなし）は通常予約: ' + name);
+    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: 'koishi.s@gmail.com' }), false, 'クライアントはemailで判定しない');
+  });
+  assert.strictEqual(sandbox.isTestBooking_(null), false);
 });
 
 test('#923 4通りの組み合わせ（決済要対応のみ × テスト非表示）', function () {
@@ -3279,7 +3260,7 @@ test('#923 既存のステータスタブ・検索・並び順と併用できる
   var sandbox = loadClientSandbox();
   sandbox.state.todayJst = TODAY;
   sandbox.state.bookings = [
-    booking({ bookingId: 'a', name: 'テスト', email: TEST_EMAIL, date: '2026-09-25', status: 'CONFIRMED', paymentRecoveryRequired: true }),
+    booking({ bookingId: 'a', name: 'テスト', isTestBooking: true, date: '2026-09-25', status: 'CONFIRMED', paymentRecoveryRequired: true }),
     booking({ bookingId: 'b', name: '佐藤', date: '2026-09-24', status: 'CONFIRMED', paymentRecoveryRequired: true }),
     booking({ bookingId: 'c', name: '鈴木', date: '2026-09-23', status: 'CONFIRMED', paymentRecoveryRequired: true }),
     booking({ bookingId: 'd', name: '田中', date: '2026-09-23', status: 'CONFIRMED' }),
