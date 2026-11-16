@@ -857,6 +857,50 @@ button.action.option-review { background: #a14a00; border-color: #a14a00; color:
   margin-bottom: 10px;
 }
 
+/* Issue #930: 「表示切替」アコーディオンの見出し。タップ領域44px以上。矢印は右端。 */
+.filter-accordion-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: bold;
+  text-align: left;
+}
+
+.filter-accordion-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.filter-accordion-title { flex: 0 0 auto; }
+
+.filter-applied-badge {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.filter-accordion-arrow {
+  margin-left: auto;
+  flex: 0 0 auto;
+  min-width: 44px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--color-text-sub);
+}
+
+.filter-toggle-panel { border-top: 1px solid var(--color-border); }
+
 .filter-toggle {
   display: flex;
   align-items: center;
@@ -919,7 +963,7 @@ button.action.option-review { background: #a14a00; border-color: #a14a00; color:
 .filter-toggle.is-on .toggle-state { color: var(--color-primary); }
 
 .filter-result-count {
-  padding: 8px 0 2px;
+  padding: 2px 0 2px;
   font-size: 13px;
   font-weight: bold;
 }
