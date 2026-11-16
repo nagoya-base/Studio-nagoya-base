@@ -3032,8 +3032,9 @@ function initPaymentRecoveryUi_() {
       loadPaymentRecoveries_(panel);
     });
   filterToggleUi_.recoveryButton = toggle;
-  var area = document.getElementById('filter-area') || filterToggleUi_.area;
-  if (area) area.insertBefore(toggle, filterToggleUi_.countEl);
+  /* Issue #930: 3トグルは「表示切替」アコーディオンのパネル内に置く。 */
+  var host = filterToggleUi_.panelEl || document.getElementById('filter-area') || filterToggleUi_.area;
+  if (host) host.appendChild(toggle);
 
   panel.addEventListener('click', function (event) {
     var target = event.target && event.target.closest ? event.target.closest('button[data-recovery-detail]') : null;
@@ -3047,7 +3048,29 @@ function initPaymentRecoveryUi_() {
    処理実行ボタン（ヘッダー）とは配置・見た目の両方で分離する。
    トグルはrole="switch"＋aria-checkedで状態を伝え、色だけに頼らずON/OFF文字と
    スイッチ位置でも分かるようにする。要素は一度だけ生成しrender()では再生成しない。 */
-var filterToggleUi_ = { area: null, paymentButton: null, testButton: null, recoveryButton: null, countEl: null, noteEl: null };
+var filterToggleUi_ = { area: null, paymentButton: null, testButton: null, recoveryButton: null, countEl: null, noteEl: null,
+  accordionButton: null, panelEl: null, badgeEl: null, arrowEl: null };
+
+/* Issue #930: 「表示切替」アコーディオン。開閉状態（filterAccordionOpen_）は3トグルのON/OFF・
+   検索・タブ・並び順・Recoveryパネルとは独立した表示専用の状態で、開閉してもそれらを変更しない。
+   初期は閉じる。閉じている間はパネルを.hiddenにして（display:none）フォーカス不可にする。 */
+var filterAccordionOpen_ = false;
+
+function applyFilterAccordionView_() {
+  var ui = filterToggleUi_;
+  if (!ui.accordionButton) return;
+  ui.accordionButton.setAttribute('aria-expanded', filterAccordionOpen_ ? 'true' : 'false');
+  if (ui.arrowEl) ui.arrowEl.textContent = filterAccordionOpen_ ? '▲' : '▼';
+  if (ui.panelEl) {
+    if (filterAccordionOpen_) ui.panelEl.classList.remove('hidden');
+    else ui.panelEl.classList.add('hidden');
+  }
+}
+
+function toggleFilterAccordion_() {
+  filterAccordionOpen_ = !filterAccordionOpen_;
+  applyFilterAccordionView_();
+}
 
 function applyToggleView_(button, on) {
   if (!button) return;
@@ -3117,8 +3140,43 @@ function initFilterToggleUi_() {
   noteEl.className = 'filter-result-note';
   filterToggleUi_.noteEl = noteEl;
 
-  area.appendChild(filterToggleUi_.paymentButton);
-  area.appendChild(filterToggleUi_.testButton);
+  /* Issue #930: 見出し（開閉ボタン）＋パネル（3トグル）＋常時表示の件数・注意書き。 */
+  var accordion = document.createElement('button');
+  accordion.type = 'button';
+  accordion.id = 'filter-accordion-toggle';
+  accordion.className = 'filter-accordion-toggle';
+  accordion.setAttribute('aria-controls', 'filter-toggle-panel');
+  var accTitle = document.createElement('span');
+  accTitle.className = 'filter-accordion-title';
+  accTitle.textContent = '表示切替';
+  var badge = document.createElement('span');
+  badge.id = 'filter-applied-badge';
+  badge.className = 'filter-applied-badge hidden';
+  badge.textContent = '適用中';
+  var arrow = document.createElement('span');
+  arrow.className = 'filter-accordion-arrow';
+  arrow.setAttribute('aria-hidden', 'true');
+  accordion.appendChild(accTitle);
+  accordion.appendChild(badge);
+  accordion.appendChild(arrow);
+  accordion.addEventListener('click', toggleFilterAccordion_);
+
+  var panel = document.createElement('div');
+  panel.id = 'filter-toggle-panel';
+  panel.className = 'filter-toggle-panel';
+  panel.setAttribute('role', 'group');
+  panel.setAttribute('aria-label', '一覧の表示切替');
+  panel.appendChild(filterToggleUi_.paymentButton);
+  panel.appendChild(filterToggleUi_.testButton);
+
+  filterToggleUi_.accordionButton = accordion;
+  filterToggleUi_.panelEl = panel;
+  filterToggleUi_.badgeEl = badge;
+  filterToggleUi_.arrowEl = arrow;
+  applyFilterAccordionView_();
+
+  area.appendChild(accordion);
+  area.appendChild(panel);
   area.appendChild(countEl);
   area.appendChild(noteEl);
   main.insertBefore(area, statusLine);
@@ -3137,6 +3195,11 @@ function renderFilterStatus_(visibleCount) {
   var text = '表示中: ' + visibleCount + '件';
   if (!state.showTestBookings && hiddenTest > 0) text += '（テスト予約' + hiddenTest + '件を非表示中）';
   ui.countEl.textContent = text;
+  /* Issue #930: アコーディオンを閉じていても、絞り込み（決済要対応のみ）が効いていることを見出しで示す。 */
+  if (ui.badgeEl) {
+    if (state.paymentAttentionOnly) ui.badgeEl.classList.remove('hidden');
+    else ui.badgeEl.classList.add('hidden');
+  }
   if (ui.noteEl) {
     ui.noteEl.textContent = (state.paymentAttentionOnly || !state.showTestBookings)
       ? '※上部の今日・仮受付・確定・全件とタブの件数は、この絞り込みの影響を受けない全予約の集計です。'

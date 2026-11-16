@@ -3443,3 +3443,76 @@ test('#923 トグルはmain内の絞り込みエリアに置き、ヘッダー�
   assert.ok(src.indexOf("main.insertBefore(area, statusLine)") !== -1);
   assert.strictEqual(createdById(loadClientSandbox(), 'filter-area').getAttribute('role'), 'group');
 });
+
+/*
+ * Issue #930: 「表示切替」アコーディオン（3トグルを初期閉じの1つの見出しに収納）。
+ */
+test('#930 アコーディオンは初期で閉じ、aria-expanded=false・aria-controls・パネル非表示（3トグルはパネル内）', function () {
+  var sandbox = loadClientSandbox();
+  var ui = sandbox.filterToggleUi_;
+  assert.strictEqual(ui.accordionButton.id, 'filter-accordion-toggle');
+  assert.strictEqual(ui.accordionButton.getAttribute('aria-expanded'), 'false');
+  assert.strictEqual(ui.accordionButton.getAttribute('aria-controls'), 'filter-toggle-panel');
+  assert.strictEqual(ui.panelEl.id, 'filter-toggle-panel');
+  assert.strictEqual(ui.panelEl.classList.contains('hidden'), true, '閉じている間は3トグルを表示しない');
+  assert.strictEqual(ui.arrowEl.textContent, '▼');
+  var title = sandbox.__created.filter(function (el) { return el.className === 'filter-accordion-title'; })[0];
+  assert.strictEqual(title.textContent, '表示切替');
+});
+
+test('#930 見出しのクリックで開閉し、矢印・aria-expandedが切り替わる', function () {
+  var sandbox = loadClientSandbox();
+  var ui = sandbox.filterToggleUi_;
+  ui.accordionButton.fire('click');
+  assert.strictEqual(ui.accordionButton.getAttribute('aria-expanded'), 'true');
+  assert.strictEqual(ui.panelEl.classList.contains('hidden'), false);
+  assert.strictEqual(ui.arrowEl.textContent, '▲');
+  ui.accordionButton.fire('click');
+  assert.strictEqual(ui.accordionButton.getAttribute('aria-expanded'), 'false');
+  assert.strictEqual(ui.panelEl.classList.contains('hidden'), true);
+  assert.strictEqual(ui.arrowEl.textContent, '▼');
+});
+
+test('#930 開閉しても3トグルのON/OFF・検索・タブ・並び順・予約データ・Recoveryパネルは変わらず、APIも呼ばない', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox);
+  var ui = sandbox.filterToggleUi_;
+  ui.paymentButton.fire('click');
+  createdById(sandbox, 'payment-recovery-toggle').fire('click');
+  sandbox.state.searchQuery = '佐藤';
+  sandbox.state.sort = 'reservation';
+  var snapshot = JSON.stringify({ s: sandbox.state });
+  var calls = sandbox.google.script.run.calls.length;
+  var panel = createdById(sandbox, 'payment-recovery-panel');
+  ui.accordionButton.fire('click');
+  ui.accordionButton.fire('click');
+  assert.strictEqual(JSON.stringify({ s: sandbox.state }), snapshot);
+  assert.strictEqual(sandbox.google.script.run.calls.length, calls);
+  assert.strictEqual(ui.paymentButton.getAttribute('aria-checked'), 'true');
+  assert.strictEqual(ui.testButton.getAttribute('aria-checked'), 'false');
+  assert.strictEqual(panel.classList.contains('hidden'), false, 'Recoveryパネルの開閉は維持');
+});
+
+test('#930 閉じた状態でも絞り込みは効き、「適用中」と表示件数で把握できる', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox, 'all');
+  var ui = sandbox.filterToggleUi_;
+  sandbox.render();
+  assert.strictEqual(ui.badgeEl.classList.contains('hidden'), true, '決済要対応OFFなら適用中は出さない');
+  ui.paymentButton.fire('click');
+  assert.strictEqual(ui.accordionButton.getAttribute('aria-expanded'), 'false', '閉じたまま');
+  assert.strictEqual(ui.badgeEl.classList.contains('hidden'), false);
+  assert.strictEqual(ui.badgeEl.textContent, '適用中');
+  assert.strictEqual(ui.countEl.textContent, '表示中: 1件（テスト予約3件を非表示中）');
+  ui.paymentButton.fire('click');
+  assert.strictEqual(ui.badgeEl.classList.contains('hidden'), true);
+});
+
+test('#930 Recoveryトグルはアコーディオンのパネル内に置き、3トグルとも44px以上のタップ領域CSSを持つ', function () {
+  var src = fs.readFileSync(CLIENT_JS_PATH, 'utf8');
+  assert.ok(src.indexOf('host.appendChild(toggle)') !== -1);
+  var css = fs.readFileSync(path.join(__dirname, '..', 'admin', 'booking', 'booking-admin.css'), 'utf8');
+  [/\.filter-accordion-toggle\s*\{[^}]*min-height:\s*44px/, /\.filter-toggle\s*\{[^}]*min-height:\s*44px/].forEach(function (re) {
+    assert.ok(re.test(css), String(re));
+  });
+});
