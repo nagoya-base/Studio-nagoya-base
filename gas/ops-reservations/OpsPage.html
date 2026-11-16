@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<!--
+  OpsPage.html — 運営アプリ段階1「予約一覧・詳細」（Issue #936）。読み取り専用。
+  データはgoogle.script.run経由でOpsApi.gsの opsListReservations / opsGetReservation のみを呼ぶ。
+  書き込み・確定・取消の操作は存在しない。値はすべてエスケープして描画する。
+  手動/CSV入力ではなく「予約台帳から取得した時点のスナップショット」であることを画面に明示する。
+-->
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#5f6368; --line:#d9d9de; --card:#fff; --accent:#0b57d0; --warn:#9a5b00; --err:#b3261e; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#ececf0; --muted:#a0a3ab; --line:#33343a; --card:#202026; --accent:#8ab4f8; --warn:#f2b24c; --err:#f2877f; } }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+    header, main { max-width: 760px; margin: 0 auto; padding: 12px 16px; }
+    h1 { font-size: 1.15rem; margin: 4px 0 8px; }
+    .note { color: var(--muted); font-size: .85rem; margin: 0 0 8px; }
+    .filters { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .filters label { display:block; font-size:.8rem; color:var(--muted); min-width:0; }
+    .filters select, .filters input, button { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 8px; min-width:0; }
+    button { cursor:pointer; }
+    .row2 { grid-column: 1 / -1; display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .banner { margin:10px 0; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); font-size:.9rem; overflow-wrap:anywhere; }
+    .banner.err { border-color: var(--err); color: var(--err); }
+    .banner.stale { border-color: var(--warn); color: var(--warn); }
+    .cards { list-style:none; padding:0; margin:0; display:grid; gap:10px; }
+    .card { display:block; width:100%; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; overflow-wrap:anywhere; }
+    .card .top { display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; font-size:.8rem; color:var(--muted); }
+    .card .when { font-weight:600; font-size:1.05rem; margin:4px 0; }
+    .tag { display:inline-block; padding:0 8px; border:1px solid var(--line); border-radius:999px; font-size:.78rem; }
+    dl { display:grid; grid-template-columns: 8.5em 1fr; gap:6px 10px; margin:0; }
+    dt { color:var(--muted); font-size:.85rem; } dd { margin:0; overflow-wrap:anywhere; }
+    .empty { color:var(--muted); font-style:italic; }
+    details { margin-top:12px; } details li { overflow-wrap:anywhere; }
+    @media (min-width: 640px) { .filters { grid-template-columns: repeat(4, 1fr); } .row2 { grid-column: auto; grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>予約確認（読み取り専用）</h1>
+    <p class="note">予約台帳から取得した時点の内容です。ここでは変更できません。自動で更新されません。</p>
+    <div class="filters">
+      <label>サービス<select id="f-service"></select></label>
+      <label>状態<select id="f-status"></select></label>
+      <label>期間<select id="f-scope"><option value="upcoming">今日から30日間</option><option value="past">過去30日間</option><option value="custom">日付を指定</option></select></label>
+      <div class="row2"><button type="button" id="f-reload">再取得</button></div>
+      <label>開始日<input type="date" id="f-from"></label>
+      <label>終了日<input type="date" id="f-to"></label>
+    </div>
+  </header>
+  <main>
+    <div id="banner"></div>
+    <div id="view"></div>
+  </main>
+  <script>
+  var OpsClient = (function () {
+    var SERVICES = [['all', 'すべて'], ['snb', 'SNB'], ['studio_x', 'Studio X'], ['snb_mens', 'SNB Mens'], ['snb_community', 'SNB Community（未接続）'], ['unclassified', '未分類']];
+    var STATUSES = [['all', 'すべて'], ['PENDING', '仮予約'], ['CONFIRMED', '確定'], ['CANCELLED', 'キャンセル'], ['EXPIRED', '失効'], ['UNKNOWN', '不明']];
+
+    function esc(value) {
+      return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    /* null=未入力、0=0。空欄と0を混同しない。 */
+    function show(value, suffix) {
+      if (value === null || value === undefined || value === '') return '<span class="empty">未入力</span>';
+      return esc(value) + (suffix || '');
+    }
+
+    /* 手動再取得・連続操作で、遅れて返った古い応答が最新結果を上書きしないようにする。 */
+    function createController(api, onChange) {
+      var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailPhase: 'idle', detailError: null };
+      var listSeq = 0, detailSeq = 0;
+      function emit() { if (onChange) onChange(state); }
+      function fail(err) {
+        state.error = err;
+        state.phase = err.code === 'NOT_CONNECTED' ? 'not_connected' : 'error';
+        state.stale = !!state.data;
+      }
+      function load(params) {
+        var mine = ++listSeq;
+        state.phase = 'loading';
+        state.error = null;
+        emit();
+        api.list(params, function (res) {
+          if (mine !== listSeq) return;
+          if (res && res.ok) {
+            state.data = res; state.lastSuccessAt = res.fetchedAtJst || res.fetchedAt; state.stale = false; state.error = null; state.phase = 'ready';
+          } else {
+            fail(res && res.error ? res.error : { code: 'FETCH_FAILED', message: '取得に失敗しました。' });
+          }
+          emit();
+        }, function () {
+          if (mine !== listSeq) return;
+          fail({ code: 'FETCH_FAILED', message: '取得に失敗しました。通信状況を確認して再取得してください。' });
+          emit();
+        });
+      }
+      function openDetail(id) {
+        var mine = ++detailSeq;
+        state.detail = null; state.detailPhase = 'loading'; state.detailError = null;
+        emit();
+        api.detail(id, function (res) {
+          if (mine !== detailSeq) return;
+          if (res && res.ok) { state.detail = res.reservation; state.detailPhase = 'ready'; }
+          else { state.detailPhase = 'error'; state.detailError = res && res.error ? res.error : { message: '取得に失敗しました。' }; }
+          emit();
+        }, function () {
+          if (mine !== detailSeq) return;
+          state.detailPhase = 'error'; state.detailError = { message: '取得に失敗しました。' };
+          emit();
+        });
+      }
+      function closeDetail() { detailSeq++; state.detail = null; state.detailPhase = 'idle'; state.detailError = null; emit(); }
+      return { state: state, load: load, openDetail: openDetail, closeDetail: closeDetail };
+    }
+
+    function renderBanner(state) {
+      var html = '';
+      if (state.phase === 'loading') html += '<div class="banner">取得中…</div>';
+      if (state.phase === 'error' || state.phase === 'not_connected') {
+        html += '<div class="banner err">' + esc(state.error.message) + '</div>';
+        if (state.stale) html += '<div class="banner stale">古いデータを表示しています（最終取得成功: ' + esc(state.lastSuccessAt) + '）。最新ではありません。</div>';
+      }
+      if (state.phase === 'ready' && state.data) html += '<div class="banner">最終取得成功: ' + esc(state.lastSuccessAt) + '</div>';
+      return html;
+    }
+
+    function renderCard(item) {
+      return '<li><button type="button" class="card" data-id="' + esc(item.bookingId) + '">' +
+        '<div class="top"><span class="tag">' + esc(item.serviceLabel) + '</span><span class="tag">' + esc(item.statusLabel) + '</span></div>' +
+        '<div class="when">' + esc(item.date) + ' ' + show(item.startTime) + '〜' + show(item.endTime) + '</div>' +
+        '<div>' + show(item.name) + ' / ' + show(item.people, '名') + '</div>' +
+        '<div class="note">' + esc(item.bookingId) + '</div></button></li>';
+    }
+
+    function renderIssues(issues) {
+      if (!issues || !issues.length) return '';
+      var errors = issues.filter(function (i) { return i.severity === 'error'; }).length;
+      var list = issues.map(function (i) {
+        return '<li>' + esc(i.row) + '行目' + (i.bookingId ? '（' + esc(i.bookingId) + '）' : '') + ': ' + (i.severity === 'error' ? '【除外】' : '【注意】') + esc(i.reasons.join('、')) + '</li>';
+      }).join('');
+      return '<details><summary>確認が必要な行 ' + esc(issues.length) + '件（うち一覧から除外 ' + esc(errors) + '件）</summary><ul>' + list + '</ul></details>';
+    }
+
+    function renderList(state) {
+      var d = state.data;
+      if (!d) return state.phase === 'loading' || state.phase === 'idle' ? '' : '';
+      var a = d.applied;
+      var html = '<p class="note">条件: ' + esc(a.from) + '〜' + esc(a.to) + '（日本時間） / ' + esc(a.order === 'asc' ? '開始が早い順' : '開始が遅い順') +
+        ' / 該当 ' + esc(d.counts.matched) + '件（台帳 ' + esc(d.counts.sheetRows) + '行を全件取得）</p>';
+      var notConnected = d.serviceStates.filter(function (s) { return s.state === 'not_connected'; });
+      if (notConnected.length) html += '<p class="note">未接続: ' + notConnected.map(function (s) { return esc(s.label); }).join('、') + '（0件ではなく、まだ取り込んでいません）</p>';
+      if (d.notConnectedSelected) {
+        html += '<div class="banner stale">選択したサービスは未接続です。予約が0件という意味ではありません。</div>';
+      } else if (!d.items.length) {
+        html += '<div class="banner">条件に該当する予約は0件です（取得は正常に完了しています）。</div>';
+      } else {
+        html += '<ul class="cards">' + d.items.map(renderCard).join('') + '</ul>';
+      }
+      return html + renderIssues(d.issues);
+    }
+
+    function renderDetail(state) {
+      if (state.detailPhase === 'idle') return '';
+      var html = '<div class="banner"><button type="button" id="detail-close">一覧へ戻る</button></div>';
+      if (state.detailPhase === 'loading') return html + '<div class="banner">取得中…</div>';
+      if (state.detailPhase === 'error') return html + '<div class="banner err">' + esc(state.detailError.message) + '</div>';
+      var r = state.detail;
+      var price = r.effectivePriceAmount === null ? '<span class="empty">未計算</span>' : esc(r.effectivePriceAmount) + '円' + (r.priceOverridden ? '（修正済み）' : '');
+      var rows = [
+        ['予約ID', show(r.bookingId)], ['サービス', show(r.serviceLabel) + (r.service === 'unclassified' ? '（元の値: ' + show(r.brandRaw) + '）' : '')],
+        ['状態', show(r.statusLabel) + (r.status === null ? '（元の値: ' + show(r.statusRaw) + '）' : '')],
+        ['利用日', show(r.date)], ['開始', show(r.startAt)], ['終了', show(r.endAt)],
+        ['氏名', show(r.name)], ['人数', show(r.people, '名')], ['利用者区分', show(r.customerType)], ['利用目的', show(r.purpose)],
+        ['プラン', show(r.planCode)], ['大人数利用', r.largeParty ? 'はい' : 'いいえ'],
+        ['支払方法', show(r.paymentMethod)], ['決済状態', show(r.paymentStatus)], ['利用料金', price],
+        ['受付経路', show(r.source)], ['作成', show(r.createdAt)], ['更新', show(r.updatedAt)],
+        ['確定', show(r.confirmedAt)], ['キャンセル', show(r.cancelledAt)], ['失効', show(r.expiredAt)]
+      ];
+      return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>';
+    }
+
+    function renderView(state) {
+      return state.detailPhase !== 'idle' ? renderDetail(state) : renderList(state);
+    }
+
+    function optionsHtml(list) {
+      return list.map(function (o) { return '<option value="' + esc(o[0]) + '">' + esc(o[1]) + '</option>'; }).join('');
+    }
+
+    /* 画面の入力 → APIへ渡す条件。custom以外ではfrom/toを送らずサーバー側の既定期間を使う。 */
+    function paramsFromInputs(inputs) {
+      var p = { service: inputs.service, status: inputs.status };
+      if (inputs.scope === 'custom') {
+        if (inputs.from) p.from = inputs.from;
+        if (inputs.to) p.to = inputs.to;
+        p.scope = 'upcoming';
+      } else {
+        p.scope = inputs.scope;
+      }
+      return p;
+    }
+
+    return { esc: esc, createController: createController, renderBanner: renderBanner, renderView: renderView,
+      optionsHtml: optionsHtml, paramsFromInputs: paramsFromInputs, SERVICES: SERVICES, STATUSES: STATUSES };
+  })();
+
+  (function boot() {
+    if (typeof document === 'undefined' || typeof google === 'undefined') return;
+    var $ = function (id) { return document.getElementById(id); };
+    $('f-service').innerHTML = OpsClient.optionsHtml(OpsClient.SERVICES);
+    $('f-status').innerHTML = OpsClient.optionsHtml(OpsClient.STATUSES);
+    var ctl = OpsClient.createController({
+      list: function (p, ok, ng) { google.script.run.withSuccessHandler(ok).withFailureHandler(ng).opsListReservations(p); },
+      detail: function (id, ok, ng) { google.script.run.withSuccessHandler(ok).withFailureHandler(ng).opsGetReservation(id); }
+    }, function (state) {
+      $('banner').innerHTML = OpsClient.renderBanner(state);
+      $('view').innerHTML = OpsClient.renderView(state);
+    });
+    function reload() {
+      ctl.load(OpsClient.paramsFromInputs({ service: $('f-service').value, status: $('f-status').value, scope: $('f-scope').value, from: $('f-from').value, to: $('f-to').value }));
+    }
+    ['f-service', 'f-status', 'f-scope', 'f-from', 'f-to'].forEach(function (id) { $(id).addEventListener('change', reload); });
+    $('f-reload').addEventListener('click', reload);
+    $('view').addEventListener('click', function (e) {
+      var node = e.target;
+      while (node && node !== $('view')) {
+        if (node.id === 'detail-close') { ctl.closeDetail(); return; }
+        if (node.getAttribute && node.getAttribute('data-id')) { ctl.openDetail(node.getAttribute('data-id')); return; }
+        node = node.parentNode;
+      }
+    });
+    reload();
+  })();
+  </script>
+</body>
+</html>
