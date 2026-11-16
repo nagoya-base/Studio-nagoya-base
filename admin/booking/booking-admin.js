@@ -304,11 +304,14 @@ function visibleBookings() {
   return sortBookings(filterBySearch(filterByDisplayToggles_(filteredBookings()), state.searchQuery));
 }
 
-/* Issue #923/#929: テスト予約の判定（表示フィルタ専用）。一覧APIはemailを返さない（PII方針）ため、
-   氏名×メールのAND判定はサーバー側（BookingAdminWeb.gs isAdminTestBooking_）で行い、
-   一覧itemのisTestBooking（真偽値）だけをここで参照する。氏名だけで隠す判定はクライアントに持たない。 */
+/* Issue #923/#929: テスト予約の判定（表示フィルタ専用・氏名のみ）。予約者氏名を前後trimした結果が
+   TEST_BOOKING_NAMES_ のいずれかと完全一致する場合のみ。英字の大小文字は区別し（'ETST'は指定どおり、
+   'test'/'TeSt'等は対象外）、部分一致（'テスト太郎'）・氏名未設定も対象外。メールは参照しない。 */
+var TEST_BOOKING_NAMES_ = ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'];
+
 function isTestBooking_(b) {
-  return !!b && b.isTestBooking === true;
+  if (!b || b.name === null || b.name === undefined) return false;
+  return TEST_BOOKING_NAMES_.indexOf(String(b.name).trim()) !== -1;
 }
 
 /* Issue #923/#927: 一覧の表示トグル（決済要対応のみ／テスト予約を表示）。2条件は独立で、

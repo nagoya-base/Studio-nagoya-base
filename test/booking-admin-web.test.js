@@ -245,7 +245,7 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
      refundDecisionRequired/paymentRecoveryRequired）を追加。
      いずれも真偽値・状態コードのみで、Stripe識別子・PIIは一覧に含めない。 */
   var allowedKeys = ['bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'customerType', 'purpose', 'paymentMethod', 'status', 'confirmedMailPending', 'cardPaymentDueAt', 'effectivePriceAmount', 'priceOverridden', 'priceUpdateNeeded',
-    'isStripeCheckout', 'isCardPayment', 'paymentLinkSent', 'paymentStatus', 'refundDecisionRequired', 'paymentRecoveryRequired', 'isTestBooking'];
+    'isStripeCheckout', 'isCardPayment', 'paymentLinkSent', 'paymentStatus', 'refundDecisionRequired', 'paymentRecoveryRequired'];
   assert.deepStrictEqual(Object.keys(item).sort(), allowedKeys.slice().sort());
   assert.strictEqual(item.cardPaymentDueAt, '', '現金等カード以外の支払方法ではcardPaymentDueAtは空文字であるべき');
   assert.strictEqual(item.priceOverridden, false, '未修正の予約はpriceOverridden:falseであるべき');
@@ -258,61 +258,6 @@ test('getAdminBookings: { todayJst, bookings }を返し、一覧の各要素は�
   ['email', 'phone', 'note', 'pendingMailSentAt', 'lastMailErrorMessage', 'stripePaymentIntentId'].forEach(function (piiField) {
     assert.strictEqual(Object.prototype.hasOwnProperty.call(item, piiField), false, '一覧レスポンスに' + piiField + 'を含めてはいけない');
   });
-});
-
-/* Issue #929: テスト予約判定（氏名6種 AND 運営者メール）。メール自体は一覧へ返さず真偽値のみ。
-   予約作成ルールの影響を受けないよう、台帳へ直接行を追加して一覧APIの出力だけを検証する。 */
-var seq929_ = 0;
-function appendNamedBooking_(ctx, name, email) {
-  seq929_ += 1;
-  var id = 'SX-20261001-T' + String(seq929_).padStart(7, '0');
-  ctx.sandbox.SpreadsheetRepository.appendBooking({
-    bookingId: id,
-    createdAt: new Date('2026-09-01T09:30:00+09:00'),
-    date: futureDateJst_(30),
-    startAt: new Date('2026-10-31T19:00:00+09:00'),
-    endAt: new Date('2026-10-31T21:00:00+09:00'),
-    brand: 'studio_x', name: name, email: email, phone: '090-0000-0000', people: '2名',
-    purpose: 'x', paymentMethod: '現金', status: 'PENDING', calendarEventId: 'ev-' + seq929_,
-    source: 'test', note: '', customerType: 'returning'
-  });
-  return ctx.sandbox.getAdminBookings().bookings.filter(function (x) { return x.bookingId === id; })[0];
-}
-
-test('#929 getAdminBookings: 指定6氏名 × 指定メール（大小文字・前後空白の揺れ含む）はisTestBooking:true', function () {
-  var ctx = setup();
-  ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'].forEach(function (name) {
-    ['koishi.s@gmail.com', 'KOISHI.S@GMAIL.COM', '  Koishi.S@Gmail.com '].forEach(function (email) {
-      assert.strictEqual(appendNamedBooking_(ctx, ' ' + name + '\u3000', email).isTestBooking, true, name + ' / ' + email);
-    });
-  });
-});
-
-test('#929 getAdminBookings: 氏名が該当でもメールが別人・空ならisTestBooking:false', function () {
-  var ctx = setup();
-  ['other@example.com', 'xkoishi.s@gmail.com', 'koishi.s@gmail.com.jp', ''].forEach(function (email) {
-    ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'].forEach(function (name) {
-      assert.strictEqual(appendNamedBooking_(ctx, name, email).isTestBooking, false, name + ' / ' + email);
-    });
-  });
-});
-
-test('#929 getAdminBookings: 指定メールでも氏名が別文字列・部分一致・未指定表記ならisTestBooking:false', function () {
-  var ctx = setup();
-  ['テスト太郎', '太郎テスト', 'test', 'etst', '主人', 'ぬし様', '山田太郎', ''].forEach(function (name) {
-    assert.strictEqual(appendNamedBooking_(ctx, name, 'koishi.s@gmail.com').isTestBooking, false, name);
-  });
-});
-
-test('#929 isAdminTestBooking_: 欠損値（name/email未設定・null・record無し）は常にfalse', function () {
-  var ctx = setup();
-  var f = ctx.sandbox.isAdminTestBooking_;
-  assert.strictEqual(f({ name: 'テスト' }), false);
-  assert.strictEqual(f({ name: 'テスト', email: null }), false);
-  assert.strictEqual(f({ name: null, email: 'koishi.s@gmail.com' }), false);
-  assert.strictEqual(f({ email: 'koishi.s@gmail.com' }), false);
-  assert.strictEqual(f(null), false);
-  assert.strictEqual(f({ name: 'テスト', email: 'koishi.s@gmail.com' }), true);
 });
 
 test('getAdminBookings: 複数件・複数statusをすべて返す（サーバー側では絞り込まない）', function () {

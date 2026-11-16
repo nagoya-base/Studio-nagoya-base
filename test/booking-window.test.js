@@ -328,9 +328,7 @@ test('永久会員メールの直書きはConfig.gs 1か所のみ（各機能へ
       if (/\.(gs|html|js)$/.test(e.name) && fs.readFileSync(p, 'utf8').indexOf(PERMANENT_EMAIL) !== -1) hits.push(path.relative(root, p));
     });
   })(root);
-  /* Issue #929: BookingAdminWeb.gsのADMIN_TEST_BOOKING_EMAIL_は永久会員判定とは別目的（運営者の
-     テスト予約を一覧で隠すための表示フィルタ用）。会員判定へは使わないため、ここだけ例外として許可する。 */
-  assert.deepStrictEqual(hits, ['booking/admin/BookingAdminWeb.gs', 'booking/shared/Config.gs']);
+  assert.deepStrictEqual(hits, ['booking/shared/Config.gs']);
 });
 
 /* ---------- 管理者 ---------- */
