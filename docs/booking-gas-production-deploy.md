@@ -211,6 +211,7 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
   5. 終了後（成否とも）に、全プロセスをKILLして残存0を確認 → そのユーザー所有のファイルを全ファイルシステムで探索し、home・`/tmp`・`/var/tmp`・`/dev/shm`以外に1つでもあれば失敗、許可領域のものは削除 → ユーザー削除 → workspaceが承認済みcommitのまま（追跡・未追跡・ignoredとも差分なし）であることを確認する。
   6. 後片付けの各コマンドの失敗は握りつぶさない。所有ファイルの全探索は`find`が正常終了した走査だけを有効とし（不完全な走査は最大3回までやり直し）、
      走査・共有一時領域の削除・再走査・pkill/pgrep・ユーザー削除のどれかが失敗すれば`SCAN_FAILED`／`SHARED_TEMP_CLEANUP_FAILED`などで隔離不成立とする。
+     ホストのmountは、既に読取り専用のもの（snapの`/snap/core*`などのsquashfs）を除いて`remount,bind,ro`にし、その後に読取り専用でないmountが残っていないことを再確認する（Issue #925。既にroのmountへの再mountが`Read-only file system`で失敗しても隔離を弱めずに成立させるため。writableなmountの再mount失敗や再確認の不一致は従来どおりexit 97→exit 3）。
   7. namespaceの構築やこれらの確認のどれかに失敗すれば `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
 - 隔離の成立はPR CI（`booking-pr-tests.yml` の `booking-test-isolation` job）で毎回検証する。悪意あるテスト／依存を模したprobe
   （workspace・`RUNNER_TEMP`・Node/npm導入先・`/usr/local/bin`・`/etc`・ルートFS・ホスト上のworld-writableなディレクトリ（canary）と既存world-writableファイルへの書込み、
