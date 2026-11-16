@@ -12,6 +12,8 @@
 | 既存の `booking-pr-tests.yml` | 変更なし。対象パスのPRでは隔離テスト等が追加で走る（必須checkには登録しない） |
 | ルールセット案 | `.github/rulesets/main-protection.json` |
 
+残余リスク: 必須checkは `required-gate` のみ。`booking-pr-tests.yml` の `booking-test-isolation`（隔離ジョブ）は必須に含めない（paths限定でPendingになるため）。保護導入後も、このジョブの失敗は自動ではマージを阻止しない。対象パスのPRでは、マージ前に当該jobの成功を人間が確認する（レビュー手順で確認）。
+
 ルールセット案の内容:
 
 - 対象は `refs/heads/main` のみ
