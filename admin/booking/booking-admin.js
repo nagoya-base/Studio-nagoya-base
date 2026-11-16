@@ -304,13 +304,21 @@ function visibleBookings() {
   return sortBookings(filterBySearch(filterByDisplayToggles_(filteredBookings()), state.searchQuery));
 }
 
-/* Issue #923: テスト予約の判定。予約者氏名を前後trimした結果が「テスト」と完全一致する
-   場合のみ（「テスト太郎」等の部分一致、氏名未設定は対象外）。 */
-var TEST_BOOKING_NAME_ = 'テスト';
+/* Issue #923/#929: テスト予約の判定（表示フィルタ専用）。次の両方を満たす場合のみ対象（AND条件）。
+   1. 氏名: 前後trimして TEST_BOOKING_NAMES_ のいずれかと完全一致（大文字小文字は区別。
+      'ETST' は指定どおりの文字列で、'TEST' へ訂正しない。'test' 等は追加しない）。
+   2. メール: 前後trimし、英字の大文字小文字を同一視して TEST_BOOKING_EMAIL_ と完全一致。
+   氏名だけで実ユーザーを隠さない。部分一致・メール欠損/不一致は通常予約として残す。 */
+var TEST_BOOKING_NAMES_ = ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'];
+var TEST_BOOKING_EMAIL_ = 'koishi.s@gmail.com';
 
 function isTestBooking_(b) {
-  if (!b || b.name === null || b.name === undefined) return false;
-  return String(b.name).trim() === TEST_BOOKING_NAME_;
+  if (!b) return false;
+  if (b.name === null || b.name === undefined) return false;
+  if (b.email === null || b.email === undefined) return false;
+  var name = String(b.name).trim();
+  var email = String(b.email).trim().toLowerCase();
+  return TEST_BOOKING_NAMES_.indexOf(name) !== -1 && email === TEST_BOOKING_EMAIL_;
 }
 
 /* Issue #923/#927: 一覧の表示トグル（決済要対応のみ／テスト予約を表示）。2条件は独立で、
