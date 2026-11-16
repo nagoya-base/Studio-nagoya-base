@@ -3208,18 +3208,23 @@ function toggleFixture(sandbox, filter) {
   ];
 }
 
-test('#923 トグル初期状態: 決済要対応のみ表示=OFF、テスト予約を非表示=ON（UIのaria-checkedも一致）', function () {
+test('#927 トグル初期状態: 3項目すべてOFF（UIのaria-checked・ON/OFF文字も一致）', function () {
   var sandbox = loadClientSandbox();
   assert.strictEqual(sandbox.state.paymentAttentionOnly, false);
-  assert.strictEqual(sandbox.state.hideTestBookings, true);
+  assert.strictEqual(sandbox.state.showTestBookings, false);
   var ui = sandbox.filterToggleUi_;
   assert.strictEqual(ui.paymentButton.getAttribute('role'), 'switch');
   assert.strictEqual(ui.paymentButton.getAttribute('aria-checked'), 'false');
-  assert.strictEqual(ui.testButton.getAttribute('aria-checked'), 'true');
-  assert.strictEqual(ui.paymentButton.className, 'filter-toggle is-off');
-  assert.strictEqual(ui.testButton.className, 'filter-toggle is-on');
-  assert.strictEqual(ui.paymentButton.stateEl.textContent, 'OFF');
-  assert.strictEqual(ui.testButton.stateEl.textContent, 'ON');
+  assert.strictEqual(ui.testButton.getAttribute('aria-checked'), 'false');
+  assert.strictEqual(ui.recoveryButton.getAttribute('role'), 'switch');
+  assert.strictEqual(ui.recoveryButton.getAttribute('aria-checked'), 'false');
+  [ui.paymentButton, ui.testButton, ui.recoveryButton].forEach(function (b) {
+    assert.strictEqual(b.className, 'filter-toggle is-off');
+    assert.strictEqual(b.stateEl.textContent, 'OFF');
+  });
+  var labels = sandbox.__created.filter(function (el) { return el.className === 'toggle-label'; })
+    .map(function (el) { return el.textContent; });
+  assert.deepStrictEqual(labels, ['決済要対応のみ表示', 'テスト予約を表示', '決済Recovery一覧を表示']);
 });
 
 test('#923 isTestBooking_: 前後trimして「テスト」と完全一致のみ。部分一致・氏名未設定は対象外', function () {
@@ -3242,7 +3247,7 @@ test('#923 4通りの組み合わせ（決済要対応のみ × テスト非表�
   var all = ['no-name', 'normal', 'null-name', 'pay-normal', 'pay-test', 'test-exact', 'test-partial', 'test-trim'];
   function ids(pay, hide) {
     sandbox.state.paymentAttentionOnly = pay;
-    sandbox.state.hideTestBookings = hide;
+    sandbox.state.showTestBookings = !hide;
     return idsOf(sandbox.visibleBookings());
   }
   assert.deepStrictEqual(ids(false, false), all);
@@ -3262,7 +3267,7 @@ test('#923 既存のステータスタブ・検索・並び順と併用できる
     booking({ bookingId: 'e', name: '高橋', date: TODAY, status: 'CANCELLED', paymentRecoveryRequired: true })
   ];
   sandbox.state.paymentAttentionOnly = true;
-  sandbox.state.hideTestBookings = true;
+  sandbox.state.showTestBookings = false;
   sandbox.state.filter = 'upcoming';
   assert.deepStrictEqual(sandbox.visibleBookings().map(function (x) { return x.bookingId; }), ['c', 'b'], '今後タブ＋日付順');
   sandbox.state.filter = 'cancelled';
@@ -3283,10 +3288,10 @@ test('#923 トグルのクリックでstate・aria-checked・一覧が更新さ�
   sandbox.render();
   assert.ok(list.innerHTML.indexOf('data-id="test-exact"') === -1);
   ui.testButton.fire('click');
-  assert.strictEqual(sandbox.state.hideTestBookings, false);
-  assert.strictEqual(ui.testButton.getAttribute('aria-checked'), 'false');
-  assert.strictEqual(ui.testButton.stateEl.textContent, 'OFF');
-  assert.ok(list.innerHTML.indexOf('data-id="test-exact"') !== -1, 'OFFで再表示');
+  assert.strictEqual(sandbox.state.showTestBookings, true);
+  assert.strictEqual(ui.testButton.getAttribute('aria-checked'), 'true');
+  assert.strictEqual(ui.testButton.stateEl.textContent, 'ON');
+  assert.ok(list.innerHTML.indexOf('data-id="test-exact"') !== -1, 'ONでテスト予約表示');
   ui.paymentButton.fire('click');
   assert.strictEqual(sandbox.state.paymentAttentionOnly, true);
   assert.strictEqual(ui.paymentButton.getAttribute('aria-checked'), 'true');
@@ -3307,7 +3312,7 @@ test('#923 表示件数は絞り込み後、上部サマリー・タブ件数は
   assert.ok(ui.noteEl.textContent.indexOf('全予約の集計') !== -1);
   ui.testButton.fire('click');
   assert.strictEqual(ui.countEl.textContent, '表示中: 8件');
-  assert.strictEqual(ui.noteEl.textContent, '', '両トグルOFFなら注記なし');
+  assert.strictEqual(ui.noteEl.textContent, '', '決済要対応OFF・テスト表示ONなら注記なし');
   assert.strictEqual(summaryAll.textContent, '8');
 });
 
@@ -3329,19 +3334,44 @@ function createdById(sandbox, id) {
 
 /* PR #924 レビュー対応: 既存の決済Recovery一覧（getAdminPaymentRecoveries）は維持し、
    絞り込みトグル「決済要対応のみ表示」とは別導線として共存させる。 */
-test('#923 Recovery一覧: 別導線のボタンとして残り、絞り込みトグルとは別要素・別名称', function () {
+test('#927 Recovery一覧: 同じ意匠のスイッチ（初期OFF・パネル非表示・取得なし）で、絞り込みトグルとは別要素', function () {
   var sandbox = loadClientSandbox();
-  var button = createdById(sandbox, 'payment-recovery-open-button');
-  assert.ok(button, '決済Recovery一覧を開くボタンが存在する');
-  assert.strictEqual(button.textContent, '決済Recovery一覧');
-  assert.notStrictEqual(button, sandbox.filterToggleUi_.paymentButton);
-  assert.strictEqual(button.getAttribute('role'), null, 'スイッチではなく処理ボタン');
-  assert.strictEqual(sandbox.filterToggleUi_.paymentButton.getAttribute('aria-checked'), 'false');
+  var toggle = createdById(sandbox, 'payment-recovery-toggle');
+  assert.ok(toggle, '決済Recovery一覧トグルが存在する');
+  assert.strictEqual(toggle, sandbox.filterToggleUi_.recoveryButton);
+  assert.notStrictEqual(toggle, sandbox.filterToggleUi_.paymentButton);
+  assert.strictEqual(toggle.getAttribute('role'), 'switch');
+  assert.strictEqual(toggle.getAttribute('aria-checked'), 'false');
+  assert.strictEqual(createdById(sandbox, 'payment-recovery-panel').classList.contains('hidden'), true);
+  assert.strictEqual(createdById(sandbox, 'payment-recovery-open-button'), undefined, '旧ボタンは廃止');
+  assert.ok(sandbox.google.script.run.calls.every(function (c) { return c.name !== 'getAdminPaymentRecoveries'; }), '初期は取得しない');
+});
+
+test('#927 Recovery一覧: ON/OFFでaria-checked・ON/OFF文字・パネル開閉が切り替わり、OFFはデータを変更しない', function () {
+  var sandbox = loadClientSandbox();
+  toggleFixture(sandbox);
+  var toggle = createdById(sandbox, 'payment-recovery-toggle');
+  var panel = createdById(sandbox, 'payment-recovery-panel');
+  var before = JSON.stringify(sandbox.state.bookings);
+  var baseCalls = sandbox.google.script.run.calls.length;
+  toggle.fire('click');
+  assert.strictEqual(toggle.getAttribute('aria-checked'), 'true');
+  assert.strictEqual(toggle.stateEl.textContent, 'ON');
+  assert.strictEqual(toggle.className, 'filter-toggle is-on');
+  assert.strictEqual(panel.classList.contains('hidden'), false);
+  var calls = sandbox.google.script.run.calls;
+  assert.strictEqual(calls[calls.length - 1].name, 'getAdminPaymentRecoveries');
+  toggle.fire('click');
+  assert.strictEqual(toggle.getAttribute('aria-checked'), 'false');
+  assert.strictEqual(toggle.stateEl.textContent, 'OFF');
+  assert.strictEqual(panel.classList.contains('hidden'), true);
+  assert.strictEqual(JSON.stringify(sandbox.state.bookings), before);
+  assert.ok(calls.slice(baseCalls).every(function (c) { return c.name === 'getAdminPaymentRecoveries'; }), 'Recovery取得以外のAPIは呼ばない');
 });
 
 test('#923 Recovery一覧: 台帳行あり・なし双方の案件を表示し、決済ID・エラー・返金状態を保全する', function () {
   var sandbox = loadClientSandbox();
-  var button = createdById(sandbox, 'payment-recovery-open-button');
+  var button = createdById(sandbox, 'payment-recovery-toggle');
   var panel = createdById(sandbox, 'payment-recovery-panel');
   var run = sandbox.google.script.run;
   assert.strictEqual(panel.classList.contains('hidden'), true);
@@ -3369,7 +3399,7 @@ test('#923 Recovery一覧: 台帳行あり・なし双方の案件を表示し�
 
 test('#923 Recovery一覧: 台帳行ありの案件は詳細へ遷移し、空・失敗・再クリックの状態も保全する', function () {
   var sandbox = loadClientSandbox();
-  var button = createdById(sandbox, 'payment-recovery-open-button');
+  var button = createdById(sandbox, 'payment-recovery-toggle');
   var panel = createdById(sandbox, 'payment-recovery-panel');
   var run = sandbox.google.script.run;
   button.fire('click');
@@ -3394,9 +3424,9 @@ test('#923 Recovery一覧とトグルは独立: 一覧を開いてもトグル�
   var sandbox = loadClientSandbox();
   toggleFixture(sandbox);
   var before = JSON.stringify(sandbox.state.bookings);
-  createdById(sandbox, 'payment-recovery-open-button').fire('click');
+  createdById(sandbox, 'payment-recovery-toggle').fire('click');
   assert.strictEqual(sandbox.state.paymentAttentionOnly, false);
-  assert.strictEqual(sandbox.state.hideTestBookings, true);
+  assert.strictEqual(sandbox.state.showTestBookings, false);
   assert.strictEqual(JSON.stringify(sandbox.state.bookings), before);
   sandbox.filterToggleUi_.paymentButton.fire('click');
   assert.strictEqual(createdById(sandbox, 'payment-recovery-panel').classList.contains('hidden'), false, 'トグル操作でRecovery一覧は閉じない');
