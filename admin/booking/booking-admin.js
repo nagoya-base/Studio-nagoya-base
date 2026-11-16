@@ -304,13 +304,14 @@ function visibleBookings() {
   return sortBookings(filterBySearch(filterByDisplayToggles_(filteredBookings()), state.searchQuery));
 }
 
-/* Issue #923: テスト予約の判定。予約者氏名を前後trimした結果が「テスト」と完全一致する
-   場合のみ（「テスト太郎」等の部分一致、氏名未設定は対象外）。 */
-var TEST_BOOKING_NAME_ = 'テスト';
+/* Issue #923/#929: テスト予約の判定（表示フィルタ専用・氏名のみ）。予約者氏名を前後trimした結果が
+   TEST_BOOKING_NAMES_ のいずれかと完全一致する場合のみ。英字の大小文字は区別し（'ETST'は指定どおり、
+   'test'/'TeSt'等は対象外）、部分一致（'テスト太郎'）・氏名未設定も対象外。メールは参照しない。 */
+var TEST_BOOKING_NAMES_ = ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'];
 
 function isTestBooking_(b) {
   if (!b || b.name === null || b.name === undefined) return false;
-  return String(b.name).trim() === TEST_BOOKING_NAME_;
+  return TEST_BOOKING_NAMES_.indexOf(String(b.name).trim()) !== -1;
 }
 
 /* Issue #923/#927: 一覧の表示トグル（決済要対応のみ／テスト予約を表示）。2条件は独立で、

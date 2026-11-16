@@ -3227,15 +3227,21 @@ test('#927 トグル初期状態: 3項目すべてOFF（UIのaria-checked・ON/O
   assert.deepStrictEqual(labels, ['決済要対応のみ表示', 'テスト予約を表示', '決済Recovery一覧を表示']);
 });
 
-test('#923 isTestBooking_: 前後trimして「テスト」と完全一致のみ。部分一致・氏名未設定は対象外', function () {
+test('#929 isTestBooking_: 指定6表記のみ前後trimして完全一致。メールは参照しない', function () {
   var sandbox = loadClientSandbox();
-  assert.strictEqual(sandbox.isTestBooking_({ name: 'テスト' }), true);
-  assert.strictEqual(sandbox.isTestBooking_({ name: '  テスト ' }), true);
-  assert.strictEqual(sandbox.isTestBooking_({ name: '\u3000テスト\u3000' }), true);
-  assert.strictEqual(sandbox.isTestBooking_({ name: 'テスト太郎' }), false);
-  assert.strictEqual(sandbox.isTestBooking_({ name: '太郎テスト' }), false);
-  assert.strictEqual(sandbox.isTestBooking_({ name: 'テ スト' }), false);
-  assert.strictEqual(sandbox.isTestBooking_({ name: '' }), false);
+  ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'].forEach(function (name) {
+    assert.strictEqual(sandbox.isTestBooking_({ name: name }), true, name);
+    assert.strictEqual(sandbox.isTestBooking_({ name: '  ' + name + '\u3000' }), true, 'trim: ' + name);
+    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: 'other@example.com' }), true, 'メール不一致でも対象: ' + name);
+    assert.strictEqual(sandbox.isTestBooking_({ name: name, email: '' }), true, 'メール空でも対象: ' + name);
+  });
+});
+
+test('#929 isTestBooking_: 未指定の大小文字・部分一致・氏名未設定は対象外', function () {
+  var sandbox = loadClientSandbox();
+  ['test', 'TeSt', 'tEST', 'etst', 'Etst', 'テスト太郎', '太郎テスト', 'テ スト', '主人', 'ぬし様', 'ＴＥＳＴ', '山田太郎', ''].forEach(function (name) {
+    assert.strictEqual(sandbox.isTestBooking_({ name: name }), false, JSON.stringify(name));
+  });
   assert.strictEqual(sandbox.isTestBooking_({}), false);
   assert.strictEqual(sandbox.isTestBooking_({ name: null }), false);
   assert.strictEqual(sandbox.isTestBooking_(null), false);
