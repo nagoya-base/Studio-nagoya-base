@@ -151,6 +151,18 @@ test('正規化: 予約ID空欄・重複・不正日付・開始不正は除外�
   assert.strictEqual(byRow[7], 'invalid_start');
 });
 
+test('正規化: 不正な行と同じIDの有効行も重複として除外する', function () {
+  var sb = loadSandbox({});
+  var out = sb.OpsNormalizer.normalize([HEADER,
+    row({ bookingId: 'DUP', status: 'CONFIRMED' }),
+    row({ bookingId: 'DUP', date: '2026-02-30', status: 'CANCELLED' })
+  ]);
+  assert.strictEqual(out.records.length, 0);
+  assert.deepStrictEqual(plain(out.issues.map(function (i) { return i.codes.join(','); })), ['duplicate_id', 'duplicate_id,invalid_date']);
+  var t = api([row({ bookingId: 'DUP' }), row({ bookingId: 'DUP', startAt: '' })], {});
+  assert.strictEqual(t.sb.opsGetReservation('DUP').error.code, 'NOT_FOUND');
+});
+
 test('正規化: 0と空欄を区別し、不明なサービス・状態を既存値へ丸めない', function () {
   var sb = loadSandbox({});
   var out = sb.OpsNormalizer.normalize([HEADER,
@@ -425,6 +437,22 @@ test('クライアント: 正常0件・未接続サービス選択・描画の�
   assert.ok(!/<script>|<img |<b>/.test(html), html);
   assert.ok(/0名/.test(html), '人数0は0として表示');
   assert.ok(/未入力/.test(html), '終了時刻nullは未入力');
+});
+
+test('クライアント: 詳細を開いたまま再取得すると詳細も取り直し、古い詳細を残さない', function () {
+  var C = loadClient();
+  var a = fakeApi(), ctl = C.createController(a);
+  ctl.openDetail('A');
+  a.pending.detail[0].ok({ ok: true, reservation: { bookingId: 'A', statusLabel: '確定', status: 'CONFIRMED', serviceLabel: 'SNB', service: 'snb' } });
+  ctl.load({});
+  assert.strictEqual(a.pending.detail.length, 2, '再取得で詳細も取得し直す');
+  assert.strictEqual(a.pending.detail[1].id, 'A');
+  assert.strictEqual(ctl.state.detail, null, '取得し直している間は古い詳細を表示しない');
+  a.pending.detail[1].ok({ ok: true, reservation: { bookingId: 'A', statusLabel: 'キャンセル', status: 'CANCELLED', serviceLabel: 'SNB', service: 'snb' } });
+  assert.strictEqual(ctl.state.detail.statusLabel, 'キャンセル');
+  ctl.closeDetail();
+  ctl.load({});
+  assert.strictEqual(a.pending.detail.length, 2, '詳細を閉じた後の再取得では詳細を取得しない');
 });
 
 test('クライアント: 詳細の遅延応答も最新のものだけ採用し、画面入力はAPI条件へ変換される', function () {

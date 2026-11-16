@@ -72,7 +72,7 @@
 
     /* 手動再取得・連続操作で、遅れて返った古い応答が最新結果を上書きしないようにする。 */
     function createController(api, onChange) {
-      var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailPhase: 'idle', detailError: null };
+      var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null };
       var listSeq = 0, detailSeq = 0;
       function emit() { if (onChange) onChange(state); }
       function fail(err) {
@@ -82,6 +82,8 @@
       }
       function load(params) {
         var mine = ++listSeq;
+        /* 詳細を開いたまま再取得した場合も、詳細を最新の台帳から取り直す（古い詳細を新しい取得時刻の下に残さない）。 */
+        if (state.detailId !== null) openDetail(state.detailId);
         state.phase = 'loading';
         state.error = null;
         emit();
@@ -101,6 +103,7 @@
       }
       function openDetail(id) {
         var mine = ++detailSeq;
+        state.detailId = id;
         state.detail = null; state.detailPhase = 'loading'; state.detailError = null;
         emit();
         api.detail(id, function (res) {
@@ -114,7 +117,7 @@
           emit();
         });
       }
-      function closeDetail() { detailSeq++; state.detail = null; state.detailPhase = 'idle'; state.detailError = null; emit(); }
+      function closeDetail() { detailSeq++; state.detailId = null; state.detail = null; state.detailPhase = 'idle'; state.detailError = null; emit(); }
       return { state: state, load: load, openDetail: openDetail, closeDetail: closeDetail };
     }
 

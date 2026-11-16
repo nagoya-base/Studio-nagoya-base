@@ -79,10 +79,12 @@ var OpsNormalizer = (function () {
     return baseDateMs + minutes * 60000;
   }
 
-  function buildRecord_(get, rowNumber, issues) {
+  function buildRecord_(get, rowNumber, issues, idCounts) {
     var bookingId = text_(get('bookingId'), 80);
     var codes = [];
     if (bookingId === null) codes.push('missing_id');
+    /* 重複は不正行も含めて数える（不正な行と同じIDの有効行が、唯一の予約として残らないようにする）。 */
+    else if (idCounts[bookingId] > 1) codes.push('duplicate_id');
     var d = dateMs_(get('date'));
     if (d.code) codes.push(d.code);
     var startMs = clockOrDateMs_(get('startAt'), d.ms);
@@ -159,23 +161,22 @@ var OpsNormalizer = (function () {
     var records = [];
     var blankRows = 0;
     var totalRows = 0;
+    /* 重複ID: 空白でない全行のIDを先に数え、該当する全行を除外する（どれが正かをこの層では判断しない）。 */
+    var idCounts = {};
+    for (var p = 1; p < values.length; p++) {
+      if (isBlankRow_(values[p])) continue;
+      var rawId = text_(index.bookingId === undefined ? '' : values[p][index.bookingId], 80);
+      if (rawId !== null) idCounts[rawId] = (idCounts[rawId] || 0) + 1;
+    }
     for (var r = 1; r < values.length; r++) {
       var row = values[r];
       if (isBlankRow_(row)) { blankRows++; continue; }
       totalRows++;
-      var record = buildRecord_(function (key) { return index[key] === undefined ? '' : row[index[key]]; }, r + 1, issues);
+      var record = buildRecord_(function (key) { return index[key] === undefined ? '' : row[index[key]]; }, r + 1, issues, idCounts);
       if (record) records.push(record);
     }
-    /* 重複ID: 該当する全行を除外する（どれが正かをこの層では判断しない）。 */
-    var counts = {};
-    records.forEach(function (rec) { counts[rec.bookingId] = (counts[rec.bookingId] || 0) + 1; });
-    var kept = [];
-    records.forEach(function (rec) {
-      if (counts[rec.bookingId] > 1) issues.push({ row: rec.rowNumber, bookingId: rec.bookingId, severity: 'error', codes: ['duplicate_id'] });
-      else kept.push(rec);
-    });
     issues.sort(function (a, b) { return a.row - b.row; });
-    return { schemaError: null, records: kept, issues: issues, blankRows: blankRows, totalRows: totalRows };
+    return { schemaError: null, records: records, issues: issues, blankRows: blankRows, totalRows: totalRows };
   }
 
   function reasonText(code) {
