@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!--
+  OpsPage.html — バックエンド検証用の最小画面（Issue #936）。
+  ★ これは Sites フロントエンドではなく、GAS バックエンドの応答（共通接続契約）をそのまま表示して
+    動作確認するための検証画面です。Sites フロントの完成の代替にしません。
+  ★ google.script.run を使うのはこのGAS専用アダプターだけです。本来の画面（_ops-app/frontend/）は
+    通信方式に依存せず、共通契約に対するアダプター経由でバックエンドを呼びます。
+  書き込み・確定・取消の操作はありません。応答は textContent で表示します。
+-->
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 12px 16px; }
+    button, input { min-height: 44px; font: inherit; margin: 4px 4px 4px 0; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f3f3f5; color: #1d1d1f; padding: 8px; }
+    @media (prefers-color-scheme: dark) { body { background: #16161a; color: #ececf0; } pre { background: #202026; color: #ececf0; } }
+  </style>
+</head>
+<body>
+  <h1>バックエンド検証用（読み取り専用）</h1>
+  <p>Sitesフロントではありません。共通契約の応答をそのまま表示します。</p>
+  <button type="button" id="b-list">一覧を取得（今日から30日間）</button>
+  <div><input id="id" placeholder="予約ID" aria-label="予約ID"><button type="button" id="b-detail">詳細を取得</button></div>
+  <pre id="out" aria-live="polite">未取得</pre>
+  <script>
+    (function () {
+      function show(v) { document.getElementById('out').textContent = JSON.stringify(v, null, 2); }
+      function fail() { document.getElementById('out').textContent = '取得に失敗しました（通信エラー）。'; }
+      document.getElementById('b-list').addEventListener('click', function () {
+        google.script.run.withSuccessHandler(show).withFailureHandler(fail).opsListReservations({});
+      });
+      document.getElementById('b-detail').addEventListener('click', function () {
+        google.script.run.withSuccessHandler(show).withFailureHandler(fail).opsGetReservation(document.getElementById('id').value);
+      });
+    })();
+  </script>
+</body>
+</html>
