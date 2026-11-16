@@ -1,5 +1,5 @@
 /*
- * 運営アプリ段階1 フロントエンド（ops-app/frontend/）のテスト（Issue #936）。
+ * 運営アプリ段階1 フロントエンド（_ops-app/frontend/）のテスト（Issue #936）。
  * - 画面ロジックは共通接続契約に対するアダプターだけに依存し、モックで先行検証できること。
  * - 契約の検証関数でバックエンド実応答とモック応答の両方を同じ基準で確認する。
  * - データはすべて架空。実バックエンドには接続しない（結合は別PR）。
@@ -11,10 +11,12 @@ var assert = require('node:assert');
 var fs = require('fs');
 var path = require('path');
 var vm = require('vm');
+var os = require('os');
+var childProcess = require('child_process');
 var contract = require('./helpers/ops-contract');
 
 var ROOT = path.join(__dirname, '..');
-var FRONT = path.join(ROOT, 'ops-app', 'frontend');
+var FRONT = path.join(ROOT, '_ops-app', 'frontend');
 var C = require(path.join(FRONT, 'ops-client.js'));
 var Mock = require(path.join(FRONT, 'mock-adapter.js'));
 
@@ -330,14 +332,61 @@ test('境界: フロントはGAS・Sheets・SwitchBotに直接依存せず、秘
   assert.ok(!/ops-client|OpsClient/.test(page), 'GAS検証画面は画面ロジックを共有・複製しない');
 });
 
+/* 既存のGitHub Pagesビルド（Jekyll）の生成物に、モックHTML/JSが含まれないこと。
+   `_` 始まりのディレクトリはJekyllの標準で除外される。既存の設定・workflowは変更していない。 */
+function jekyllCommand() {
+  var r = childProcess.spawnSync('bundle', ['exec', 'jekyll', '--version'], { cwd: ROOT, encoding: 'utf8' });
+  if (r.status === 0) return ['bundle', ['exec', 'jekyll']];
+  var p = childProcess.spawnSync('bundle', ['info', 'jekyll', '--path'], { cwd: ROOT, encoding: 'utf8' });
+  if (p.status === 0) {
+    var exe = path.join(p.stdout.trim(), 'exe', 'jekyll');
+    if (fs.existsSync(exe)) return ['bundle', ['exec', 'ruby', exe]];
+  }
+  return null;
+}
+var jekyll = jekyllCommand();
+if (!jekyll && process.env.CI) {
+  test('Jekyllが利用できる（CIでは必須）', function () { assert.fail('CIでJekyllが利用できません'); });
+}
+
+function walk(dir, out) {
+  fs.readdirSync(dir, { withFileTypes: true }).forEach(function (e) {
+    var full = path.join(dir, e.name);
+    if (e.isDirectory()) walk(full, out); else out.push(full);
+  });
+  return out;
+}
+
+test('境界: 既存GitHub Pagesのビルド生成物にモックフロント（HTML/JS）が含まれない', { skip: jekyll ? false : 'Jekyll (bundle exec) が利用できないためスキップ' }, function () {
+  assert.ok(/^_/.test(path.basename(path.dirname(FRONT))), 'フロントはJekyllが標準で除外する _ 始まりのディレクトリに置く');
+  var dest = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-site-'));
+  try {
+    var r = childProcess.spawnSync(jekyll[0], jekyll[1].concat(['build', '--destination', dest, '--quiet']), { cwd: ROOT, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, 'jekyll build failed: ' + r.stderr + r.stdout);
+    var files = walk(dest, []).map(function (f) { return path.relative(dest, f); });
+    var leaked = files.filter(function (f) { return /(^|\/)_?ops-app(\/|$)/.test(f) || /(^|\/)(ops-client|mock-adapter)\.js$/.test(f); });
+    assert.deepStrictEqual(leaked, [], 'モックフロントが生成物に含まれている');
+    /* 内容でも確認（ファイル名を変えて混入していないこと）。生成物のうち公開サイト側（docs/test/gasのソース配布を除く）を対象にする */
+    var site = files.filter(function (f) { return !/^(test|docs|gas)\//.test(f) && /\.(html|js|css|json|xml)$/.test(f); });
+    site.forEach(function (f) {
+      var body = fs.readFileSync(path.join(dest, f), 'utf8');
+      assert.ok(!/OpsMockAdapter|OpsClient|モックデータ（架空）/.test(body), f + 'にモックフロントの内容が含まれている');
+    });
+    /* 既存の公開物（トップ等）は引き続き生成される（ビルドが空でないことの確認） */
+    assert.ok(files.indexOf('index.html') !== -1);
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
+
 test('境界: フロントのモックページは架空・非インデックスで、既存の公開物・workflowから参照されない', function () {
   var index = fs.readFileSync(path.join(FRONT, 'index.html'), 'utf8');
   assert.ok(/noindex,nofollow/.test(index) && /架空のモックデータ/.test(index));
   assert.ok(!/---\n/.test(index.slice(0, 5)), 'front matterを含まない');
   var wf = path.join(ROOT, '.github', 'workflows');
   fs.readdirSync(wf).forEach(function (f) {
-    assert.ok(!/ops-app/.test(fs.readFileSync(path.join(wf, f), 'utf8')), f + 'がops-appを参照している');
+    assert.ok(!/_ops-app/.test(fs.readFileSync(path.join(wf, f), 'utf8')), f + 'が_ops-appを参照している');
   });
-  assert.ok(!/ops-app/.test(fs.readFileSync(path.join(ROOT, 'sitemap.xml'), 'utf8')));
-  assert.ok(!/ops-app/.test(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')));
+  assert.ok(!/_ops-app/.test(fs.readFileSync(path.join(ROOT, 'sitemap.xml'), 'utf8')));
+  assert.ok(!/_ops-app/.test(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')));
 });

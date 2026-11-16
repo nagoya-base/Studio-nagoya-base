@@ -9,7 +9,7 @@
 | 区分 | 状態 | 場所 |
 | --- | --- | --- |
 | ① バックエンド単体（共通契約・台帳アダプター・検証/正規化・認可と拒否テスト） | **本PRで実装・自動テスト済み**（実データ・実デプロイでは未検証） | `gas/ops-reservations/` |
-| ② フロントエンド（Sites向け画面ロジック）のモック検証 | **本PRで実装・自動テスト済み**。**モック（架空）のみ**。実バックエンド未接続 | `ops-app/frontend/` |
+| ② フロントエンド（Sites向け画面ロジック）のモック検証 | **本PRで実装・自動テスト済み**。**モック（架空）のみ**。実バックエンド未接続 | `_ops-app/frontend/` |
 | ③ 結合（採用した認証付き経路で、所有者の閲覧成功・非所有者の拒否・失敗/未接続表示を実環境で確認） | **未実施**（Sites→バックエンドの接続方式が未確定。§7） | — |
 
 - `gas/ops-reservations/OpsPage.html` は **GASバックエンド検証用の最小画面**であり、Sitesフロントではありません（Sitesフロント完成の代替にしない）。`google.script.run` を使うのはこのGAS専用アダプターだけです。
@@ -74,8 +74,8 @@
 | `OpsNormalizer.gs` / `OpsQuery.gs` / `OpsSource.gs` | 検証・正規化／絞り込み・並び順・フェーズ・項目射影／台帳アダプター（Sheets API GETのみ） |
 | `OpsAuth.gs` / `OpsApi.gs` | 認証器／通信方式に依存しない入口 `OpsApi.handle(request, ctx)`。GAS専用の入口（`doGet`・`opsListReservations`・`opsGetReservation`）は末尾の薄いアダプター |
 | `OpsPage.html` | GASバックエンド**検証用**の最小画面（共通契約の応答をそのまま表示。Sitesフロントではない） |
-| `ops-app/frontend/ops-client.js` | フロント画面ロジック。契約アダプター `{list, detail}` だけに依存（GAS・Sheets・SwitchBotへ直接接続しない・秘密を持たない） |
-| `ops-app/frontend/mock-adapter.js` / `index.html` | **架空データ**のモックアダプターとモック画面（`?scenario=ok\|empty\|error\|not_connected\|denied\|flaky`） |
+| `_ops-app/frontend/ops-client.js` | フロント画面ロジック。契約アダプター `{list, detail}` だけに依存（GAS・Sheets・SwitchBotへ直接接続しない・秘密を持たない） |
+| `_ops-app/frontend/mock-adapter.js` / `index.html` | **架空データ**のモックアダプターとモック画面（`?scenario=ok\|empty\|error\|not_connected\|denied\|flaky`） |
 | `test/ops-reservations.test.js` / `test/ops-frontend.test.js` / `test/helpers/ops-contract.js` | バックエンド単体／フロント（モック）＋契約適合／契約の検証関数 |
 
 ## 4. 運営者が行う作業（未実施・本PRに含まない）
@@ -88,7 +88,7 @@
 ## 5. 検証と制約
 - `node --test test/ops-reservations.test.js test/ops-frontend.test.js`（架空データ）: 境界日・JST日付境界・期間の重なり（日付またぎ・当日終了済み・利用中・0:00終了）・同時刻の並び・0件・未知サービス/状態・ID空欄/重複（不正行との組み合わせ含む）・重複ヘッダー・列順変更・認可（本人確認不能/不一致/所有者未設定/申告値の無視）・認可失敗時に台帳へアクセスしない・取得失敗/シート無し/列不足/行数超過/タイムゾーン未対応・Community未接続と正常0件の区別・応答競合・再取得時の詳細更新・XSS・0と未入力・読み取り専用の静的検査・フロントのGAS/外部システム非依存・既存workflow/Booking配布表/公開サイトへの非混在・**バックエンド実応答とモック応答が同じ契約検証を通ること**。
 - 制約: 本番Bookingsの実データでの動作は未確認。Communityは未接続。メール/電話/備考は非表示（段階1では追加必須としない）。端末への保存なし。ログは件数と固定コードのみ。
-- モック画面（`ops-app/frontend/index.html`）はリポジトリ直下のためGitHub Pagesの配信対象になる（架空データのみ・`noindex`・サイトマップ/トップから非リンク・実バックエンドへ接続しない）。公開物から外す必要がある場合は所有者の指示で別途対応（Pages設定は変更していない）。
+- **公開経路の分離**: フロント（モック画面を含む）は `_ops-app/frontend/` に置く。`_` 始まりのディレクトリは既存のGitHub Pagesビルド（Jekyll）が標準で除外するため、既存の設定・workflowを変更せずに公開物へ含まれない（実ビルドの生成物にモックHTML/JSが無いことを手動と自動テストで確認）。Sites用の成果物は、この配置から独立して用意する（未実施）。なお `gas/` 配下のバックエンドのソース（`OpsPage.html` を含む）は、既存の `gas/booking/` 等と同様にリポジトリのファイルとして配信対象に含まれる（データ・秘密は含まない。GAS用のため単独では動作しない）。
 
 ## 6. 共通接続契約（通信方式に依存しない）
 `google.script.run` を共通契約にしない。通信方式固有の処理はアダプターに閉じ込める（GAS: `OpsPage.html` / `opsListReservations` 等、フロント: `{list, detail}` アダプター）。契約の機械的な検証は `test/helpers/ops-contract.js`。
