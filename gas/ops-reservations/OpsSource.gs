@@ -67,6 +67,15 @@ var OpsSource = (function () {
 
     var headerRes = get('/values/' + q('1:1') + '?' + RENDER);
     var header = ((headerRes.values && headerRes.values[0]) || []).map(function (h) { return String(h).trim(); });
+    /* 射影する前の元ヘッダーで、許可項目の列名の重複を検出して停止する（射影後は重複が見えなくなる）。 */
+    var duplicated = OpsNormalizer.ALLOWED_COLUMNS.filter(function (name) {
+      return header.filter(function (h) { return h === name; }).length > 1;
+    });
+    if (duplicated.length) {
+      var dup = fail_('SCHEMA_DUPLICATE');
+      dup.opsColumns = duplicated;
+      throw dup;
+    }
     var wanted = [];
     OpsNormalizer.ALLOWED_COLUMNS.forEach(function (name) {
       var i = header.indexOf(name);

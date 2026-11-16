@@ -208,7 +208,16 @@
       return p;
     }
 
-    return { esc: esc, createController: createController, renderBanner: renderBanner, renderView: renderView,
+    /* 取得アダプター。この実装はGAS HtmlService（google.script.run）用。Sites等の別基盤で使う場合は、
+       同じ list/detail の2関数を満たす別アダプターを渡す（Sites用アダプターは未実装。docs参照）。 */
+    function createGasApi(g) {
+      return {
+        list: function (p, ok, ng) { g.script.run.withSuccessHandler(ok).withFailureHandler(ng).opsListReservations(p); },
+        detail: function (id, ok, ng) { g.script.run.withSuccessHandler(ok).withFailureHandler(ng).opsGetReservation(id); }
+      };
+    }
+
+    return { esc: esc, createGasApi: createGasApi, createController: createController, renderBanner: renderBanner, renderView: renderView,
       optionsHtml: optionsHtml, paramsFromInputs: paramsFromInputs, SERVICES: SERVICES, STATUSES: STATUSES };
   })();
 
@@ -217,10 +226,7 @@
     var $ = function (id) { return document.getElementById(id); };
     $('f-service').innerHTML = OpsClient.optionsHtml(OpsClient.SERVICES);
     $('f-status').innerHTML = OpsClient.optionsHtml(OpsClient.STATUSES);
-    var ctl = OpsClient.createController({
-      list: function (p, ok, ng) { google.script.run.withSuccessHandler(ok).withFailureHandler(ng).opsListReservations(p); },
-      detail: function (id, ok, ng) { google.script.run.withSuccessHandler(ok).withFailureHandler(ng).opsGetReservation(id); }
-    }, function (state) {
+    var ctl = OpsClient.createController(OpsClient.createGasApi(google), function (state) {
       $('banner').innerHTML = OpsClient.renderBanner(state);
       $('view').innerHTML = OpsClient.renderView(state);
     });

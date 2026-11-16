@@ -6,7 +6,8 @@
  *   （鍵の暗証番号等はBookingsシートに存在しない）。
  * - 予約IDは正本の値をそのまま使い、再採番しない。空欄・重複IDの行は一覧/詳細から除外し、
  *   issuesで行番号と理由を返す（別予約の詳細を誤表示しない）。
- * - 日時はJST。0（数値）・空欄（null=未入力）を区別し、値を推測で補完しない。
+ * - 日時はJST。0（数値）・空欄（null=未入力）を区別し、値を推測で補完しない（終了が開始以前でも翌日へ補正しない）。
+ * - 許可項目の列名が重複するヘッダーは、列の優先順位を決めずschemaErrorで停止する。
  * - 生の行データはログ・戻り値に含めない。issuesは行番号・予約ID・理由コードのみ。
  */
 'use strict';
@@ -31,7 +32,8 @@ var OpsNormalizer = (function () {
   };
   var WARNING_REASONS = {
     invalid_end: '終了日時が不正または空欄',
-    end_before_start: '終了が開始以前',
+    end_before_start: '終了が開始より前（日またぎを表す完全な日時がないため補正していません）',
+    end_equals_start: '終了が開始と同時刻（補正していません）',
     date_mismatch: '利用日と開始日時の日付が不一致'
   };
 
@@ -96,9 +98,11 @@ var OpsNormalizer = (function () {
     var warnings = [];
     var endRaw = get('endAt');
     var endMs = clockOrDateMs_(endRaw, d.ms);
+    /* 終了が開始以前でも翌日へ補正しない（値を推測で補完しない）。日またぎは、終了が完全な日時（Date）で
+       翌日として入っている場合のみ正式に扱う。時刻だけの文字列は同日として解釈し、逆転は警告する。 */
     if (endMs === null) warnings.push('invalid_end');
-    else if (!OpsContract.isDate(endRaw) && endMs <= startMs) endMs += OpsContract.DAY_MS;
-    if (endMs !== null && endMs <= startMs) warnings.push('end_before_start');
+    else if (endMs === startMs) warnings.push('end_equals_start');
+    else if (endMs < startMs) warnings.push('end_before_start');
     var dateText = OpsContract.formatJstDate(d.ms);
     if (OpsContract.formatJstDate(startMs) !== dateText) warnings.push('date_mismatch');
     if (warnings.length) issues.push({ row: rowNumber, bookingId: bookingId, severity: 'warning', codes: warnings });
@@ -149,9 +153,17 @@ var OpsNormalizer = (function () {
   function normalize(values) {
     var header = values && values.length ? values[0] : [];
     var index = {};
+    var duplicated = [];
     for (var c = 0; c < header.length; c++) {
       var name = typeof header[c] === 'string' ? header[c].trim() : '';
-      if (name && ALLOWED_COLUMNS.indexOf(name) !== -1 && index[name] === undefined) index[name] = c;
+      if (name && ALLOWED_COLUMNS.indexOf(name) !== -1) {
+        if (index[name] === undefined) index[name] = c;
+        else if (duplicated.indexOf(name) === -1) duplicated.push(name);
+      }
+    }
+    /* 許可項目の列名が重複していたら、どの列が正かを判断せず停止する（片方だけを正しい値として表示しない）。 */
+    if (duplicated.length) {
+      return { schemaError: { missing: [], duplicated: duplicated }, records: [], issues: [], blankRows: 0, totalRows: 0 };
     }
     var missing = REQUIRED_COLUMNS.filter(function (col) { return index[col] === undefined; });
     if (missing.length) {

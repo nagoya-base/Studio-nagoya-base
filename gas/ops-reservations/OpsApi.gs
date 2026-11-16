@@ -45,6 +45,7 @@ var OpsApi = (function () {
     SHEET_NOT_FOUND: '予約台帳のシートが見つかりません。',
     TOO_LARGE: '予約台帳の行数が上限を超えています（一部だけを全件のように表示しないため停止しました）。',
     TIMEZONE_UNSUPPORTED: '予約台帳のタイムゾーンに対応していません。',
+    SCHEMA_DUPLICATE: '予約台帳のヘッダーに同名の列が複数あります。どの列が正か判断できないため停止しました',
     FETCH_FAILED: '予約台帳の取得に失敗しました。時間をおいて再取得してください。'
   };
 
@@ -62,10 +63,14 @@ var OpsApi = (function () {
     } catch (e) {
       var code = e && FETCH_ERRORS_[e.opsCode] ? e.opsCode : 'FETCH_FAILED';
       Logger.log('ops: read failed ' + code);
-      return error_(code, FETCH_ERRORS_[code]);
+      var detail = code === 'SCHEMA_DUPLICATE' && e.opsColumns ? ': ' + e.opsColumns.join(', ') : '';
+      return error_(code, FETCH_ERRORS_[code] + detail);
     }
     var normalized = OpsNormalizer.normalize(values);
     if (normalized.schemaError) {
+      if (normalized.schemaError.duplicated) {
+        return error_('SCHEMA_DUPLICATE', FETCH_ERRORS_.SCHEMA_DUPLICATE + ': ' + normalized.schemaError.duplicated.join(', '));
+      }
       return error_('SCHEMA_MISMATCH', '予約台帳に必要な列がありません: ' + normalized.schemaError.missing.join(', '));
     }
     return { ok: true, normalized: normalized };

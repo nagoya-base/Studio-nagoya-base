@@ -200,13 +200,21 @@ test('正規化: 日付はJST基準。UTC日付とずれる深夜帯・日また
     row({ bookingId: 'N1', date: '2026-12-02', startAt: jst(2026, 12, 2, 0, 30), endAt: jst(2026, 12, 2, 2, 0) }),
     row({ bookingId: 'N2', date: '2026-12-01', startAt: jst(2026, 12, 2, 0, 30), endAt: jst(2026, 12, 2, 2, 0) }),
     row({ bookingId: 'N3', date: '2026-12-02', startAt: '22:00', endAt: '01:00' }),
+    row({ bookingId: 'N5', date: '2026-12-02', startAt: '10:00', endAt: '09:00' }),
+    row({ bookingId: 'N6', date: '2026-12-02', startAt: '10:00', endAt: '10:00' }),
+    row({ bookingId: 'N7', date: '2026-12-02', startAt: jst(2026, 12, 2, 22, 0), endAt: jst(2026, 12, 3, 1, 0) }),
     row({ bookingId: 'N4', date: jst(2026, 12, 2, 0, 0), startAt: '09:00', endAt: '' })
   ]);
   var by = {};
   out.records.forEach(function (r) { by[r.bookingId] = r; });
   assert.strictEqual(by.N1.date, '2026-12-02');
   assert.strictEqual(by.N1.startAt, '2026-12-02 00:30');
-  assert.strictEqual(by.N3.endAt, '2026-12-03 01:00');
+  /* 時刻だけの文字列で終了<開始: 翌日へ補正せず、同日のまま警告する */
+  assert.strictEqual(by.N3.endAt, '2026-12-02 01:00');
+  assert.strictEqual(by.N5.endAt, '2026-12-02 09:00');
+  assert.strictEqual(by.N6.endAt, '2026-12-02 10:00');
+  /* 完全な日時で翌日終了が入っている場合は正式な日またぎとして扱う（警告なし） */
+  assert.strictEqual(by.N7.endAt, '2026-12-03 01:00');
   assert.strictEqual(by.N4.date, '2026-12-02');
   assert.strictEqual(by.N4.endAt, null);
   var codes = {};
@@ -214,7 +222,40 @@ test('正規化: 日付はJST基準。UTC日付とずれる深夜帯・日また
   assert.strictEqual(codes.N1, undefined);
   assert.strictEqual(codes.N2, 'date_mismatch');
   assert.strictEqual(codes.N4, 'invalid_end');
+  assert.strictEqual(codes.N3, 'end_before_start');
+  assert.strictEqual(codes.N5, 'end_before_start');
+  assert.strictEqual(codes.N6, 'end_equals_start');
+  assert.strictEqual(codes.N7, undefined);
   assert.strictEqual(out.issues.filter(function (i) { return i.severity === 'error'; }).length, 0, '警告の行は一覧に残す');
+});
+
+test('正規化: 許可項目の列名が重複するヘッダーは優先順位を決めず停止する', function () {
+  var sb = loadSandbox({});
+  var out = sb.OpsNormalizer.normalize([HEADER.concat(['status']), row().concat(['CANCELLED'])]);
+  assert.deepStrictEqual(plain(out.schemaError.duplicated), ['status']);
+  assert.strictEqual(out.records.length, 0);
+  /* 許可列以外の重複（例: 備考が2列）は読み取り対象外なので問題にしない */
+  var ok = sb.OpsNormalizer.normalize([HEADER.concat(['note']), row().concat(['x'])]);
+  assert.strictEqual(ok.schemaError, null);
+});
+
+test('取得: 元ヘッダーの重複列は固定エラーで停止し、列順変更でも正しく読める', function () {
+  var dupHeader = HEADER.concat(['status']);
+  var dupRows = [row().concat(['CANCELLED'])];
+  var t = api(dupRows, { header: dupHeader });
+  var res = t.sb.opsListReservations({});
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error.code, 'SCHEMA_DUPLICATE');
+  assert.ok(/status/.test(res.error.message));
+  assert.strictEqual(t.sb.opsGetReservation('FAKE-001').error.code, 'SCHEMA_DUPLICATE');
+  /* 列順を入れ替えても、列名で対応づけて同じ結果になる */
+  var reversed = HEADER.slice().reverse();
+  var rows = [row({ bookingId: 'R1', status: 'CANCELLED', brand: 'studio_x' }).slice().reverse()];
+  var ok = api(rows, { header: reversed }).sb.opsListReservations({ from: '2026-12-02', to: '2026-12-02' });
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.items[0].bookingId, 'R1');
+  assert.strictEqual(ok.items[0].statusLabel, 'キャンセル');
+  assert.strictEqual(ok.items[0].service, 'studio_x');
 });
 
 test('正規化: 必須列が無いシートはschemaErrorで、読み込みを続けない', function () {
@@ -453,6 +494,21 @@ test('クライアント: 詳細を開いたまま再取得すると詳細も取
   ctl.closeDetail();
   ctl.load({});
   assert.strictEqual(a.pending.detail.length, 2, '詳細を閉じた後の再取得では詳細を取得しない');
+});
+
+test('クライアント: 取得アダプターは差し替え可能（GAS用は google.script.run を呼ぶだけ）', function () {
+  var C = loadClient();
+  var calls = [];
+  var fakeGoogle = { script: { run: {
+    withSuccessHandler: function (ok) { this.ok = ok; return this; },
+    withFailureHandler: function (ng) { this.ng = ng; return this; },
+    opsListReservations: function (p) { calls.push(['list', p]); },
+    opsGetReservation: function (id) { calls.push(['detail', id]); }
+  } } };
+  var gas = C.createGasApi(fakeGoogle);
+  gas.list({ a: 1 }, function () {}, function () {});
+  gas.detail('X', function () {}, function () {});
+  assert.deepStrictEqual(plain(calls), [['list', { a: 1 }], ['detail', 'X']]);
 });
 
 test('クライアント: 詳細の遅延応答も最新のものだけ採用し、画面入力はAPI条件へ変換される', function () {
