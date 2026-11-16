@@ -24,6 +24,7 @@ test('#933: ruleset template targets main only and requires the always-generated
   const byType = Object.fromEntries(rs.rules.map((r) => [r.type, r]));
   assert.ok(byType.deletion && byType.non_fast_forward && byType.pull_request);
   assert.equal(byType.pull_request.parameters.required_approving_review_count, 0, 'sole operator must not be locked out');
-  assert.deepEqual(byType.required_status_checks.parameters.required_status_checks, [{ context: 'required-gate' }]);
-  for (const b of rs.bypass_actors) assert.equal(b.bypass_mode, 'pull_request', 'no direct-push bypass');
+  assert.deepEqual(byType.required_status_checks.parameters.required_status_checks, [{ context: 'required-gate', integration_id: 15368 }],
+    'the required check is pinned to GitHub Actions (app id 15368)');
+  assert.deepEqual(rs.bypass_actors, [], 'no standing bypass; emergencies use a documented temporary Disable');
 });

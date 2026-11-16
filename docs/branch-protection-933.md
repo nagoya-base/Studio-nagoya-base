@@ -18,7 +18,8 @@
 - Pull request必須（直接push禁止）。承認レビュー人数は **0**（単独運営でマージ不能にならないため。1にするのはレビュー担当者が確保できてから）
 - 必須check `required-gate`、ブランチを最新にしてからマージ（strict）
 - force-push禁止（`non_fast_forward`）、branch削除禁止（`deletion`）
-- バイパスは Repository admin（`actor_id: 5`）のみ、**PR経由のときだけ**（`bypass_mode: pull_request`）。直接pushのバイパスは許可しない
+- 必須checkの送信元を GitHub Actions（`integration_id: 15368`）に固定する。別ユーザー/統合が同名の status/check を投稿しても必須checkを満たせない。登録時にAPIが `integration_id` を受け付けるか、有効化後のreadbackで `integration_id` が残っているかを確認する（受け付けない・消える場合は残余リスクとして本書に記録する）
+- **恒常的なバイパスは設けない**（`bypass_actors: []`）。adminでもPRで必須CIを回避できてしまう設定を常設しないため。緊急時の例外は下記「緊急復旧」のRuleset一時Disableのみ（理由・証跡を記録）
 - Codex/AIレビューは人間承認の代替としない
 - conversation resolution は未強制（`required_review_thread_resolution: false`）。運用が固まったら `true` を検討
 
@@ -39,6 +40,9 @@
 gh api -X POST repos/nagoya-base/Studio-nagoya-base/rulesets --input .github/rulesets/main-protection.json
 ```
 
+注意: `strict_required_status_checks_policy: true` のため、mainが更新されるたびPRを最新化して `required-gate` を再実行する必要がある。
+注意: Ruleset作成のPOSTが成功しても、有効化の確認は別に行う（UIで Active、`gh api .../rulesets/<id>` の `enforcement` と `required_status_checks` の `integration_id` をreadback）。PRのマージだけでは保護は有効にならない。
+
 有効化後の確認: `gh api repos/nagoya-base/Studio-nagoya-base/rulesets` と、テスト用PR
 （①サイトだけを触るPRで `required-gate` が走りPendingにならない、②テスト失敗中はマージ不可、③通過でマージ可）。
 Rulesets方式では `main.protected` の値だけで未保護と断定しない。
@@ -48,6 +52,6 @@ Rulesets方式では `main.protected` の値だけで未保護と断定しない
 - 設定を戻す（責任者: リポジトリオーナー）: Settings → Rules → `main-protection` を **Disabled** にする、または
   `gh api -X DELETE repos/nagoya-base/Studio-nagoya-base/rulesets/<id>`。
 - `required-gate` 自体が壊れて全PRがマージ不能になった場合: 上記でルールセットを一時Disabled → 修正PRをマージ → 再度Active。
-  ルールセットを無効化する/管理者バイパスを使った場合は、理由・日時・元に戻した事実を該当Issueに記録する。
-- 管理者バイパスはPR経由のみ。ロックアウト回避のため、オーナーが唯一の管理者でもRulesetの編集・無効化はできる。
+  ルールセットを一時Disableした場合は、理由・日時・元に戻した事実を該当Issueに記録する。
+- 恒常的な管理者バイパスはない。オーナーは唯一の管理者でもRulesetの編集・無効化ができるため、ロックアウトにはならない。通常PRでは例外を使わない。
 - 本番の障害対応で `main` を戻す場合も、revert PR を作成して `required-gate` を通すのを原則とする。間に合わない場合のみ上記の一時無効化を使う。

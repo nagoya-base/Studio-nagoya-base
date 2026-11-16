@@ -5,9 +5,7 @@
   "conditions": {
     "ref_name": { "include": ["refs/heads/main"], "exclude": [] }
   },
-  "bypass_actors": [
-    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request" }
-  ],
+  "bypass_actors": [],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
@@ -26,7 +24,7 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          { "context": "required-gate" }
+          { "context": "required-gate", "integration_id": 15368 }
         ]
       }
     }
