@@ -30,9 +30,10 @@ var state = {
   sort: 'date',
   searchQuery: '',
   /* Issue #923: 一覧の表示絞り込みトグル（管理UIの表示のみ。データ・決済・通知には影響しない）。
-     「決済要対応のみ表示」は初期OFF、「テスト予約を非表示」は初期ON。 */
+     Issue #927: 「決済要対応のみ表示」「テスト予約を表示」「決済Recovery一覧を表示」は
+     すべて初期OFF（テスト予約はOFF＝非表示）。 */
   paymentAttentionOnly: false,
-  hideTestBookings: true,
+  showTestBookings: false,
   busyIds: {}
 };
 
@@ -312,18 +313,18 @@ function isTestBooking_(b) {
   return String(b.name).trim() === TEST_BOOKING_NAME_;
 }
 
-/* Issue #923: 一覧の表示トグル（決済要対応のみ／テスト予約を非表示）。2条件は独立で、
-   両方ONならAND。「決済要対応」の抽出条件は一覧カードの「⚠ 決済要対応」表示と同じ
+/* Issue #923/#927: 一覧の表示トグル（決済要対応のみ／テスト予約を表示）。2条件は独立で、
+   決済要対応ONかつテスト予約OFFならAND。「決済要対応」の抽出条件は一覧カードの「⚠ 決済要対応」表示と同じ
    b.paymentRecoveryRequired（サーバー側 !!paymentRecoveryRequiredAt）をそのまま使い、
    判定の意味は変えない。表示用の絞り込みのみで、bookingsそのものは変更しない。 */
 function filterByDisplayToggles_(bookings, options) {
   var opts = options || {
     paymentAttentionOnly: state.paymentAttentionOnly,
-    hideTestBookings: state.hideTestBookings
+    showTestBookings: state.showTestBookings
   };
   return bookings.filter(function (b) {
     if (opts.paymentAttentionOnly && !b.paymentRecoveryRequired) return false;
-    if (opts.hideTestBookings && isTestBooking_(b)) return false;
+    if (!opts.showTestBookings && isTestBooking_(b)) return false;
     return true;
   });
 }
@@ -2987,18 +2988,30 @@ function renderPaymentRecoveryItem_(item) {
 }
 
 var paymentRecoveryPanel_ = null;
+var paymentRecoveryOpen_ = false;
 
+function loadPaymentRecoveries_(panel) {
+  panel.innerHTML = '<div class="empty">決済要対応を取得中…</div>';
+  google.script.run
+    .withSuccessHandler(function (result) {
+      if (!result || !result.success) {
+        panel.innerHTML = '<div class="empty">取得できませんでした。</div>';
+        return;
+      }
+      panel.innerHTML = '<h3>決済要対応（' + result.items.length + '件）</h3>' +
+        (result.items.length ? result.items.map(renderPaymentRecoveryItem_).join('') : '<div class="empty">決済要対応の案件はありません</div>');
+    })
+    .withFailureHandler(function (error) {
+      panel.innerHTML = '<div class="empty">取得に失敗しました: ' + escapeHtml(error && error.message ? error.message : String(error)) + '</div>';
+    })
+    .getAdminPaymentRecoveries();
+}
+
+/* Issue #927: 「決済Recovery一覧を表示」は絞り込みトグルと同じ意匠のスイッチ（絞り込みエリア内）。
+   予約一覧の絞り込みではなく、別パネル（全Recovery案件・台帳行なしを含む）の開閉のみ。
+   ON＝パネル表示＋取得、OFF＝隠すだけ（案件・予約一覧・件数は変更しない）。初期OFF。
+   initFilterToggleUi_ より後に呼ぶこと（絞り込みエリアへ追加するため）。 */
 function initPaymentRecoveryUi_() {
-  var metaRow = document.querySelector('.header-meta');
-  var button = document.createElement('button');
-  button.type = 'button';
-  button.id = 'payment-recovery-open-button';
-  button.className = 'refresh-button';
-  /* Issue #923: 絞り込みトグル「決済要対応のみ表示」と区別するため、全Recovery案件を開く
-     別機能であることが分かる名称にする（getAdminPaymentRecoveriesの全件を表示）。 */
-  button.textContent = '決済Recovery一覧';
-  if (metaRow) metaRow.appendChild(button);
-
   var main = document.querySelector('main');
   var panel = document.createElement('div');
   panel.id = 'payment-recovery-panel';
@@ -3006,27 +3019,21 @@ function initPaymentRecoveryUi_() {
   main.insertBefore(panel, document.getElementById('list'));
   paymentRecoveryPanel_ = panel;
 
-  button.addEventListener('click', function () {
-    if (!panel.classList.contains('hidden')) {
-      panel.classList.add('hidden');
-      return;
-    }
-    panel.classList.remove('hidden');
-    panel.innerHTML = '<div class="empty">決済要対応を取得中…</div>';
-    google.script.run
-      .withSuccessHandler(function (result) {
-        if (!result || !result.success) {
-          panel.innerHTML = '<div class="empty">取得できませんでした。</div>';
-          return;
-        }
-        panel.innerHTML = '<h3>決済要対応（' + result.items.length + '件）</h3>' +
-          (result.items.length ? result.items.map(renderPaymentRecoveryItem_).join('') : '<div class="empty">決済要対応の案件はありません</div>');
-      })
-      .withFailureHandler(function (error) {
-        panel.innerHTML = '<div class="empty">取得に失敗しました: ' + escapeHtml(error && error.message ? error.message : String(error)) + '</div>';
-      })
-      .getAdminPaymentRecoveries();
-  });
+  var toggle = createFilterToggle_('payment-recovery-toggle', '決済Recovery一覧を表示',
+    function () { return paymentRecoveryOpen_; },
+    function (v) { paymentRecoveryOpen_ = v; },
+    function (on) {
+      if (!on) {
+        panel.classList.add('hidden');
+        return;
+      }
+      panel.classList.remove('hidden');
+      loadPaymentRecoveries_(panel);
+    });
+  filterToggleUi_.recoveryButton = toggle;
+  var area = document.getElementById('filter-area') || filterToggleUi_.area;
+  if (area) area.insertBefore(toggle, filterToggleUi_.countEl);
+
   panel.addEventListener('click', function (event) {
     var target = event.target && event.target.closest ? event.target.closest('button[data-recovery-detail]') : null;
     if (!target) return;
@@ -3034,12 +3041,12 @@ function initPaymentRecoveryUi_() {
   });
 }
 
-/* Issue #923: 一覧の絞り込みトグル（「決済要対応のみ表示」「テスト予約を非表示」）と
-   表示件数。検索欄の直下の絞り込みエリアにまとめ、更新・前日リマインド診断などの
+/* Issue #923/#927: 一覧の表示トグル（「決済要対応のみ表示」「テスト予約を表示」
+   「決済Recovery一覧を表示」）と表示件数。検索欄の直下の絞り込みエリアにまとめ、更新・前日リマインド診断などの
    処理実行ボタン（ヘッダー）とは配置・見た目の両方で分離する。
    トグルはrole="switch"＋aria-checkedで状態を伝え、色だけに頼らずON/OFF文字と
    スイッチ位置でも分かるようにする。要素は一度だけ生成しrender()では再生成しない。 */
-var filterToggleUi_ = { paymentButton: null, testButton: null, countEl: null, noteEl: null };
+var filterToggleUi_ = { area: null, paymentButton: null, testButton: null, recoveryButton: null, countEl: null, noteEl: null };
 
 function applyToggleView_(button, on) {
   if (!button) return;
@@ -3049,7 +3056,7 @@ function applyToggleView_(button, on) {
   if (stateEl) stateEl.textContent = on ? 'ON' : 'OFF';
 }
 
-function createFilterToggle_(id, labelText, getValue, setValue) {
+function createFilterToggle_(id, labelText, getValue, setValue, onChange) {
   var button = document.createElement('button');
   button.type = 'button';
   button.id = id;
@@ -3073,7 +3080,8 @@ function createFilterToggle_(id, labelText, getValue, setValue) {
   button.addEventListener('click', function () {
     setValue(!getValue());
     applyToggleView_(button, getValue());
-    render();
+    if (onChange) onChange(getValue());
+    else render();
   });
   return button;
 }
@@ -3086,14 +3094,15 @@ function initFilterToggleUi_() {
   area.id = 'filter-area';
   area.className = 'filter-area';
   area.setAttribute('role', 'group');
-  area.setAttribute('aria-label', '一覧の絞り込み');
+  area.setAttribute('aria-label', '一覧の表示切替');
+  filterToggleUi_.area = area;
 
   filterToggleUi_.paymentButton = createFilterToggle_('filter-payment-attention', '決済要対応のみ表示',
     function () { return state.paymentAttentionOnly; },
     function (v) { state.paymentAttentionOnly = v; });
-  filterToggleUi_.testButton = createFilterToggle_('filter-hide-test', 'テスト予約を非表示',
-    function () { return state.hideTestBookings; },
-    function (v) { state.hideTestBookings = v; });
+  filterToggleUi_.testButton = createFilterToggle_('filter-show-test', 'テスト予約を表示',
+    function () { return state.showTestBookings; },
+    function (v) { state.showTestBookings = v; });
 
   var countEl = document.createElement('div');
   countEl.id = 'filter-result-count';
@@ -3121,14 +3130,14 @@ function renderFilterStatus_(visibleCount) {
   var ui = filterToggleUi_;
   if (!ui.countEl) return;
   var tabOnly = filterBySearch(filteredBookings(), state.searchQuery);
-  var hiddenTest = state.hideTestBookings
+  var hiddenTest = !state.showTestBookings
     ? tabOnly.filter(function (b) { return isTestBooking_(b); }).length
     : 0;
   var text = '表示中: ' + visibleCount + '件';
-  if (state.hideTestBookings && hiddenTest > 0) text += '（テスト予約' + hiddenTest + '件を非表示中）';
+  if (!state.showTestBookings && hiddenTest > 0) text += '（テスト予約' + hiddenTest + '件を非表示中）';
   ui.countEl.textContent = text;
   if (ui.noteEl) {
-    ui.noteEl.textContent = (state.paymentAttentionOnly || state.hideTestBookings)
+    ui.noteEl.textContent = (state.paymentAttentionOnly || !state.showTestBookings)
       ? '※上部の今日・仮受付・確定・全件とタブの件数は、この絞り込みの影響を受けない全予約の集計です。'
       : '';
   }
