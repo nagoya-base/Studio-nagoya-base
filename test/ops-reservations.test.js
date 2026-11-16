@@ -28,7 +28,7 @@ function loadSandbox(globals) {
   var sandbox = { Date: FixedDate, Logger: { log: function () { sandbox._logs.push([].slice.call(arguments).join(' ')); } }, _logs: [] };
   Object.keys(globals || {}).forEach(function (k) { sandbox[k] = globals[k]; });
   vm.createContext(sandbox);
-  ['OpsContract.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsSource.gs', 'OpsApi.gs'].forEach(function (f) {
+  ['OpsContract.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsSource.gs', 'OpsAuth.gs', 'OpsApi.gs'].forEach(function (f) {
     vm.runInContext(readFile(f), sandbox, { filename: f });
   });
   return sandbox;
@@ -160,7 +160,7 @@ test('正規化: 不正な行と同じIDの有効行も重複として除外す�
   assert.strictEqual(out.records.length, 0);
   assert.deepStrictEqual(plain(out.issues.map(function (i) { return i.codes.join(','); })), ['duplicate_id', 'duplicate_id,invalid_date']);
   var t = api([row({ bookingId: 'DUP' }), row({ bookingId: 'DUP', startAt: '' })], {});
-  assert.strictEqual(t.sb.opsGetReservation('DUP').error.code, 'NOT_FOUND');
+  assert.strictEqual(t.sb.opsGetReservation('DUP').error.code, 'DUPLICATE_ID');
 });
 
 test('正規化: 0と空欄を区別し、不明なサービス・状態を既存値へ丸めない', function () {
@@ -208,13 +208,13 @@ test('正規化: 日付はJST基準。UTC日付とずれる深夜帯・日また
   var by = {};
   out.records.forEach(function (r) { by[r.bookingId] = r; });
   assert.strictEqual(by.N1.date, '2026-12-02');
-  assert.strictEqual(by.N1.startAt, '2026-12-02 00:30');
+  assert.strictEqual(by.N1.startAt, '2026-12-02T00:30:00+09:00');
   /* 時刻だけの文字列で終了<開始: 翌日へ補正せず、同日のまま警告する */
-  assert.strictEqual(by.N3.endAt, '2026-12-02 01:00');
-  assert.strictEqual(by.N5.endAt, '2026-12-02 09:00');
-  assert.strictEqual(by.N6.endAt, '2026-12-02 10:00');
+  assert.strictEqual(by.N3.endAt, '2026-12-02T01:00:00+09:00');
+  assert.strictEqual(by.N5.endAt, '2026-12-02T09:00:00+09:00');
+  assert.strictEqual(by.N6.endAt, '2026-12-02T10:00:00+09:00');
   /* 完全な日時で翌日終了が入っている場合は正式な日またぎとして扱う（警告なし） */
-  assert.strictEqual(by.N7.endAt, '2026-12-03 01:00');
+  assert.strictEqual(by.N7.endAt, '2026-12-03T01:00:00+09:00');
   assert.strictEqual(by.N4.date, '2026-12-02');
   assert.strictEqual(by.N4.endAt, null);
   var codes = {};
@@ -310,16 +310,35 @@ test('一覧: 不正な条件は黙って既定へ丸めずエラー', function 
 });
 
 /* ---- API・認可・取得状態 ---- */
-test('認可: 所有者以外・未設定・メール取得不能は予約情報を一切返さない（一覧も詳細も）', function () {
-  [{ email: 'other@example.invalid' }, { email: '' }, { props: { OPS_SPREADSHEET_ID: 'x' } }, { props: { OPS_OWNER_EMAIL: '', OPS_SPREADSHEET_ID: 'x' } }].forEach(function (o) {
-    var t = api([row({ name: 'LEAK-CHECK' })], o);
+test('認可: 所有者以外・未設定は FORBIDDEN、利用者を確認できない場合は UNAUTHENTICATED。予約情報は一切返さない', function () {
+  var cases = [
+    [{ email: 'other@example.invalid' }, 'FORBIDDEN'],
+    [{ email: '' }, 'UNAUTHENTICATED'],
+    [{ props: { OPS_SPREADSHEET_ID: 'x' } }, 'FORBIDDEN'],
+    [{ props: { OPS_OWNER_EMAIL: '', OPS_SPREADSHEET_ID: 'x' } }, 'FORBIDDEN']
+  ];
+  cases.forEach(function (c) {
+    var t = api([row({ name: 'LEAK-CHECK' })], c[0]);
     var list = t.sb.opsListReservations({});
     var detail = t.sb.opsGetReservation('FAKE-001');
     assert.strictEqual(list.ok, false);
-    assert.strictEqual(list.error.code, 'FORBIDDEN');
-    assert.strictEqual(detail.error.code, 'FORBIDDEN');
+    assert.strictEqual(list.error.code, c[1]);
+    assert.strictEqual(detail.error.code, c[1]);
     assert.ok(!/LEAK-CHECK|FAKE-001/.test(JSON.stringify([list, detail])));
+    assert.strictEqual(t.world.requests.length, 0, '認可に失敗した要求では台帳へ一切アクセスしない');
   });
+  /* メール取得が例外になる場合も拒否（UNAUTHENTICATED） */
+  var thrown = api([row()], {});
+  thrown.sb.Session = { getActiveUser: function () { throw new Error('x'); } };
+  assert.strictEqual(thrown.sb.opsListReservations({}).error.code, 'UNAUTHENTICATED');
+});
+
+test('認可: 判定材料は呼び出し側が渡す値ではない（paramsにメール等を入れても無視される）', function () {
+  var t = api([row()], { email: 'other@example.invalid' });
+  var res = t.sb.opsListReservations({ email: 'owner@example.invalid', owner: 'owner@example.invalid' });
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error.code, 'FORBIDDEN');
+  assert.strictEqual(t.sb.opsGetReservation('FAKE-001').error.code, 'FORBIDDEN');
 });
 
 test('認可: 所有者は大文字小文字を区別せず通り、doGetは非所有者へ画面を返さない', function () {
@@ -342,8 +361,8 @@ test('一覧API: 取得範囲・件数・最終取得時刻を返し、台帳全
   assert.strictEqual(res.complete, true);
   assert.strictEqual(res.counts.sheetRows, 2);
   assert.strictEqual(res.counts.matched, 2);
-  assert.strictEqual(res.fetchedAt, new Date(FIXED_NOW).toISOString());
-  assert.strictEqual(res.fetchedAtJst, '2026-12-01 11:00 JST');
+  assert.strictEqual(res.fetchedAt, '2026-12-01T11:00:00+09:00');
+  assert.strictEqual(res.contractVersion, 1);
   assert.strictEqual(res.todayJst, '2026-12-01');
   assert.ok(!/SECRET/.test(JSON.stringify(res)));
   assert.ok(t.world.requests.length > 0);
@@ -391,7 +410,7 @@ test('詳細API: 空欄・重複IDの行は別予約として表示せず、許�
   assert.strictEqual(ok.reservation.bookingId, 'U1');
   assert.ok(!/SECRET/.test(JSON.stringify(ok)));
   assert.ok(!('startMs' in ok.reservation) && !('rowNumber' in ok.reservation));
-  assert.strictEqual(t.sb.opsGetReservation('DUP').error.code, 'NOT_FOUND');
+  assert.strictEqual(t.sb.opsGetReservation('DUP').error.code, 'DUPLICATE_ID');
   assert.strictEqual(t.sb.opsGetReservation('').error.code, 'INVALID_PARAMS');
   assert.strictEqual(t.sb.opsGetReservation('nope').error.code, 'NOT_FOUND');
   var list = t.sb.opsListReservations({ from: '2026-12-02', to: '2026-12-02' });
@@ -399,130 +418,59 @@ test('詳細API: 空欄・重複IDの行は別予約として表示せず、許�
   assert.strictEqual(list.issues.filter(function (i) { return i.severity === 'error'; }).length, 3);
 });
 
-/* ---- クライアント ---- */
-function loadClient() {
-  var html = readFile('OpsPage.html');
-  var m = /<script>([\s\S]*?)<\/script>/.exec(html);
-  var sb = {};
-  vm.createContext(sb);
-  vm.runInContext(m[1], sb);
-  return sb.OpsClient;
-}
-
-function fakeApi() {
-  var pending = { list: [], detail: [] };
-  return {
-    pending: pending,
-    list: function (p, ok, ng) { pending.list.push({ p: p, ok: ok, ng: ng }); },
-    detail: function (id, ok, ng) { pending.detail.push({ id: id, ok: ok, ng: ng }); }
-  };
-}
-
-function okList(items, at) {
-  return { ok: true, fetchedAt: at, applied: { from: '2026-12-01', to: '2026-12-30', order: 'asc' }, counts: { matched: items.length, sheetRows: items.length },
-    serviceStates: [{ service: 'snb_community', label: 'SNB Community', state: 'not_connected' }], notConnectedSelected: false, items: items, issues: [] };
-}
-
-test('クライアント: 遅れて返った古い応答が最新結果を上書きしない', function () {
-  var C = loadClient();
-  var a = fakeApi();
-  var ctl = C.createController(a);
-  ctl.load({ service: 'snb' });
-  ctl.load({ service: 'studio_x' });
-  a.pending.list[1].ok(okList([{ bookingId: 'NEW', serviceLabel: 'Studio X', statusLabel: '確定', date: '2026-12-02' }], 'T2'));
-  a.pending.list[0].ok(okList([{ bookingId: 'OLD', serviceLabel: 'SNB', statusLabel: '確定', date: '2026-12-02' }], 'T1'));
-  assert.strictEqual(ctl.state.data.items[0].bookingId, 'NEW');
-  assert.strictEqual(ctl.state.lastSuccessAt, 'T2');
-  a.pending.list[0].ng();
-  assert.strictEqual(ctl.state.phase, 'ready');
+/* ---- 通信方式に依存しない入口・期間・フェーズ ---- */
+test('入口: handle は GAS のグローバル無しでも、注入した認証器・台帳読み取りで動き、拒否時は台帳に触れない', function () {
+  var sb = loadSandbox({});
+  var reads = 0;
+  var values = [HEADER, row({ bookingId: 'H1' })];
+  var ctx = function (auth) { return { nowMs: FIXED_NOW, authenticate: function () { return auth; }, readLedger: function () { reads++; return { values: values }; } }; };
+  var denied = sb.OpsApi.handle({ op: 'list', params: {} }, ctx({ ok: false, code: 'FORBIDDEN' }));
+  assert.strictEqual(denied.error.code, 'FORBIDDEN');
+  assert.strictEqual(sb.OpsApi.handle({ op: 'detail', id: 'H1' }, ctx({ ok: false, code: 'UNAUTHENTICATED' })).error.code, 'UNAUTHENTICATED');
+  assert.strictEqual(sb.OpsApi.handle({ op: 'list' }, ctx(null)).error.code, 'UNAUTHENTICATED');
+  assert.strictEqual(reads, 0);
+  var ok = sb.OpsApi.handle({ op: 'list', params: { from: '2026-12-02', to: '2026-12-02' } }, ctx({ ok: true }));
+  assert.strictEqual(ok.items[0].bookingId, 'H1');
+  assert.strictEqual(sb.OpsApi.handle({ op: 'nope' }, ctx({ ok: true })).error.code, 'INVALID_PARAMS');
+  assert.ok(sb.OpsContract.ERROR_CODES.indexOf('DUPLICATE_ID') !== -1);
 });
 
-test('クライアント: 失敗は成功/0件にせず、前回データは「古いデータ」として最終成功日時つきで残す', function () {
-  var C = loadClient();
-  var a = fakeApi();
-  var ctl = C.createController(a);
-  ctl.load({});
-  a.pending.list[0].ok(okList([{ bookingId: 'X', serviceLabel: 'SNB', statusLabel: '確定', date: '2026-12-02' }], '2026-12-01T02:00:00.000Z'));
-  ctl.load({});
-  a.pending.list[1].ng();
-  assert.strictEqual(ctl.state.phase, 'error');
-  assert.strictEqual(ctl.state.stale, true);
-  var banner = C.renderBanner(ctl.state);
-  assert.ok(/古いデータ/.test(banner) && /2026-12-01T02:00:00.000Z/.test(banner));
-  /* 初回から失敗: 0件表示にならない */
-  var b = fakeApi(), ctl2 = C.createController(b);
-  ctl2.load({});
-  b.pending.list[0].ok({ ok: false, error: { code: 'FETCH_FAILED', message: '取得に失敗' } });
-  assert.strictEqual(ctl2.state.phase, 'error');
-  assert.ok(!/0件/.test(C.renderView(ctl2.state)));
-  var c = fakeApi(), ctl3 = C.createController(c);
-  ctl3.load({});
-  c.pending.list[0].ok({ ok: false, error: { code: 'NOT_CONNECTED', message: '未接続' } });
-  assert.strictEqual(ctl3.state.phase, 'not_connected');
+test('認証器: 本人確認不能=UNAUTHENTICATED、不一致/所有者未設定=FORBIDDEN、大文字小文字は無視', function () {
+  var sb = loadSandbox({});
+  function auth(owner, active) {
+    return sb.OpsAuth.createOwnerAuthenticator({ getOwnerEmail: function () { return owner; }, getActiveEmail: function () { if (active instanceof Error) throw active; return active; } })();
+  }
+  assert.strictEqual(auth('A@x.invalid', 'a@X.invalid').ok, true);
+  assert.strictEqual(auth('a@x.invalid', 'b@x.invalid').code, 'FORBIDDEN');
+  assert.strictEqual(auth(null, 'a@x.invalid').code, 'FORBIDDEN');
+  assert.strictEqual(auth('a@x.invalid', '').code, 'UNAUTHENTICATED');
+  assert.strictEqual(auth('a@x.invalid', null).code, 'UNAUTHENTICATED');
+  assert.strictEqual(auth('a@x.invalid', new Error('x')).code, 'UNAUTHENTICATED');
 });
 
-test('クライアント: 正常0件・未接続サービス選択・描画のエスケープ', function () {
-  var C = loadClient();
-  var a = fakeApi(), ctl = C.createController(a);
-  ctl.load({});
-  a.pending.list[0].ok(okList([], 'T'));
-  assert.ok(/0件です（取得は正常に完了/.test(C.renderView(ctl.state)));
-  var nc = okList([], 'T'); nc.notConnectedSelected = true;
-  ctl.load({}); a.pending.list[1].ok(nc);
-  var view = C.renderView(ctl.state);
-  assert.ok(/未接続です。予約が0件という意味ではありません/.test(view));
-  assert.ok(!/0件です/.test(view));
-  var xss = okList([{ bookingId: '"><img src=x onerror=1>', serviceLabel: '<b>', statusLabel: 'x', date: '2026-12-02', startTime: '10:00', endTime: null, name: '<script>1</script>', people: 0 }], 'T');
-  ctl.load({}); a.pending.list[2].ok(xss);
-  var html = C.renderView(ctl.state);
-  assert.ok(!/<script>|<img |<b>/.test(html), html);
-  assert.ok(/0名/.test(html), '人数0は0として表示');
-  assert.ok(/未入力/.test(html), '終了時刻nullは未入力');
-});
-
-test('クライアント: 詳細を開いたまま再取得すると詳細も取り直し、古い詳細を残さない', function () {
-  var C = loadClient();
-  var a = fakeApi(), ctl = C.createController(a);
-  ctl.openDetail('A');
-  a.pending.detail[0].ok({ ok: true, reservation: { bookingId: 'A', statusLabel: '確定', status: 'CONFIRMED', serviceLabel: 'SNB', service: 'snb' } });
-  ctl.load({});
-  assert.strictEqual(a.pending.detail.length, 2, '再取得で詳細も取得し直す');
-  assert.strictEqual(a.pending.detail[1].id, 'A');
-  assert.strictEqual(ctl.state.detail, null, '取得し直している間は古い詳細を表示しない');
-  a.pending.detail[1].ok({ ok: true, reservation: { bookingId: 'A', statusLabel: 'キャンセル', status: 'CANCELLED', serviceLabel: 'SNB', service: 'snb' } });
-  assert.strictEqual(ctl.state.detail.statusLabel, 'キャンセル');
-  ctl.closeDetail();
-  ctl.load({});
-  assert.strictEqual(a.pending.detail.length, 2, '詳細を閉じた後の再取得では詳細を取得しない');
-});
-
-test('クライアント: 取得アダプターは差し替え可能（GAS用は google.script.run を呼ぶだけ）', function () {
-  var C = loadClient();
-  var calls = [];
-  var fakeGoogle = { script: { run: {
-    withSuccessHandler: function (ok) { this.ok = ok; return this; },
-    withFailureHandler: function (ng) { this.ng = ng; return this; },
-    opsListReservations: function (p) { calls.push(['list', p]); },
-    opsGetReservation: function (id) { calls.push(['detail', id]); }
-  } } };
-  var gas = C.createGasApi(fakeGoogle);
-  gas.list({ a: 1 }, function () {}, function () {});
-  gas.detail('X', function () {}, function () {});
-  assert.deepStrictEqual(plain(calls), [['list', { a: 1 }], ['detail', 'X']]);
-});
-
-test('クライアント: 詳細の遅延応答も最新のものだけ採用し、画面入力はAPI条件へ変換される', function () {
-  var C = loadClient();
-  var a = fakeApi(), ctl = C.createController(a);
-  ctl.openDetail('A'); ctl.openDetail('B');
-  a.pending.detail[1].ok({ ok: true, reservation: { bookingId: 'B', serviceLabel: 'SNB', statusLabel: '確定', status: 'CONFIRMED', service: 'snb', effectivePriceAmount: 0 } });
-  a.pending.detail[0].ok({ ok: true, reservation: { bookingId: 'A' } });
-  assert.strictEqual(ctl.state.detail.bookingId, 'B');
-  assert.ok(/0円/.test(C.renderView(ctl.state)), '料金0は0円（未計算ではない）');
-  ctl.closeDetail();
-  assert.strictEqual(ctl.state.detailPhase, 'idle');
-  assert.deepStrictEqual(Object.assign({}, C.paramsFromInputs({ service: 'all', status: 'all', scope: 'past', from: '2026-01-01', to: '' })), { service: 'all', status: 'all', scope: 'past' });
-  assert.deepStrictEqual(Object.assign({}, C.paramsFromInputs({ service: 'snb', status: 'all', scope: 'custom', from: '2026-12-01', to: '2026-12-05' })), { service: 'snb', status: 'all', scope: 'upcoming', from: '2026-12-01', to: '2026-12-05' });
+test('期間: 始端=0:00(含む)・終端=翌0:00(含まない)の時間帯の重なりで判定し、日付またぎ・当日終了済み・利用中を落とさない', function () {
+  var sb = loadSandbox({});
+  var recs = sb.OpsNormalizer.normalize([HEADER,
+    row({ bookingId: 'ENDED', date: '2026-12-01', startAt: jst(2026, 12, 1, 8, 0), endAt: jst(2026, 12, 1, 9, 0) }),
+    row({ bookingId: 'LIVE', date: '2026-12-01', startAt: jst(2026, 12, 1, 10, 0), endAt: jst(2026, 12, 1, 12, 0) }),
+    row({ bookingId: 'LATER', date: '2026-12-01', startAt: jst(2026, 12, 1, 15, 0), endAt: jst(2026, 12, 1, 16, 0) }),
+    row({ bookingId: 'OVERNIGHT', date: '2026-11-30', startAt: jst(2026, 11, 30, 22, 0), endAt: jst(2026, 12, 1, 1, 0) }),
+    row({ bookingId: 'ENDS_AT_MIDNIGHT', date: '2026-11-30', startAt: jst(2026, 11, 30, 22, 0), endAt: jst(2026, 12, 1, 0, 0) }),
+    row({ bookingId: 'NO_END', date: '2026-12-01', startAt: jst(2026, 12, 1, 9, 30), endAt: '' }),
+    row({ bookingId: 'LAST_EVENING', date: '2026-12-30', startAt: jst(2026, 12, 30, 23, 0), endAt: jst(2026, 12, 31, 2, 0) }),
+    row({ bookingId: 'NEXT_DAY_START', date: '2026-12-31', startAt: jst(2026, 12, 31, 0, 0), endAt: jst(2026, 12, 31, 1, 0) })
+  ]).records;
+  var criteria = sb.OpsQuery.resolve({}, '2026-12-01').value;
+  var rows = sb.OpsQuery.select(recs, criteria);
+  assert.deepStrictEqual(plain(rows.map(function (r) { return r.bookingId; })), ['OVERNIGHT', 'ENDED', 'NO_END', 'LIVE', 'LATER', 'LAST_EVENING']);
+  var phases = {};
+  rows.forEach(function (r) { phases[r.bookingId] = sb.OpsQuery.phaseOf(r, FIXED_NOW); });
+  assert.deepStrictEqual(plain(phases), { OVERNIGHT: 'ended', ENDED: 'ended', NO_END: 'unknown', LIVE: 'in_progress', LATER: 'upcoming', LAST_EVENING: 'upcoming' });
+  /* 過去30日の範囲（〜昨日）には、前日から続く日またぎも入る（今日の範囲と重なるため両方に出る） */
+  var past = sb.OpsQuery.resolve({ scope: 'past' }, '2026-12-01').value;
+  var pastIds = sb.OpsQuery.select(recs, past).map(function (r) { return r.bookingId; });
+  assert.ok(pastIds.indexOf('OVERNIGHT') !== -1 && pastIds.indexOf('ENDS_AT_MIDNIGHT') !== -1);
+  assert.ok(pastIds.indexOf('LIVE') === -1);
 });
 
 /* ---- 静的な境界（読み取り専用・非干渉） ---- */
@@ -571,8 +519,8 @@ test('取得: 行数上限超過は黙って切り捨てず停止する／日時
   var sb = loadSandbox(sheetWorld([row({ bookingId: 'S1', date: jst(2026, 12, 2, 0, 0), startAt: jst(2026, 12, 2, 0, 30), endAt: jst(2026, 12, 2, 2, 0) })], { props: OWNER_PROPS }));
   var res = sb.opsListReservations({ from: '2026-12-02', to: '2026-12-02' });
   assert.strictEqual(res.items[0].date, '2026-12-02');
-  assert.strictEqual(res.items[0].startTime, '00:30');
-  assert.strictEqual(res.items[0].endTime, '02:00');
+  assert.strictEqual(res.items[0].startAt, '2026-12-02T00:30:00+09:00');
+  assert.strictEqual(res.items[0].endAt, '2026-12-02T02:00:00+09:00');
   var many = []; for (var i = 0; i < 20001; i++) many.push(row({ bookingId: 'M' + i }));
   assert.strictEqual(api(many, {}).sb.opsListReservations({}).error.code, 'TOO_LARGE');
 });

@@ -45,9 +45,14 @@ var OpsNormalizer = (function () {
   }
 
   function stampText_(value) {
-    if (OpsContract.isDate(value)) return OpsContract.formatJstDateTime(value.getTime());
-    var s = text_(value, 32);
-    return s;
+    /* 日時はタイムゾーン付きISO（+09:00）。Date、または既存Adminと同じ 'YYYY-MM-DD HH:mm'（JST）文字列のみ。
+       それ以外の文字列は日時として保証できないため返さない（推測しない）。 */
+    if (OpsContract.isDate(value)) return OpsContract.toIso(value.getTime());
+    var m = typeof value === 'string' ? /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})$/.exec(value.trim()) : null;
+    if (!m) return null;
+    var day = OpsContract.parseJstDate(m[1]);
+    var clock = OpsContract.parseClock(m[2]);
+    return day === null || clock === null ? null : OpsContract.toIso(day + clock * 60000);
   }
 
   function numberOrNull_(value) {
@@ -125,8 +130,8 @@ var OpsNormalizer = (function () {
       date: dateText,
       startMs: startMs,
       endMs: endMs,
-      startAt: OpsContract.formatJstDateTime(startMs),
-      endAt: endMs === null ? null : OpsContract.formatJstDateTime(endMs),
+      startAt: OpsContract.toIso(startMs),
+      endAt: endMs === null ? null : OpsContract.toIso(endMs),
       name: text_(get('name'), 80),
       people: numberOrNull_(get('people')),
       customerType: text_(get('customerType'), 40),
@@ -188,7 +193,8 @@ var OpsNormalizer = (function () {
       if (record) records.push(record);
     }
     issues.sort(function (a, b) { return a.row - b.row; });
-    return { schemaError: null, records: records, issues: issues, blankRows: blankRows, totalRows: totalRows };
+    var duplicateIds = Object.keys(idCounts).filter(function (k) { return idCounts[k] > 1; });
+    return { schemaError: null, records: records, issues: issues, duplicateIds: duplicateIds, blankRows: blankRows, totalRows: totalRows };
   }
 
   function reasonText(code) {

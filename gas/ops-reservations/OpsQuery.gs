@@ -41,12 +41,37 @@ var OpsQuery = (function () {
     return { value: { scope: scope, service: service, status: status, from: from, to: to, order: scope === 'past' ? 'desc' : 'asc' } };
   }
 
-  function matches_(rec, c) {
+  /*
+   * 期間の定義（JST）: 始端 = from の 0:00（含む）、終端 = to の翌日 0:00（含まない）。
+   * 予約の時間帯 [開始, 終了) が期間と重なれば対象にする。したがって
+   * - 日付またぎ（前日夜〜当日未明）の予約は、当日が期間に入っていれば表示される（前日側の期間にも表示される）。
+   * - 当日に終了済みの予約・利用中の予約も、当日を含む期間では表示される（phaseで区別）。
+   * - 終了が空欄・開始以前（不整合）の予約は、開始時刻の一点として判定する（終了を推測しない）。
+   * - 終了がちょうど始端（0:00）の予約は、その日には含めない。
+   */
+  function rangeMs_(c) {
+    return { start: OpsContract.parseJstDate(c.from), endExclusive: OpsContract.parseJstDate(c.to) + OpsContract.DAY_MS };
+  }
+
+  function overlaps_(rec, range) {
+    if (rec.startMs >= range.endExclusive) return false;
+    var hasSpan = rec.endMs !== null && rec.endMs > rec.startMs;
+    return hasSpan ? rec.endMs > range.start : rec.startMs >= range.start;
+  }
+
+  /* 現在時刻に対する分類。終了が分からないものは推測せず 'unknown'（開始後）。 */
+  function phaseOf(rec, nowMs) {
+    if (nowMs < rec.startMs) return 'upcoming';
+    if (rec.endMs === null || rec.endMs <= rec.startMs) return 'unknown';
+    return nowMs < rec.endMs ? 'in_progress' : 'ended';
+  }
+
+  function matches_(rec, c, range) {
     if (c.service !== 'all' && rec.service !== c.service) return false;
     if (c.status !== 'all') {
       if (c.status === 'UNKNOWN' ? rec.status !== null : rec.status !== c.status) return false;
     }
-    return rec.date >= c.from && rec.date <= c.to;
+    return overlaps_(rec, range);
   }
 
   function compare_(a, b) {
@@ -58,15 +83,14 @@ var OpsQuery = (function () {
   }
 
   function select(records, criteria) {
-    var rows = records.filter(function (rec) { return matches_(rec, criteria); });
+    var range = rangeMs_(criteria);
+    var rows = records.filter(function (rec) { return matches_(rec, criteria, range); });
     rows.sort(function (a, b) { return criteria.order === 'desc' ? compare_(b, a) : compare_(a, b); });
     return rows;
   }
 
-  function clock_(text) { return text === null ? null : text.slice(11); }
-
-  /* 一覧カード用の最小項目。 */
-  function toListItem(rec) {
+  /* 一覧カード用の最小項目。日時はタイムゾーン付きISO、利用日は日付のみ（別項目）。 */
+  function toListItem(rec, nowMs) {
     return {
       bookingId: rec.bookingId,
       service: rec.service,
@@ -74,18 +98,17 @@ var OpsQuery = (function () {
       status: rec.status,
       statusLabel: rec.statusLabel,
       date: rec.date,
-      startTime: clock_(rec.startAt),
-      endTime: clock_(rec.endAt),
+      startAt: rec.startAt,
+      endAt: rec.endAt,
+      phase: phaseOf(rec, nowMs),
       name: rec.name,
       people: rec.people
     };
   }
 
   /* 詳細用。ALLOWED_COLUMNS由来の項目のみ（内部の並び替えキー等は含めない）。 */
-  function toDetail(rec) {
-    var item = toListItem(rec);
-    item.startAt = rec.startAt;
-    item.endAt = rec.endAt;
+  function toDetail(rec, nowMs) {
+    var item = toListItem(rec, nowMs);
     item.brandRaw = rec.brandRaw;
     item.statusRaw = rec.statusRaw;
     item.customerType = rec.customerType;
@@ -105,5 +128,5 @@ var OpsQuery = (function () {
     return item;
   }
 
-  return { resolve: resolve, select: select, toListItem: toListItem, toDetail: toDetail, STATUS_FILTERS: STATUS_FILTERS };
+  return { resolve: resolve, select: select, phaseOf: phaseOf, toListItem: toListItem, toDetail: toDetail, STATUS_FILTERS: STATUS_FILTERS };
 })();

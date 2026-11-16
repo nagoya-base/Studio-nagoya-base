@@ -26,6 +26,24 @@ var OpsContract = (function () {
     EXPIRED: '失効'
   };
 
+  /* 接続契約（フロントエンド⇔バックエンド）のバージョンとエラーコード。通信方式（google.script.run /
+     HTTP 等）に依存しない共通定義。エラーに秘密・生の行データ・内部情報は含めない。 */
+  var CONTRACT_VERSION = 1;
+  var ERROR_CODES = [
+    'UNAUTHENTICATED',   // 検証可能な利用者情報が得られない（未ログイン・メール取得不能）
+    'FORBIDDEN',         // 本人は確認できたが所有者ではない／所有者設定が無い（fail-closed）
+    'INVALID_PARAMS',    // 条件・IDの形式が不正
+    'NOT_CONNECTED',     // 予約台帳の接続先が未設定
+    'FETCH_FAILED',      // 取得失敗（通信・HTTPエラー等）
+    'SHEET_NOT_FOUND',   // 台帳のシートが無い
+    'SCHEMA_MISMATCH',   // 必須列が無い
+    'SCHEMA_DUPLICATE',  // 許可項目の列名が重複
+    'TOO_LARGE',         // 行数が上限超過（部分取得を全件と偽らず停止）
+    'TIMEZONE_UNSUPPORTED',
+    'NOT_FOUND',         // 詳細: 該当IDなし
+    'DUPLICATE_ID'       // 詳細: 同じIDの行が複数（どれが正か判断しない）
+  ];
+
   var JST_OFFSET_MS = 9 * 60 * 60 * 1000;
   var DAY_MS = 24 * 60 * 60 * 1000;
   var DEFAULT_RANGE_DAYS = 30;
@@ -45,6 +63,11 @@ var OpsContract = (function () {
   function formatJstDate(ms) {
     var p = jstParts(ms);
     return p.y + '-' + pad2_(p.m) + '-' + pad2_(p.d);
+  }
+
+  /* API用の日時: タイムゾーン付きの一意な形式（ISO 8601、日本時間 +09:00）。利用日（日付のみ）と区別する。 */
+  function toIso(ms) {
+    return formatJstDate(ms) + 'T' + pad2_(jstParts(ms).hh) + ':' + pad2_(jstParts(ms).mm) + ':' + pad2_(new Date(ms + JST_OFFSET_MS).getUTCSeconds()) + '+09:00';
   }
 
   function formatJstDateTime(ms) {
@@ -94,6 +117,9 @@ var OpsContract = (function () {
   }
 
   return {
+    CONTRACT_VERSION: CONTRACT_VERSION,
+    ERROR_CODES: ERROR_CODES,
+    toIso: toIso,
     SERVICES: SERVICES,
     UNCLASSIFIED: UNCLASSIFIED,
     STATUS_LABELS: STATUS_LABELS,

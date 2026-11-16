@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!--
+  予約確認（フロントエンド・モック表示）— Issue #936。
+  ★ すべて架空のモックデータです。実バックエンドには接続しません。実際の予約は表示されません。
+  画面ロジックは ops-client.js（通信方式に依存しない）、データはモックアダプターから受け取ります。
+  Sites 等での本番運用は、共通接続契約を満たす実アダプターと認証付き接続を採用した後に別途結合します。
+  ?scenario=ok|empty|error|not_connected|denied|flaky でモックの状態を切り替えて確認できます。
+-->
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>予約確認（モック）</title>
+  <style>
+    :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#5f6368; --line:#d9d9de; --card:#fff; --warn:#9a5b00; --err:#b3261e; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#ececf0; --muted:#a0a3ab; --line:#33343a; --card:#202026; --warn:#f2b24c; --err:#f2877f; } }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+    header, main { max-width: 760px; margin: 0 auto; padding: 12px 16px; }
+    h1 { font-size: 1.15rem; margin: 4px 0 8px; }
+    .note { color: var(--muted); font-size: .85rem; margin: 0 0 8px; }
+    .filters { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .filters label { display:block; font-size:.8rem; color:var(--muted); min-width:0; }
+    .filters select, .filters input, button { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 8px; min-width:0; }
+    button { cursor:pointer; }
+    .row2 { grid-column: 1 / -1; display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .banner { margin:10px 0; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); font-size:.9rem; overflow-wrap:anywhere; }
+    .banner.err { border-color: var(--err); color: var(--err); }
+    .banner.stale { border-color: var(--warn); color: var(--warn); }
+    .cards { list-style:none; padding:0; margin:0; display:grid; gap:10px; }
+    .card { display:block; width:100%; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; overflow-wrap:anywhere; }
+    .card .top { display:flex; gap:8px; flex-wrap:wrap; font-size:.8rem; color:var(--muted); }
+    .card .when { font-weight:600; font-size:1.05rem; margin:4px 0; }
+    .tag { display:inline-block; padding:0 8px; border:1px solid var(--line); border-radius:999px; font-size:.78rem; }
+    dl { display:grid; grid-template-columns: 8.5em 1fr; gap:6px 10px; margin:0; }
+    dt { color:var(--muted); font-size:.85rem; } dd { margin:0; overflow-wrap:anywhere; }
+    .empty { color:var(--muted); font-style:italic; }
+    details { margin-top:12px; } details li { overflow-wrap:anywhere; }
+    @media (min-width: 640px) { .filters { grid-template-columns: repeat(4, 1fr); } .row2 { grid-column: auto; grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>予約確認（読み取り専用・モック）</h1>
+    <p class="note">架空のモックデータです。実際の予約は表示されません。</p>
+    <div class="filters">
+      <label>サービス<select id="f-service"></select></label>
+      <label>状態<select id="f-status"></select></label>
+      <label>期間<select id="f-scope"><option value="upcoming">今日から30日間</option><option value="past">過去30日間</option><option value="custom">日付を指定</option></select></label>
+      <div class="row2"><button type="button" id="f-reload">再取得</button></div>
+      <label>開始日<input type="date" id="f-from"></label>
+      <label>終了日<input type="date" id="f-to"></label>
+    </div>
+  </header>
+  <main>
+    <div id="banner"></div>
+    <div id="view"></div>
+  </main>
+  <script src="ops-client.js"></script>
+  <script src="mock-adapter.js"></script>
+  <script>
+    (function () {
+      var scenario = new URLSearchParams(location.search).get('scenario') || 'ok';
+      OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: scenario }));
+    })();
+  </script>
+</body>
+</html>

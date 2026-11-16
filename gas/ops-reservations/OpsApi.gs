@@ -1,35 +1,25 @@
 /*
- * OpsApi.gs — 運営アプリ段階1のWeb Appエントリ・API（Issue #936）。読み取り専用。
+ * OpsApi.gs — バックエンドの要求処理（Issue #936）。読み取り専用。通信方式に依存しない。
  *
- * 認可: Web App設定は「自分のみ」(access: MYSELF)。加えて全API・doGetでサーバー側の所有者照合を
- * 毎回行う（Script Propertiesの OPS_OWNER_EMAIL と実行ユーザーのメールが一致しなければ拒否。
- * 未設定・取得不能は拒否=fail-closed）。非公開URLだけを認証の代わりにしない。
- * 接続: Script Propertiesの OPS_SPREADSHEET_ID（既存の予約台帳）を、Sheets API v4のGET（OpsSource.gs。
- * spreadsheets.readonlyスコープ）で読むのみ。
- * 未設定なら「未接続」を返し、0件とは区別する。
- * ログ: 件数・理由コードだけ。予約ID・氏名・行データは出さない。
+ * handle(request, ctx) が共通の接続契約の入口:
+ *   request: { op: 'list', params } | { op: 'detail', id }
+ *   ctx:     { authenticate, readLedger }（省略時は GAS Session 認証器 / Sheets API 読み取り）
+ *   戻り値:  { ok: true, ...} | { ok: false, error: { code, message } }（codeは OpsContract.ERROR_CODES）
+ * 全要求で毎回認可し、拒否時は予約情報を一切返さない。ログは件数と固定コードのみ。
+ * GAS専用の入口（doGet / opsListReservations / opsGetReservation）はこのファイル末尾の薄いアダプターで、
+ * 業務ロジックは持たない。
  */
 'use strict';
 
 var OpsApi = (function () {
-    function props_() { return PropertiesService.getScriptProperties(); }
-
-  function activeEmail_() {
-    try {
-      var email = Session.getActiveUser().getEmail();
-      return typeof email === 'string' ? email.trim().toLowerCase() : '';
-    } catch (e) {
-      return '';
-    }
-  }
-
-  function isOwner_() {
-    var owner = props_().getProperty('OPS_OWNER_EMAIL');
-    owner = typeof owner === 'string' ? owner.trim().toLowerCase() : '';
-    if (!owner) return false;
-    var active = activeEmail_();
-    return active !== '' && active === owner;
-  }
+  var FETCH_ERRORS_ = {
+    SHEET_NOT_FOUND: '予約台帳のシートが見つかりません。',
+    TOO_LARGE: '予約台帳の行数が上限を超えています（一部だけを全件のように表示しないため停止しました）。',
+    TIMEZONE_UNSUPPORTED: '予約台帳のタイムゾーンに対応していません。',
+    SCHEMA_DUPLICATE: '予約台帳のヘッダーに同名の列が複数あります。どの列が正か判断できないため停止しました',
+    FETCH_FAILED: '予約台帳の取得に失敗しました。時間をおいて再取得してください。'
+  };
+  var AUTH_MESSAGES_ = { UNAUTHENTICATED: '利用者を確認できません。', FORBIDDEN: '権限がありません。' };
 
   function error_(code, message) { return { ok: false, error: { code: code, message: message } }; }
 
@@ -41,32 +31,31 @@ var OpsApi = (function () {
     });
   }
 
-  var FETCH_ERRORS_ = {
-    SHEET_NOT_FOUND: '予約台帳のシートが見つかりません。',
-    TOO_LARGE: '予約台帳の行数が上限を超えています（一部だけを全件のように表示しないため停止しました）。',
-    TIMEZONE_UNSUPPORTED: '予約台帳のタイムゾーンに対応していません。',
-    SCHEMA_DUPLICATE: '予約台帳のヘッダーに同名の列が複数あります。どの列が正か判断できないため停止しました',
-    FETCH_FAILED: '予約台帳の取得に失敗しました。時間をおいて再取得してください。'
-  };
-
-  /* 台帳の読み取り。戻り値: {ok:true, normalized} | {ok:false, error}。 */
-  function load_() {
-    var id = props_().getProperty('OPS_SPREADSHEET_ID');
-    if (!id) return error_('NOT_CONNECTED', '予約台帳が未接続です（接続先が未設定）。');
-    var values;
-    try {
-      values = OpsSource.readBookings({
+  /* 既定の台帳読み取り（GAS）。deps を差し替えれば他の実行基盤でも同じ検証・正規化を使える。 */
+  function readLedgerGas_() {
+    var id = PropertiesService.getScriptProperties().getProperty('OPS_SPREADSHEET_ID');
+    if (!id) return { notConnected: true };
+    return {
+      values: OpsSource.readBookings({
         spreadsheetId: id,
         fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
         getToken: function () { return ScriptApp.getOAuthToken(); }
-      });
+      })
+    };
+  }
+
+  function load_(ctx) {
+    var read;
+    try {
+      read = ctx.readLedger();
     } catch (e) {
       var code = e && FETCH_ERRORS_[e.opsCode] ? e.opsCode : 'FETCH_FAILED';
       Logger.log('ops: read failed ' + code);
       var detail = code === 'SCHEMA_DUPLICATE' && e.opsColumns ? ': ' + e.opsColumns.join(', ') : '';
       return error_(code, FETCH_ERRORS_[code] + detail);
     }
-    var normalized = OpsNormalizer.normalize(values);
+    if (read.notConnected) return error_('NOT_CONNECTED', '予約台帳が未接続です（接続先が未設定）。');
+    var normalized = OpsNormalizer.normalize(read.values);
     if (normalized.schemaError) {
       if (normalized.schemaError.duplicated) {
         return error_('SCHEMA_DUPLICATE', FETCH_ERRORS_.SCHEMA_DUPLICATE + ': ' + normalized.schemaError.duplicated.join(', '));
@@ -76,60 +65,77 @@ var OpsApi = (function () {
     return { ok: true, normalized: normalized };
   }
 
-  function todayJst_() { return OpsContract.formatJstDate(Date.now()); }
-
-  function listReservations(params) {
-    if (!isOwner_()) return error_('FORBIDDEN', '権限がありません。');
-    var today = todayJst_();
+  function list_(params, ctx, nowMs) {
+    var today = OpsContract.formatJstDate(nowMs);
     var resolved = OpsQuery.resolve(params, today);
     if (resolved.error) return error_('INVALID_PARAMS', '条件が不正です: ' + resolved.error);
     var criteria = resolved.value;
-    var loaded = load_();
+    var loaded = load_(ctx);
     if (!loaded.ok) return loaded;
     var n = loaded.normalized;
     var rows = OpsQuery.select(n.records, criteria);
     Logger.log('ops list rows=' + n.totalRows + ' valid=' + n.records.length + ' matched=' + rows.length + ' issues=' + n.issues.length);
+    var selected = OpsContract.serviceById(criteria.service);
     return {
       ok: true,
-      fetchedAt: new Date().toISOString(),
-      fetchedAtJst: OpsContract.formatJstDateTime(Date.now()) + ' JST',
+      contractVersion: OpsContract.CONTRACT_VERSION,
+      fetchedAt: OpsContract.toIso(nowMs),
       todayJst: today,
       applied: criteria,
       /* 台帳全体を1回で読み切っている（部分取得ではない）。 */
       complete: true,
       counts: { sheetRows: n.totalRows, valid: n.records.length, matched: rows.length, issues: n.issues.length },
       serviceStates: serviceStates_(n.records),
-      notConnectedSelected: criteria.service !== 'all' && !(OpsContract.serviceById(criteria.service) || {}).connected,
-      items: rows.map(OpsQuery.toListItem),
+      notConnectedSelected: !!selected && !selected.connected,
+      items: rows.map(function (r) { return OpsQuery.toListItem(r, nowMs); }),
       issues: n.issues.map(function (i) {
         return { row: i.row, bookingId: i.bookingId, severity: i.severity, reasons: i.codes.map(OpsNormalizer.reasonText) };
       })
     };
   }
 
-  function getReservation(bookingId) {
-    if (!isOwner_()) return error_('FORBIDDEN', '権限がありません。');
-    var key = typeof bookingId === 'string' ? bookingId.trim() : '';
+  function detail_(id, ctx, nowMs) {
+    var key = typeof id === 'string' ? id.trim() : '';
     if (!key) return error_('INVALID_PARAMS', '予約IDが指定されていません。');
-    var loaded = load_();
+    var loaded = load_(ctx);
     if (!loaded.ok) return loaded;
-    var found = loaded.normalized.records.filter(function (r) { return r.bookingId === key; });
-    if (found.length !== 1) return error_('NOT_FOUND', '該当する予約が見つかりません（空欄・重複IDの行は表示対象外です）。');
-    return { ok: true, fetchedAt: new Date().toISOString(), reservation: OpsQuery.toDetail(found[0]) };
+    var n = loaded.normalized;
+    /* 重複IDは「不存在」と区別する（どの行が正かは判断せず、別予約の詳細も返さない）。 */
+    if (n.duplicateIds.indexOf(key) !== -1) return error_('DUPLICATE_ID', '同じ予約IDの行が複数あるため表示できません。');
+    var found = n.records.filter(function (r) { return r.bookingId === key; });
+    if (found.length !== 1) return error_('NOT_FOUND', '該当する予約が見つかりません（空欄・不正な行は表示対象外です）。');
+    return { ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), reservation: OpsQuery.toDetail(found[0], nowMs) };
   }
 
-  return { isOwner: isOwner_, listReservations: listReservations, getReservation: getReservation };
+  /* 共通契約の入口。ctx.nowMs は検証用（省略時は現在時刻）。 */
+  function handle(request, ctx) {
+    var context = ctx || {};
+    var authenticate = context.authenticate || OpsAuth.createGasSessionAuthenticator();
+    var auth = authenticate();
+    if (!auth || auth.ok !== true) {
+      var code = auth && auth.code === 'FORBIDDEN' ? 'FORBIDDEN' : 'UNAUTHENTICATED';
+      return error_(code, AUTH_MESSAGES_[code]);
+    }
+    var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_ };
+    var nowMs = typeof context.nowMs === 'number' ? context.nowMs : Date.now();
+    var op = request && request.op;
+    if (op === 'list') return list_(request.params, full, nowMs);
+    if (op === 'detail') return detail_(request.id, full, nowMs);
+    return error_('INVALID_PARAMS', '要求の種類が不正です。');
+  }
+
+  return { handle: handle };
 })();
 
+/* ---- 以下はGAS専用の薄いアダプター（業務ロジックなし） ---- */
 function doGet() {
-  if (!OpsApi.isOwner()) {
-    return HtmlService.createHtmlOutput('<p>権限がありません。</p>').setTitle('Ops');
-  }
+  var auth = OpsAuth.createGasSessionAuthenticator()();
+  if (!auth.ok) return HtmlService.createHtmlOutput('<p>権限がありません。</p>').setTitle('Ops');
   return HtmlService.createHtmlOutputFromFile('OpsPage')
-    .setTitle('予約確認')
+    .setTitle('予約確認（バックエンド検証用）')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /* google.script.run から呼ぶ公開関数（読み取り専用）。 */
-function opsListReservations(params) { return OpsApi.listReservations(params); }
-function opsGetReservation(bookingId) { return OpsApi.getReservation(bookingId); }
+function opsListReservations(params) { return OpsApi.handle({ op: 'list', params: params }); }
+function opsGetReservation(bookingId) { return OpsApi.handle({ op: 'detail', id: bookingId }); }
