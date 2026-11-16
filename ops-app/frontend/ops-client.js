@@ -52,6 +52,8 @@
       if (DENIED_CODES.indexOf(err.code) !== -1) {
         /* 認可失敗では、以前の表示を残さない。 */
         state.phase = 'denied'; state.data = null; state.stale = false; state.detail = null; state.detailPhase = 'idle'; state.detailId = null;
+        /* 実行中の他の要求（一覧・詳細）の遅れて返る成功応答が、消した表示を復活させないよう、保留中の要求を無効化する。 */
+        listSeq++; detailSeq++;
       } else {
         state.phase = err.code === 'NOT_CONNECTED' ? 'not_connected' : 'error';
         state.stale = !!state.data;

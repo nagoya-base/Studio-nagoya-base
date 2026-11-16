@@ -65,6 +65,35 @@ test('モック: 全シナリオの応答が共通接続契約を満たし、画
   assert.strictEqual(miss.error.code, 'NOT_FOUND');
 });
 
+test('モック: 期間（今後/過去/日付指定）・並び順・重なり判定がバックエンドと同じ定義で動く', async function () {
+  var api = Mock.createMockApi({ nowMs: NOW });
+  function ask(p) { return new Promise(function (resolve) { api.list(p, resolve); }); }
+  function ids(r) { return plain(r.items.map(function (i) { return i.bookingId; })); }
+  var up = await ask({ scope: 'upcoming' });
+  assert.strictEqual(up.applied.from, '2026-12-01');
+  assert.strictEqual(up.applied.to, '2026-12-30');
+  assert.strictEqual(up.applied.order, 'asc');
+  /* 前夜〜今日1:00の日またぎ（MOCK-006）は、今日0:00以降に重なるため今後にも出る。昇順 */
+  assert.deepStrictEqual(ids(up), ['MOCK-006', 'MOCK-001', 'MOCK-002', 'MOCK-003', 'MOCK-004', 'MOCK-005']);
+  var past = await ask({ scope: 'past' });
+  assert.strictEqual(past.applied.to, '2026-11-30');
+  assert.strictEqual(past.applied.order, 'desc');
+  assert.deepStrictEqual(ids(past), ['MOCK-006', 'MOCK-007']);
+  var custom = await ask({ scope: 'upcoming', from: '2026-12-02', to: '2026-12-02' });
+  assert.deepStrictEqual(ids(custom), ['MOCK-002']);
+  assert.deepStrictEqual(contract.validateList(custom), []);
+  var bad = await ask({ from: '2026-12-05', to: '2026-12-01' });
+  assert.strictEqual(bad.error.code, 'INVALID_PARAMS');
+  var filtered = await ask({ scope: 'past', status: 'EXPIRED' });
+  assert.deepStrictEqual(ids(filtered), ['MOCK-007']);
+  assert.deepStrictEqual(contract.validateList(past), []);
+  var phases = {};
+  up.items.forEach(function (i) { phases[i.bookingId] = i.phase; });
+  assert.strictEqual(phases['MOCK-006'], 'ended');
+  assert.strictEqual(phases['MOCK-001'], 'in_progress');
+  assert.strictEqual(phases['MOCK-003'], 'upcoming');
+});
+
 test('モック: flaky は初回成功→以降失敗で、古いデータ表示を確認できる', async function () {
   var api = Mock.createMockApi({ scenario: 'flaky', nowMs: NOW });
   var ctl = C.createController(api);
@@ -127,6 +156,33 @@ test('画面: 認可失敗（UNAUTHENTICATED/FORBIDDEN）では以前の表示�
     var html = C.renderBanner(ctl.state) + C.renderView(ctl.state);
     assert.ok(!/SHOULD-VANISH/.test(html) && /権限がありません/.test(html));
   });
+});
+
+test('画面: 認可失敗時、実行中の他の要求（詳細・一覧）が後から成功しても、消した予約情報は復活しない', function () {
+  var a = fakeApi(), ctl = C.createController(a);
+  ctl.load({});
+  a.pending.list[0].ok(okList([item({ bookingId: 'SECRET-LIKE' })]));
+  ctl.openDetail('SECRET-LIKE');
+  ctl.load({}); /* 詳細も取り直す: list[1] と detail[1] が同時に保留 */
+  assert.strictEqual(a.pending.detail.length, 2);
+  a.pending.list[1].ok({ ok: false, error: { code: 'FORBIDDEN', message: '権限がありません。' } });
+  a.pending.detail[1].ok({ ok: true, reservation: item({ bookingId: 'SECRET-LIKE' }) });
+  a.pending.detail[0].ok({ ok: true, reservation: item({ bookingId: 'SECRET-LIKE' }) });
+  assert.strictEqual(ctl.state.phase, 'denied');
+  assert.strictEqual(ctl.state.detailPhase, 'idle');
+  assert.strictEqual(ctl.state.detail, null);
+  assert.ok(!/SECRET-LIKE/.test(C.renderBanner(ctl.state) + C.renderView(ctl.state)));
+  /* 詳細側が先に認可失敗になった場合も、保留中の一覧の成功応答で復活しない */
+  var b = fakeApi(), ctl2 = C.createController(b);
+  ctl2.load({});
+  b.pending.list[0].ok(okList([item({ bookingId: 'SECRET-LIKE' })]));
+  ctl2.openDetail('SECRET-LIKE');
+  ctl2.load({});
+  b.pending.detail[1].ok({ ok: false, error: { code: 'UNAUTHENTICATED', message: '利用者を確認できません。' } });
+  b.pending.list[1].ok(okList([item({ bookingId: 'SECRET-LIKE' })]));
+  assert.strictEqual(ctl2.state.phase, 'denied');
+  assert.strictEqual(ctl2.state.data, null);
+  assert.ok(!/SECRET-LIKE/.test(C.renderView(ctl2.state)));
 });
 
 test('画面: 正常0件・未接続サービス選択・エスケープ・0と未入力の区別', function () {
