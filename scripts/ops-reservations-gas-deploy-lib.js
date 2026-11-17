@@ -12,10 +12,13 @@ const path = require('node:path');
 
 // 配布物（scripts/prepare-ops-reservations-gas-project.js の出力）。テストが prepare・gas/ops-reservations と一致を確認する。
 const BUNDLE_FILES = [
-  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsNormalizer.gs', 'OpsPage.html', 'OpsQuery.gs', 'OpsSource.gs', 'appsscript.json'
+  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsNormalizer.gs', 'OpsPage.html', 'OpsQuery.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
 ];
-// 運営アプリだけが使う権限（読み取り専用）。これ以外のscope（書込み・Drive・メール等）は配布しない。
+// 運営アプリだけが使う権限。予約台帳は読み取り専用（spreadsheets.readonly）。
+// drive.file（Issue #941）は「このアプリ自身が作成したファイルだけ」に届く権限で、メモ専用スプレッドシートの書込み用。
+// 予約台帳（別途作成されたファイル）には届かない。広い権限（spreadsheets / drive 全体）・メール・トリガー等は配布しない。
 const APPROVED_SCOPES = [
+  'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/script.external_request',
   'https://www.googleapis.com/auth/spreadsheets.readonly',
   'https://www.googleapis.com/auth/userinfo.email'

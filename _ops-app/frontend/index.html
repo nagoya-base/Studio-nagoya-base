@@ -1,17 +1,18 @@
 <!DOCTYPE html>
 <!--
-  予約確認（フロントエンド・モック表示）— Issue #936。
+  予約確認・メモ（フロントエンド・モック表示）— Issue #936 / #941。
   ★ すべて架空のモックデータです。実バックエンドには接続しません。実際の予約は表示されません。
   画面ロジックは ops-client.js（通信方式に依存しない）、データはモックアダプターから受け取ります。
   Sites 等での本番運用は、共通接続契約を満たす実アダプターと認証付き接続を採用した後に別途結合します。
-  ?scenario=ok|empty|error|diag_api_disabled|not_connected|denied|flaky でモックの状態を切り替えて確認できます。
+  ?scenario=ok|empty|error|diag_api_disabled|not_connected|denied|flaky で予約モックの、
+  ?tasks=ok|empty|not_ready|save_error|conflict|denied でメモ（#941）モックの状態を切り替えて確認できます。
 -->
 <html lang="ja">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
-  <title>予約確認（モック）</title>
+  <title>予約確認・メモ（モック）</title>
   <style>
     :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#5f6368; --line:#d9d9de; --card:#fff; --warn:#9a5b00; --err:#b3261e; }
     @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#ececf0; --muted:#a0a3ab; --line:#33343a; --card:#202026; --warn:#f2b24c; --err:#f2877f; } }
@@ -39,16 +40,36 @@
     dt { color:var(--muted); font-size:.85rem; } dd { margin:0; overflow-wrap:anywhere; }
     .empty { color:var(--muted); font-style:italic; }
     details { margin-top:12px; } details li { overflow-wrap:anywhere; }
+    .tabs { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin:8px 0; }
+    .tabs button[aria-selected="true"] { border-color: var(--fg); font-weight:700; }
+    [hidden] { display:none !important; }
+    .banner.ok { border-color:#2e7d32; color:#2e7d32; }
+    @media (prefers-color-scheme: dark) { .banner.ok { border-color:#81c995; color:#81c995; } }
+    .tag.danger { border-color: var(--err); color: var(--err); font-weight:600; }
+    h2 { font-size:1rem; margin:16px 0 8px; }
+    .summary { margin:8px 0; display:flex; gap:8px; flex-wrap:wrap; }
+    .memo { white-space:pre-wrap; margin:4px 0; }
+    .task.overdue { border-color: var(--err); }
+    .actions { display:grid; grid-template-columns: repeat(auto-fit, minmax(7em, 1fr)); gap:8px; margin-top:8px; }
+    form.taskform { display:grid; gap:8px; margin:10px 0; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+    form.taskform label { display:block; font-size:.8rem; color:var(--muted); min-width:0; }
+    form.taskform input, form.taskform select, form.taskform textarea { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; min-width:0; }
+    form.taskform textarea { min-height:6em; }
+    .formbtns { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
     @media (min-width: 640px) { .filters { grid-template-columns: repeat(4, 1fr); } .row2 { grid-column: auto; grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
     <!--OPS:HEAD-->
-    <h1>予約確認（読み取り専用・モック）</h1>
-    <p class="note">架空のモックデータです。実際の予約は表示されません。</p>
+    <h1>予約確認・メモ（モック）</h1>
+    <p class="note">架空のモックデータです。実際の予約・メモは表示も保存もされません。</p>
     <!--/OPS:HEAD-->
-    <div class="filters">
+    <nav class="tabs" aria-label="表示の切り替え">
+      <button type="button" id="tab-res" aria-selected="true">予約</button>
+      <button type="button" id="tab-tasks" aria-selected="false">メモ・期限</button>
+    </nav>
+    <div class="filters" id="res-filters">
       <label>サービス<select id="f-service"></select></label>
       <label>状態<select id="f-status"></select></label>
       <label>期間<select id="f-scope"><option value="upcoming">今日から30日間</option><option value="past">過去30日間</option><option value="custom">日付を指定</option></select></label>
@@ -58,16 +79,38 @@
     </div>
   </header>
   <main>
-    <div id="banner"></div>
-    <div id="view"></div>
+    <div id="res-panel">
+      <div id="banner"></div>
+      <div id="view"></div>
+    </div>
+    <section id="tasks-panel" hidden aria-label="未対応メモと期限">
+      <div id="tasks-banner"></div>
+      <div id="tasks-summary"></div>
+      <p class="note">件名とリンクだけを登録してください。お客様の氏名・連絡先・DM本文は書かないでください。</p>
+      <button type="button" id="t-new">＋ メモを追加</button>
+      <form id="t-form" class="taskform" hidden novalidate>
+        <strong id="t-form-title">メモを追加</strong>
+        <label>件名（必須・80文字まで）<input type="text" id="t-title" maxlength="80" autocomplete="off"></label>
+        <label>状態<select id="t-status"></select></label>
+        <label>期限（任意）<input type="date" id="t-due"></label>
+        <label>サービス（任意）<select id="t-service"></select></label>
+        <label>予約ID（任意）<input type="text" id="t-booking" maxlength="64" autocomplete="off" inputmode="latin"></label>
+        <label>短いメモ（500文字まで）<textarea id="t-memo" maxlength="500"></textarea></label>
+        <label>証跡リンク（任意・https:// のみ）<input type="url" id="t-url" maxlength="300" autocomplete="off" inputmode="url"></label>
+        <div class="formbtns"><button type="submit" id="t-submit">保存</button><button type="button" id="t-cancel">キャンセル</button></div>
+      </form>
+      <div id="tasks-view"></div>
+    </section>
   </main>
   <!--OPS:SCRIPTS-->
   <script src="ops-client.js"></script>
+  <script src="tasks-client.js"></script>
   <script src="mock-adapter.js"></script>
   <script>
     (function () {
-      var scenario = new URLSearchParams(location.search).get('scenario') || 'ok';
-      OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: scenario }));
+      var q = new URLSearchParams(location.search);
+      OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok' }));
+      OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }));
     })();
   </script>
   <!--/OPS:SCRIPTS-->

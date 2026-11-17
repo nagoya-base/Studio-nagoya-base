@@ -479,14 +479,18 @@ test('期間: 始端=0:00(含む)・終端=翌0:00(含まない)の時間帯の�
 });
 
 /* ---- 静的な境界（読み取り専用・非干渉） ---- */
-test('境界: 読み取り専用スコープのみ・自分のみ公開・書き込み/送信APIを含まない', function () {
+test('境界: 予約台帳は読み取り専用スコープ・自分のみ公開・書き込み/送信APIを含まない（#941: メモ専用のdrive.fileだけ追加）', function () {
   var manifest = JSON.parse(readFile('appsscript.json'));
-  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/userinfo.email']);
+  /* 予約台帳へ届くのは spreadsheets.readonly のみ。drive.file はこのアプリが作成したファイル（メモ専用）だけに届く。
+     広い書込み権限（spreadsheets / drive 全体）・メール・カレンダー・トリガーは持たない。 */
+  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/userinfo.email']);
   assert.strictEqual(manifest.webapp.access, 'MYSELF');
-  var forbidden = /setValue|setValues|appendRow|insertSheet|deleteRow|\.clear\(|setProperty|MailApp|GmailApp|CalendarApp|SpreadsheetApp|LockService|DriveApp|SpreadsheetApp\.create|ANYONE/;
+  var forbidden = /setValue|setValues|appendRow|insertSheet|deleteRow|\.clear\(|MailApp|GmailApp|CalendarApp|SpreadsheetApp|DriveApp|SpreadsheetApp\.create|ANYONE/;
   fs.readdirSync(DIR).forEach(function (f) {
-    var src = readFile(f);
-    assert.ok(!forbidden.test(src.replace(/\/\*[\s\S]*?\*\//g, '')), f + 'に書き込み・送信系のAPIが含まれる');
+    var code = readFile(f).replace(/\/\*[\s\S]*?\*\//g, '');
+    assert.ok(!forbidden.test(code), f + 'に書き込み・送信系のAPIが含まれる');
+    /* 保存先IDの保存（setProperty）と排他（LockService）は、GAS専用の薄いアダプター OpsApi.gs のメモ用アダプターだけ。 */
+    if (f !== 'OpsApi.gs') assert.ok(!/setProperty|LockService/.test(code), f + 'が setProperty/LockService を使っている');
   });
 });
 
