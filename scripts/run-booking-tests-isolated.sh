@@ -67,6 +67,33 @@ workspace_is_clean() {
 workspace_is_clean || die "workspace is not the clean approved commit before the tests"
 phase preflight
 
+# ---- ファイルシステムのメタデータ先読み（Issue #950。判定には一切使わない） ----
+# 後片付けの全走査（find /）は、GitHub-hosted runnerの冷えたディスクでは約5分かかる（温まっていれば約3秒）。
+# 遅いのは走査の中身ではなく、メタデータの逐次I/O待ちなので、テストの実行中に読取りだけの並列statでキャッシュを温める。
+# - 先読みはキャッシュを載せるだけ。隔離の成否は、先読みの後に必ず実行する従来どおりの走査（scan_owned）だけが決める。
+# - 先読みの失敗・中断・時間切れは無視してよい（走査はそれでも完全に実行され、失敗すれば従来どおり exit 3）。
+# - 何も書き換えない（find による読取りのみ）。走査の範囲・検査の内容は変えない。
+warm_pid=""
+warm_fs_cache() {
+  timeout 900 sudo -n env WARM_WORKERS=64 WARM_DEPTH=3 bash -c '
+    prune=( \( -path /proc -o -path /sys \) -prune -o )
+    # 浅い階層（DEPTH未満）のディレクトリは直下だけ、DEPTH階層のディレクトリは配下すべてを stat する（ -user はstatを強制するため）。
+    find / -maxdepth "$((WARM_DEPTH - 1))" "${prune[@]}" -type d -print0 |
+      xargs -0 -r -P "$WARM_WORKERS" -I{} find {} -maxdepth 1 -user 0 -o -nouser -o -print0 >/dev/null 2>&1
+    find / -mindepth "$WARM_DEPTH" -maxdepth "$WARM_DEPTH" "${prune[@]}" -type d -print0 |
+      xargs -0 -r -P "$WARM_WORKERS" -I{} find {} \( -path /proc -o -path /sys \) -prune -o -user 0 -o -nouser -o -print0 >/dev/null 2>&1
+  ' >/dev/null 2>&1 || :
+  return 0
+}
+start_warm_fs_cache() { warm_fs_cache & warm_pid=$!; }
+# 走査の直前に先読みの終了を待つ。待った時間は計測に出す（先読みの結果は成否に影響しない）。
+wait_warm_fs_cache() {
+  [[ -n "$warm_pid" ]] || return 0
+  wait "$warm_pid" 2>/dev/null || :
+  warm_pid=""
+  return 0
+}
+
 # ---- 後片付けと検証（trapで必ず実行。失敗はexit 3） ----
 # 方針: 後片付けの各コマンドの失敗・部分的な走査は握りつぶさず、すべて隔離不成立（teardown_failed=1 → exit 3）とする。
 teardown_failed=0
@@ -130,6 +157,8 @@ teardown() {
     teardown_fail "could not remove sudo timestamp records"
   # そのユーザー所有のファイルを全ファイルシステムで探す（/proc・/sysは除外）。許可領域外は隔離不成立。
   phase teardown-sudo-timestamps
+  wait_warm_fs_cache
+  phase teardown-wait-warmup
   if ! scan_owned "$uid" "$gid" /; then
     teardown_fail "SCAN_FAILED: the filesystem scan for files of the isolated user did not complete"
   else
@@ -194,6 +223,7 @@ finish() {
 phase preflight-checks
 sudo -n useradd --create-home --home-dir "$test_home" --shell /bin/bash --user-group "$test_user"
 trap finish EXIT
+start_warm_fs_cache
 # cron/atの登録はホストのファイルを変えずに防ぐ: spool（/var/spool）はnamespace内で読取り専用、crontab/atの
 # setgidは no_new_privs で効かない。後片付けの全走査でも所有ファイルが残れば隔離不成立になる（/etc/cron.deny等は触らない）。
 sudo -n cp -a "$workspace/." "$test_home/repo"

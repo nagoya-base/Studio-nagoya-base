@@ -90,6 +90,7 @@ jobs:
       - name: Probe - forbidden operations (incl. world-writable host paths) are refused and leftovers are removed
         run: |
           set -euo pipefail
+          exec 2> >(tee -a "$RUNNER_TEMP/isolation-timing.log" >&2)
           sudo mkdir -p /srv/booking-isolation-canary
           sudo chmod 1777 /srv/booking-isolation-canary
           BOOKING_ISOLATION_CANARY=/srv/booking-isolation-canary \
@@ -165,39 +166,14 @@ jobs:
       - name: Repository tests pass as the isolated user (same command as the production workflow)
         run: |
           set -euo pipefail
+          exec 2> >(tee -a "$RUNNER_TEMP/isolation-timing.log" >&2)
           bash scripts/run-booking-tests-isolated.sh repository-tests
           for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
             if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
           done | diff "$RUNNER_TEMP/host-state-before.txt" -
-
-  # Issue #950（計測専用・最終版では削除する）: 隔離後の全走査（find /）の冷えたディスクでの所要時間を、
-  # 読み取りだけの並列メタデータ温め（stat）でどこまで短縮できるかを測る。各jobは新しいVM（キャッシュは冷えている）。
-  # 出力はパス名を含まない秒数のみ。ファイルは一切変更しない。
-  isolation-scan-diag:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { workers: 16, depth: 2 }
-          - { workers: 64, depth: 2 }
-          - { workers: 64, depth: 3 }
-    steps:
-      - name: Cold parallel warm-up then the authoritative serial scan (workers=${{ matrix.workers }}, depth=${{ matrix.depth }})
-        env:
-          WORKERS: ${{ matrix.workers }}
-          DEPTH: ${{ matrix.depth }}
+      # Issue #950（計測専用・最終版で削除）: 区間別の経過時間（ミリ秒のみ）をjobログの末尾にまとめて出す。
+      - name: Timing summary (measurement only)
+        if: always()
         run: |
-          set -u
-          now() { echo "${EPOCHREALTIME//[.,]/}"; }
-          ms() { echo $(( ($2 - $1) / 1000 )); }
-          t0="$(now)"
-          # 浅い階層は直下だけ、DEPTH階層のディレクトリは配下をすべて stat する（find式は本番走査と同じ -user/-group）。
-          sudo -n env WORKERS="$WORKERS" DEPTH="$DEPTH" bash -c '
-            { find / -maxdepth "$((DEPTH-1))" -type d \( -path /proc -o -path /sys \) -prune -o -type d -print0 | xargs -0 -r -P "$WORKERS" -I{} find {} -maxdepth 1 \( -user 99999 -o -group 99999 \) -print0 >/dev/null 2>&1 || true; }
-            find / -mindepth "$DEPTH" -maxdepth "$DEPTH" \( -path /proc -o -path /sys \) -prune -o -type d -print0 | xargs -0 -r -P "$WORKERS" -I{} find {} \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -print >/dev/null 2>&1 || true
-          '
-          t1="$(now)"
-          sudo -n find / \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -print >/dev/null 2>&1
-          t2="$(now)"
-          echo "SCAN_DIAG workers=$WORKERS depth=$DEPTH warmup=$(ms "$t0" "$t1")ms authoritative-scan-after-warmup=$(ms "$t1" "$t2")ms total=$(ms "$t0" "$t2")ms"
+          echo "TIMING_SUMMARY"
+          grep -h '_TIMING ' "$RUNNER_TEMP/isolation-timing.log" 2>/dev/null | cut -c1-120 || true
