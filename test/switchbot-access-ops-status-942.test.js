@@ -69,6 +69,8 @@ function loadShell(opts) {
     vm.runInContext(fs.readFileSync(path.join(out, n), 'utf8'), ctx, { filename: n });
   });
   env.ctx = ctx;
+  // 時刻を固定（経過秒の比較が実時計の秒境界でぶれないように）
+  ctx.Date = class extends Date { constructor() { if (arguments.length) super(...arguments); else super(NOW_SEC * 1000); } static now() { return NOW_SEC * 1000; } };
   return env;
 }
 
