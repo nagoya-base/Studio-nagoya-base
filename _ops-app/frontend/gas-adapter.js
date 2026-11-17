@@ -26,7 +26,9 @@
     return {
       kind: 'gas',
       list: function (params, ok, ng) { call('opsListReservations', params, ok, ng); },
-      detail: function (id, ok, ng) { call('opsGetReservation', id, ok, ng); }
+      detail: function (id, ok, ng) { call('opsGetReservation', id, ok, ng); },
+      /* 鍵・案内の状況（#942）。読み取り専用。接続先・トークンは画面に渡らない。 */
+      keyStatus: function (id, ok, ng) { call('opsGetKeyStatus', id, ok, ng); }
     };
   }
 

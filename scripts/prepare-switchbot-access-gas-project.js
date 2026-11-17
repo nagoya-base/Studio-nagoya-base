@@ -22,6 +22,7 @@ var FILES = [
   ['AccessKeySnapshot.gs', 'gas/booking/shared/AccessKeySnapshot.gs'],
   ['AccessLedgerReader.gs', 'gas/switchbot-access/AccessLedgerReader.gs'],
   ['SwitchBotAccessInfra.gs', 'gas/switchbot-access/SwitchBotAccessInfra.gs'],
+  ['AccessOpsStatus.gs', 'gas/switchbot-access/AccessOpsStatus.gs'],
   ['SwitchBotAccessApp.gs', 'gas/switchbot-access/SwitchBotAccessApp.gs'],
   ['appsscript.json', 'gas/switchbot-access/appsscript.json']
 ];

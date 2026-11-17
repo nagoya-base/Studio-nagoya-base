@@ -12,7 +12,7 @@ const path = require('node:path');
 
 // 配布物（scripts/prepare-ops-reservations-gas-project.js の出力）。テストが prepare・gas/ops-reservations と一致を確認する。
 const BUNDLE_FILES = [
-  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsNormalizer.gs', 'OpsPage.html', 'OpsQuery.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
+  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsKeyStatus.gs', 'OpsNormalizer.gs', 'OpsPage.html', 'OpsQuery.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
 ];
 // 運営アプリだけが使う権限（Issue #941 追加修正で更新）。
 // 所有者が手動で用意したメモ専用スプレッドシートは、drive.file（このアプリが作成したファイルだけに届く）では読み書きできない。

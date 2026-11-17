@@ -4,7 +4,7 @@
   ★ すべて架空のモックデータです。実バックエンドには接続しません。実際の予約は表示されません。
   画面ロジックは ops-client.js（通信方式に依存しない）、データはモックアダプターから受け取ります。
   Sites 等での本番運用は、共通接続契約を満たす実アダプターと認証付き接続を採用した後に別途結合します。
-  ?scenario=ok|empty|error|diag_api_disabled|not_connected|denied|flaky で予約モックの、
+  ?scenario=ok|empty|error|diag_api_disabled|not_connected|denied|flaky で予約モックの、?key=ok|not_connected|failed|denied で鍵状態モックの、
   ?tasks=ok|empty|not_ready|save_error|conflict|denied でメモ（#941）モックの状態を切り替えて確認できます。
 -->
 <html lang="ja">
@@ -109,7 +109,7 @@
   <script>
     (function () {
       var q = new URLSearchParams(location.search);
-      OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok' }));
+      OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }));
       OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }));
     })();
   </script>
