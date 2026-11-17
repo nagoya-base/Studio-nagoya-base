@@ -34,7 +34,7 @@ var OpsContract = (function () {
     'FORBIDDEN',         // 本人は確認できたが所有者ではない／所有者設定が無い（fail-closed）
     'INVALID_PARAMS',    // 条件・IDの形式が不正
     'NOT_CONNECTED',     // 予約台帳の接続先が未設定
-    'FETCH_FAILED',      // 取得失敗（通信・HTTPエラー等）
+    'FETCH_FAILED',      // 取得失敗（通信・HTTPエラー等）。error.diagnostic に固定の診断コード（#953）
     'SHEET_NOT_FOUND',   // 台帳のシートが無い
     'SCHEMA_MISMATCH',   // 必須列が無い
     'SCHEMA_DUPLICATE',  // 許可項目の列名が重複

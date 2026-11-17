@@ -71,6 +71,11 @@ function sheetWorld(rows, opts) {
     requests.push({ url: url, method: options && options.method, auth: options && options.headers && options.headers.Authorization });
     if (opts.fetchThrows) throw new Error('boom SECRET-ID fake-sheet-id');
     if (opts.httpStatus) return respond({ error: 'SECRET-BODY' }, opts.httpStatus);
+    if (opts.override) {
+      var o = opts.override(decodeURIComponent(url));
+      if (o && o.throws) throw o.throws;
+      if (o) return { getResponseCode: function () { return o.status; }, getContentText: function () { return o.text; } };
+    }
     var decoded = decodeURIComponent(url);
     if (/\?fields=/.test(url)) {
       return respond({ properties: { timeZone: opts.timeZone || 'Asia/Tokyo' }, sheets: opts.noSheet ? [] : [{ properties: { title: 'Bookings' } }] });
@@ -91,7 +96,7 @@ function sheetWorld(rows, opts) {
   return {
     requests: requests,
     UrlFetchApp: { fetch: fetch },
-    ScriptApp: { getOAuthToken: function () { return 'FAKE-TOKEN'; } },
+    ScriptApp: { getOAuthToken: function () { if (opts.tokenThrows) throw new Error('SECRET-TOKEN-ERR'); return 'FAKE-TOKEN'; } },
     PropertiesService: { getScriptProperties: function () { return { getProperty: function (k) { return Object.prototype.hasOwnProperty.call(opts.props || {}, k) ? opts.props[k] : null; } }; } },
     Session: { getActiveUser: function () { return { getEmail: function () { return opts.email === undefined ? 'owner@example.invalid' : opts.email; } }; } }
   };
@@ -529,4 +534,112 @@ test('取得: 行数上限超過は黙って切り捨てず停止する／日時
   assert.strictEqual(res.items[0].endAt, '2026-12-02T02:00:00+09:00');
   var many = []; for (var i = 0; i < 20001; i++) many.push(row({ bookingId: 'M' + i }));
   assert.strictEqual(api(many, {}).sb.opsListReservations({}).error.code, 'TOO_LARGE');
+});
+
+/* ---- 取得失敗の診断（Issue #953）。応答はすべて架空 ---- */
+function googleError(status, httpCode, extra) {
+  return JSON.stringify({ error: Object.assign({ code: httpCode, message: 'SECRET-GOOGLE-MESSAGE fake-sheet-id', status: status }, extra || {}) });
+}
+function errorInfo(reason) {
+  return { details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: reason, domain: 'googleapis.com', metadata: { consumer: 'projects/SECRET-PROJECT', service: 'sheets.googleapis.com' } }] };
+}
+function failAt(stage, spec) {
+  var re = { META: /\?fields=/, HEADER: /\/values\/'Bookings'!1:1\?/, DATA: /\/values:batchGet\?/ }[stage];
+  return function (url) { return re.test(url) ? spec : null; };
+}
+function diagOf(stage, spec, extra) {
+  var t = api([row()], Object.assign({ override: failAt(stage, spec) }, extra || {}));
+  var r = t.sb.opsListReservations({});
+  return { res: r, t: t };
+}
+
+test('診断: HTTPエラーとGoogleの既知reason/statusを許可リストの固定コードへ分類する（API未有効化と一般の403を同一視しない）', function () {
+  var cases = [
+    [{ status: 403, text: googleError('PERMISSION_DENIED', 403, errorInfo('SERVICE_DISABLED')) }, 'META/API_DISABLED/403'],
+    [{ status: 403, text: googleError('PERMISSION_DENIED', 403, { errors: [{ reason: 'accessNotConfigured', domain: 'usageLimits' }] }) }, 'META/API_DISABLED/403'],
+    [{ status: 403, text: googleError('PERMISSION_DENIED', 403, errorInfo('ACCESS_TOKEN_SCOPE_INSUFFICIENT')) }, 'META/SCOPE_INSUFFICIENT/403'],
+    [{ status: 403, text: googleError('PERMISSION_DENIED', 403) }, 'META/PERMISSION_DENIED/403'],
+    [{ status: 403, text: googleError('PERMISSION_DENIED', 403, { errors: [{ reason: 'insufficientPermissions' }] }) }, 'META/PERMISSION_DENIED/403'],
+    [{ status: 403, text: googleError('PERMISSION_DENIED', 403, { errors: [{ reason: 'rateLimitExceeded' }] }) }, 'META/RATE_LIMITED/403'],
+    [{ status: 403, text: '<html>SECRET-BODY</html>' }, 'META/HTTP_403_UNCLASSIFIED/403'],
+    [{ status: 403, text: '{"error":"SECRET-BODY"}' }, 'META/HTTP_403_UNCLASSIFIED/403'],
+    [{ status: 403, text: googleError('SECRET-STATUS', 403, errorInfo('SECRET-REASON')) }, 'META/HTTP_403_UNCLASSIFIED/403'],
+    [{ status: 403, text: googleError('constructor', 403, errorInfo('__proto__')) }, 'META/HTTP_403_UNCLASSIFIED/403'],
+    [{ status: 401, text: googleError('UNAUTHENTICATED', 401) }, 'META/AUTH_REJECTED/401'],
+    [{ status: 401, text: '' }, 'META/AUTH_REJECTED/401'],
+    [{ status: 404, text: googleError('NOT_FOUND', 404) }, 'META/TARGET_NOT_FOUND/404'],
+    [{ status: 400, text: googleError('FAILED_PRECONDITION', 400) }, 'META/BAD_REQUEST/400'],
+    [{ status: 429, text: googleError('RESOURCE_EXHAUSTED', 429) }, 'META/RATE_LIMITED/429'],
+    [{ status: 503, text: googleError('UNAVAILABLE', 503) }, 'META/TRANSIENT/503'],
+    [{ status: 500, text: 'SECRET-BODY' }, 'META/TRANSIENT/500'],
+    [{ status: 418, text: 'SECRET-BODY' }, 'META/HTTP_OTHER'],
+    [{ status: 200, text: '<<SECRET-BODY not json' }, 'META/PARSE_FAILED'],
+    [{ throws: new Error('SECRET-EXC fake-sheet-id') }, 'META/NETWORK_EXCEPTION'],
+    [{ throws: new Error('Authorization is required to perform that action.') }, 'META/EXCEPTION_AUTH_REQUIRED'],
+    [{ throws: 'SECRET-STRING-THROW' }, 'META/NETWORK_EXCEPTION']
+  ];
+  cases.forEach(function (c) {
+    var out = diagOf('META', c[0]);
+    var json = JSON.stringify(out.res);
+    assert.strictEqual(out.res.ok, false, c[1]);
+    assert.strictEqual(out.res.error.code, 'FETCH_FAILED', c[1]);
+    assert.strictEqual(out.res.error.diagnostic.code, c[1]);
+    assert.ok(typeof out.res.error.diagnostic.advice === 'string' && out.res.error.diagnostic.advice.length > 20, c[1]);
+    assert.ok(!/SECRET|fake-sheet-id|FAKE-TOKEN|<html>/.test(json), c[1] + ': ' + json);
+    assert.ok(out.t.sb._logs.every(function (l) { return !/SECRET|fake-sheet-id|FAKE-TOKEN/.test(l); }), c[1]);
+    assert.ok(out.t.sb._logs.some(function (l) { return l.indexOf(c[1]) !== -1; }), c[1] + ' がログの固定コードに残る');
+  });
+  var apiDisabled = diagOf('META', cases[0][0]).res.error.diagnostic;
+  var plain403 = diagOf('META', cases[3][0]).res.error.diagnostic;
+  assert.notStrictEqual(apiDisabled.reason, plain403.reason);
+  assert.notStrictEqual(apiDisabled.advice, plain403.advice);
+  assert.ok(!/有効化/.test(plain403.advice) || /とは限りません/.test(plain403.advice), '一般の403の案内でAPI未有効化と断定しない');
+});
+
+test('診断: 失敗した段階（メタ情報/ヘッダー/データ）と認証トークン取得失敗を区別する', function () {
+  var denied = { status: 403, text: googleError('PERMISSION_DENIED', 403, errorInfo('SERVICE_DISABLED')) };
+  assert.strictEqual(diagOf('META', denied).res.error.diagnostic.code, 'META/API_DISABLED/403');
+  assert.strictEqual(diagOf('HEADER', denied).res.error.diagnostic.code, 'HEADER/API_DISABLED/403');
+  assert.strictEqual(diagOf('DATA', denied).res.error.diagnostic.code, 'DATA/API_DISABLED/403');
+  assert.strictEqual(diagOf('HEADER', { status: 200, text: 'x' }).res.error.diagnostic.stage, 'HEADER');
+  assert.strictEqual(diagOf('DATA', { throws: new Error('x') }).res.error.diagnostic.code, 'DATA/NETWORK_EXCEPTION');
+  var tok = api([row()], { tokenThrows: true }).sb.opsListReservations({});
+  assert.strictEqual(tok.error.diagnostic.code, 'META/TOKEN_UNAVAILABLE');
+  assert.ok(!/SECRET/.test(JSON.stringify(tok)));
+});
+
+test('診断: 詳細要求にも付き、想定外の例外は断定せずUNKNOWN。FETCH_FAILED以外の失敗には付けない', function () {
+  var denied = { status: 403, text: googleError('PERMISSION_DENIED', 403, errorInfo('SERVICE_DISABLED')) };
+  var t = api([row()], { override: failAt('META', denied) });
+  var d = t.sb.opsGetReservation('FAKE-001');
+  assert.strictEqual(d.error.code, 'FETCH_FAILED');
+  assert.strictEqual(d.error.diagnostic.code, 'META/API_DISABLED/403');
+  var sb = loadSandbox({ PropertiesService: { getScriptProperties: function () { return { getProperty: function () { return 'x'; } }; } } });
+  var unknown = sb.OpsApi.handle({ op: 'list', params: {} }, { authenticate: function () { return { ok: true }; }, readLedger: function () { throw new Error('SECRET-UNEXPECTED'); } });
+  assert.strictEqual(unknown.error.code, 'FETCH_FAILED');
+  assert.strictEqual(unknown.error.diagnostic.code, 'UNKNOWN');
+  assert.ok(!/SECRET/.test(JSON.stringify(unknown)));
+  var forged = sb.OpsApi.handle({ op: 'list', params: {} }, { authenticate: function () { return { ok: true }; }, readLedger: function () { var e = new Error('x'); e.opsCode = 'FETCH_FAILED'; e.opsStage = 'SECRET-STAGE'; e.opsReason = 'SECRET-REASON'; e.opsHttp = 999; throw e; } });
+  assert.strictEqual(forged.error.diagnostic.code, 'UNKNOWN');
+  assert.ok(!/SECRET/.test(JSON.stringify(forged)));
+  assert.strictEqual(api([row()], { noSheet: true }).sb.opsListReservations({}).error.diagnostic, undefined);
+});
+
+test('診断: 失敗は成功・0件として返さず、対応案は「時間をおく」だけで終わらない', function () {
+  var cases = [{ status: 503, text: '' }, { throws: new Error('x') }, { status: 200, text: 'x' }, { status: 403, text: '' }];
+  cases.forEach(function (spec) {
+    var r = diagOf('DATA', spec).res;
+    assert.strictEqual(r.ok, false);
+    assert.ok(!('items' in r) && !('counts' in r));
+    assert.ok(/診断コード/.test(r.error.diagnostic.advice), '診断コードの共有など次の行動を含む: ' + r.error.diagnostic.code);
+  });
+});
+
+test('診断: 読み取り専用・許可リストの不変条件（既存のGET限定・scope維持）', function () {
+  var manifest = JSON.parse(readFile('appsscript.json'));
+  assert.deepStrictEqual(manifest.oauthScopes.filter(function (x) { return /spreadsheets/.test(x); }), ['https://www.googleapis.com/auth/spreadsheets.readonly']);
+  assert.strictEqual(manifest.webapp.access, 'MYSELF');
+  var t = api([row()], { override: failAt('DATA', { status: 503, text: '' }) });
+  t.sb.opsListReservations({});
+  t.world.requests.forEach(function (r) { assert.strictEqual(r.method, 'get'); });
 });

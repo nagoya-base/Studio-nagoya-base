@@ -78,6 +78,11 @@
 
     function failure() {
       if (scenario === 'error') return err('FETCH_FAILED', '予約台帳の取得に失敗しました。（モック）');
+      if (scenario === 'diag_api_disabled') {
+        var r = err('FETCH_FAILED', '予約台帳の取得に失敗しました。（モック）');
+        r.error.diagnostic = { code: 'META/API_DISABLED/403', stage: 'META', reason: 'API_DISABLED', http: 403, advice: '（モック）診断コードに応じた対応案がここに表示されます。' };
+        return r;
+      }
       if (scenario === 'not_connected') return err('NOT_CONNECTED', '予約台帳が未接続です。（モック）');
       if (scenario === 'denied') return err('FORBIDDEN', '権限がありません。（モック）');
       if (scenario === 'flaky' && calls > 1) return err('FETCH_FAILED', '予約台帳の取得に失敗しました。（モック）');

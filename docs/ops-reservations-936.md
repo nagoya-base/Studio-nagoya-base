@@ -97,7 +97,7 @@
 - **一覧応答**: `{ ok, contractVersion, fetchedAt, todayJst, applied{scope,service,status,from,to,order}, complete, counts{sheetRows,valid,matched,issues}, serviceStates[{service,label,state}], notConnectedSelected, items[], issues[{row,bookingId,severity,reasons}] }`。`items[]`=`{bookingId, service, serviceLabel, status, statusLabel, date, startAt, endAt, phase, name, people}`。
 - **詳細要求**: `{ op:'detail', id }`（正本の予約ID）。**詳細応答**: `{ ok, contractVersion, fetchedAt, reservation }`（許可項目のみ。シート全列は返さない）。
 - **日時**: `startAt`/`endAt`/`fetchedAt`/作成・更新・確定等は**タイムゾーン付きISO 8601（日本時間 `+09:00`）**。`date`（利用日）は日付のみ（`YYYY-MM-DD`）で別項目。表示は日本時間に固定（フロントは端末のタイムゾーンに依存しない）。`0`と`null`（未入力）は区別する。
-- **エラー**: `{ ok:false, error:{ code, message } }`。`code` は固定: `UNAUTHENTICATED` / `FORBIDDEN`（認証・認可失敗）、`NOT_CONNECTED`（未接続）、`FETCH_FAILED` / `SHEET_NOT_FOUND` / `TOO_LARGE` / `TIMEZONE_UNSUPPORTED`（取得失敗）、`SCHEMA_MISMATCH` / `SCHEMA_DUPLICATE`（スキーマ不整合）、`INVALID_PARAMS`（不正条件）、`NOT_FOUND` / `DUPLICATE_ID`（詳細: 不存在／ID重複）。メッセージに秘密・生の行データ・内部情報は含めない。
+- **エラー**: `{ ok:false, error:{ code, message } }`。`code` は固定: `UNAUTHENTICATED` / `FORBIDDEN`（認証・認可失敗）、`NOT_CONNECTED`（未接続）、`FETCH_FAILED` / `SHEET_NOT_FOUND` / `TOO_LARGE` / `TIMEZONE_UNSUPPORTED`（取得失敗）、`SCHEMA_MISMATCH` / `SCHEMA_DUPLICATE`（スキーマ不整合）、`INVALID_PARAMS`（不正条件）、`NOT_FOUND` / `DUPLICATE_ID`（詳細: 不存在／ID重複）。メッセージに秘密・生の行データ・内部情報は含めない。`FETCH_FAILED` には `error.diagnostic`（`{ code, stage, reason, http, advice }`。固定の診断コード。§9）が付く。
 - **認証の伝達とサーバー検証**: フロントが認証画面/セッションを担当してよいが、所有者かどうかの最終判定はバックエンドが毎回行う（フロントの申告は使わない）。
 
 ## 7. Sites→バックエンドの認証付き接続方式の調査（**未確定・未検証**）
@@ -155,3 +155,21 @@
 | 画面ロジック・契約・認可・拒否・失敗/0件/未接続の区別（架空データの自動テスト） | 実施済み（`test/ops-gas-page.test.js` ほか） |
 | 360〜375px幅のスマホ表示（架空データのブラウザー確認。横スクロールなし） | 実施済み（手元確認） |
 | 実デプロイ・実台帳・所有者アクセス成功・他人の拒否の実環境確認・利用URL | **未実施**（運営者のデプロイと方式判断が前提） |
+
+## 9. 取得失敗の診断コード（Issue #953）
+初回実利用で「予約台帳の取得に失敗しました」と出たが原因を判別できなかったため、**失敗の段階と原因分類を、秘密を含まない固定コードで画面に出す**。GCPプロジェクトや権限は変更しない（診断で根拠が得られた場合だけ、下表に沿って案内する）。
+
+- 形式: `段階/分類[/HTTP]`（例 `META/API_DISABLED/403`）。段階=`META`（メタ情報）/`HEADER`（1行目）/`DATA`（データ列）。呼び出し自体の失敗（台帳取得に入る前）は `CLIENT/CALL_FAILED`。
+- 分類はGoogleの既知の reason/status を**許可リスト**で固定コードへ変換する。応答本文・例外メッセージ・reason/status の生の文字列・ID・トークンは画面・ログ・応答に出さない。許可リスト外・判別不能は `UNKNOWN` または `HTTP_403_UNCLASSIFIED` 等で、**原因を断定しない**。
+- 取得失敗は成功・0件にしない。画面は診断コードと固定の対応案を表示する。
+
+| 分類 | 意味（根拠） | 対応 |
+| --- | --- | --- |
+| `API_DISABLED` | Googleが `SERVICE_DISABLED` / `accessNotConfigured` を返した（このGASのGCPプロジェクトでSheets API無効） | **この根拠が出た場合のみ**GCP側の対応を検討する。デフォルトGCPプロジェクトはコンソールから設定できないため、標準GCPプロジェクトへの切替が必要かを別Issueで判断（本PRでは実施しない） |
+| `SCOPE_INSUFFICIENT` / `EXCEPTION_AUTH_REQUIRED` / `TOKEN_UNAVAILABLE` / `AUTH_REJECTED` | 承認不足・認証拒否 | 所有者本人で専用URLを開き直し、読み取り専用の承認画面が出たら承認（スコープ拡大は不要） |
+| `PERMISSION_DENIED` | 権限拒否（API未有効化とは限らない） | GASの実行アカウントと台帳を開けるアカウントの一致を確認 |
+| `TARGET_NOT_FOUND` / `BAD_REQUEST` | 対象不明・要求不正 | `OPS_SPREADSHEET_ID` がIDのみか、Googleスプレッドシート形式かを確認 |
+| `RATE_LIMITED` / `TRANSIENT` | 回数制限・一時障害の可能性 | 数分あけて1回再取得。同じコードが続く場合は診断コードを共有 |
+| `NETWORK_EXCEPTION` / `PARSE_FAILED` / `HTTP_403_UNCLASSIFIED` / `HTTP_OTHER` / `UNKNOWN` | 判別不能 | 診断コードを共有（原因は断定しない） |
+
+**#936の完了条件**: 診断コードで原因を特定し、接続を直し、所有者が専用URLで予約一覧・詳細を実際に確認するまで、#936は完了にしない。

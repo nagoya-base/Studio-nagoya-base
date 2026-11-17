@@ -4,7 +4,7 @@
   ★ すべて架空のモックデータです。実バックエンドには接続しません。実際の予約は表示されません。
   画面ロジックは ops-client.js（通信方式に依存しない）、データはモックアダプターから受け取ります。
   Sites 等での本番運用は、共通接続契約を満たす実アダプターと認証付き接続を採用した後に別途結合します。
-  ?scenario=ok|empty|error|not_connected|denied|flaky でモックの状態を切り替えて確認できます。
+  ?scenario=ok|empty|error|diag_api_disabled|not_connected|denied|flaky でモックの状態を切り替えて確認できます。
 -->
 <html lang="ja">
 <head>
@@ -27,6 +27,8 @@
     .row2 { grid-column: 1 / -1; display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
     .banner { margin:10px 0; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); font-size:.9rem; overflow-wrap:anywhere; }
     .banner.err { border-color: var(--err); color: var(--err); }
+    .banner .diag { margin-top:6px; color:var(--fg); font-size:.85rem; }
+    .banner .diag code { font-weight:600; }
     .banner.stale { border-color: var(--warn); color: var(--warn); }
     .cards { list-style:none; padding:0; margin:0; display:grid; gap:10px; }
     .card { display:block; width:100%; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; overflow-wrap:anywhere; }

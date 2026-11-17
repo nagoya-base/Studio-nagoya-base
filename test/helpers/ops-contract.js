@@ -27,6 +27,12 @@ function validateError(res) {
   check(res && res.error && ERROR_CODES.indexOf(res.error.code) !== -1, 'error.code が固定コード: ' + (res && res.error && res.error.code), problems);
   check(res && res.error && typeof res.error.message === 'string' && res.error.message.length > 0, 'error.message', problems);
   check(Object.keys(res || {}).sort().join() === 'error,ok', 'エラー応答は ok と error だけ', problems);
+  var d = res && res.error && res.error.diagnostic;
+  if (d !== undefined) {
+    check(d && /^(?:(?:META|HEADER|DATA|CLIENT)\/)?[A-Z][A-Z0-9_]{1,40}(?:\/\d{3})?$/.test(d.code), '診断コードは固定形式: ' + (d && d.code), problems);
+    check(d && typeof d.advice === 'string' && d.advice.length > 0, '診断の対応案', problems);
+    check(res.error.code === 'FETCH_FAILED', '診断は FETCH_FAILED にだけ付く', problems);
+  }
   return problems;
 }
 
