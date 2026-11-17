@@ -50,7 +50,7 @@ function tick() { return new Promise(function (resolve) { setTimeout(resolve, 5)
 
 /* ---- 契約: モック応答 ---- */
 test('モック: 全シナリオの応答が共通接続契約を満たし、画面に「モック」と表示される', async function () {
-  var scenarios = ['ok', 'empty', 'error', 'not_connected', 'denied'];
+  var scenarios = ['ok', 'empty', 'error', 'diag_api_disabled', 'not_connected', 'denied'];
   for (var i = 0; i < scenarios.length; i++) {
     var api = Mock.createMockApi({ scenario: scenarios[i], nowMs: NOW });
     var list = await new Promise(function (resolve) { api.list({}, resolve); });
@@ -405,4 +405,41 @@ test('境界: フロントのモックページは架空・非インデックス
   });
   assert.ok(!/_ops-app/.test(fs.readFileSync(path.join(ROOT, 'sitemap.xml'), 'utf8')));
   assert.ok(!/_ops-app/.test(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')));
+});
+
+test('画面(#953): 診断コードと対応案を表示し、形式外の文字列や生のエラー本文は表示しない', function () {
+  var diag = { code: 'META/API_DISABLED/403', stage: 'META', reason: 'API_DISABLED', http: 403, advice: '固定の対応案です。<b>診断コード</b>を共有してください。' };
+  var a = fakeApi(), ctl = C.createController(a);
+  ctl.load({});
+  a.pending.list[0].ok({ ok: false, error: { code: 'FETCH_FAILED', message: '予約台帳の取得に失敗しました。', diagnostic: diag } });
+  var html = C.renderBanner(ctl.state);
+  assert.strictEqual(ctl.state.phase, 'error');
+  assert.ok(/診断コード: <code>META\/API_DISABLED\/403<\/code>/.test(html), html);
+  assert.ok(/固定の対応案です/.test(html) && !/<b>/.test(html), '対応案もエスケープする');
+  assert.ok(!/0件/.test(C.renderView(ctl.state)));
+  /* 形式外のコードは表示しない（サーバー応答に混入した任意文字列を画面へ出さない）。 */
+  ['SECRET raw error body', '<script>x</script>', 'meta/api_disabled', 'META/API_DISABLED/40333', 'a'.repeat(80)].forEach(function (bad) {
+    var b = fakeApi(), c2 = C.createController(b);
+    c2.load({});
+    b.pending.list[0].ok({ ok: false, error: { code: 'FETCH_FAILED', message: '取得に失敗', diagnostic: { code: bad, advice: 'SECRET-ADVICE' } } });
+    var out = C.renderBanner(c2.state);
+    assert.ok(!/診断コード/.test(out) && !/SECRET|script/.test(out), bad);
+  });
+});
+
+test('画面(#953): 呼び出し自体の失敗は台帳取得の失敗と区別できる固定コードを出す。詳細の失敗にも診断を出す', function () {
+  var a = fakeApi(), ctl = C.createController(a);
+  ctl.load({});
+  a.pending.list[0].ng();
+  assert.strictEqual(ctl.state.phase, 'error');
+  assert.ok(/診断コード: <code>CLIENT\/CALL_FAILED<\/code>/.test(C.renderBanner(ctl.state)));
+  var b = fakeApi(), c2 = C.createController(b);
+  c2.load({});
+  b.pending.list[0].ok(okList([item()]));
+  c2.openDetail('FAKE-001');
+  b.pending.detail[0].ok({ ok: false, error: { code: 'FETCH_FAILED', message: '取得に失敗しました。', diagnostic: { code: 'DATA/TRANSIENT/503', advice: '案内' } } });
+  assert.strictEqual(c2.state.detailPhase, 'error');
+  assert.ok(/診断コード: <code>DATA\/TRANSIENT\/503<\/code>/.test(C.renderView(c2.state)));
+  assert.deepStrictEqual(contract.validateError({ ok: false, error: { code: 'FETCH_FAILED', message: 'x', diagnostic: { code: 'DATA/TRANSIENT/503', advice: '案内' } } }), []);
+  assert.ok(contract.validateError({ ok: false, error: { code: 'FORBIDDEN', message: 'x', diagnostic: { code: 'DATA/TRANSIENT/503', advice: '案内' } } }).length > 0);
 });

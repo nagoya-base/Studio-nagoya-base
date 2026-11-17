@@ -85,7 +85,7 @@
         emit();
       }, function () {
         if (mine !== listSeq) return;
-        fail({ code: 'FETCH_FAILED', message: '取得に失敗しました。通信状況を確認して再取得してください。' });
+        fail({ code: 'FETCH_FAILED', message: '取得に失敗しました。', diagnostic: CLIENT_CALL_FAILED });
         emit();
       });
     }
@@ -104,12 +104,23 @@
         emit();
       }, function () {
         if (mine !== detailSeq) return;
-        state.detailPhase = 'error'; state.detailError = { message: '取得に失敗しました。' };
+        state.detailPhase = 'error'; state.detailError = { message: '取得に失敗しました。', diagnostic: CLIENT_CALL_FAILED };
         emit();
       });
     }
     function closeDetail() { detailSeq++; state.detailId = null; state.detail = null; state.detailPhase = 'idle'; state.detailError = null; emit(); }
     return { state: state, load: load, openDetail: openDetail, closeDetail: closeDetail };
+  }
+
+  /* 取得失敗の診断コード（#953）。サーバーが返す固定形式（STAGE/REASON[/HTTP]）だけを表示し、
+     形式外の文字列は表示しない（生のエラー本文を画面へ出さない）。対応案はサーバー側の固定文。 */
+  var DIAG_CODE_RE = /^(?:(?:META|HEADER|DATA|CLIENT)\/)?[A-Z][A-Z0-9_]{1,40}(?:\/\d{3})?$/;
+  var CLIENT_CALL_FAILED = { code: 'CLIENT/CALL_FAILED', advice: '画面からバックエンドへの呼び出しに失敗しました（台帳の取得に入る前の失敗です）。専用URLを開き直し、Googleのログイン・承認画面が出たら完了してから再取得してください。続く場合はこの診断コードを開発担当へ共有してください。' };
+  function renderDiag(err) {
+    var d = err && err.diagnostic;
+    if (!d || typeof d.code !== 'string' || !DIAG_CODE_RE.test(d.code)) return '';
+    var advice = typeof d.advice === 'string' ? d.advice : '';
+    return '<div class="diag">診断コード: <code>' + esc(d.code) + '</code>' + (advice ? '<br>' + esc(advice) : '') + '</div>';
   }
 
   function renderBanner(state) {
@@ -118,7 +129,7 @@
     if (state.phase === 'loading') html += '<div class="banner">取得中…</div>';
     if (state.phase === 'denied') html += '<div class="banner err">' + esc(state.error.message) + '（予約情報は表示しません）</div>';
     if (state.phase === 'error' || state.phase === 'not_connected') {
-      html += '<div class="banner err">' + esc(state.error.message) + '</div>';
+      html += '<div class="banner err">' + esc(state.error.message) + renderDiag(state.error) + '</div>';
       if (state.stale) html += '<div class="banner stale">古いデータを表示しています（最終取得成功: ' + esc(jstText(state.lastSuccessAt, true) || state.lastSuccessAt) + ' JST）。最新ではありません。</div>';
     }
     if (state.phase === 'ready' && state.data) html += '<div class="banner">最終取得成功: ' + esc(jstText(state.lastSuccessAt, true) || state.lastSuccessAt) + ' JST</div>';
@@ -165,7 +176,7 @@
     if (state.detailPhase === 'idle') return '';
     var html = '<div class="banner"><button type="button" id="detail-close">一覧へ戻る</button></div>';
     if (state.detailPhase === 'loading') return html + '<div class="banner">取得中…</div>';
-    if (state.detailPhase === 'error') return html + '<div class="banner err">' + esc(state.detailError.message) + '</div>';
+    if (state.detailPhase === 'error') return html + '<div class="banner err">' + esc(state.detailError.message) + renderDiag(state.detailError) + '</div>';
     var r = state.detail;
     var price = r.effectivePriceAmount === null ? '<span class="empty">未計算</span>' : esc(r.effectivePriceAmount) + '円' + (r.priceOverridden ? '（修正済み）' : '');
     var rows = [
