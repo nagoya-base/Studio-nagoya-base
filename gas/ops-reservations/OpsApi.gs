@@ -1,9 +1,10 @@
 /*
- * OpsApi.gs — バックエンドの要求処理（Issue #936）。読み取り専用。通信方式に依存しない。
+ * OpsApi.gs — バックエンドの要求処理（Issue #936 / #941）。通信方式に依存しない。
+ * 予約台帳は読み取り専用（#936）。書込みはメモ（#941）の専用保存先だけで、予約台帳には書かない。
  *
  * handle(request, ctx) が共通の接続契約の入口:
- *   request: { op: 'list', params } | { op: 'detail', id }
- *   ctx:     { authenticate, readLedger }（省略時は GAS Session 認証器 / Sheets API 読み取り）
+ *   request: { op: 'list', params } | { op: 'detail', id } | { op: 'tasks_list' | 'task_save' | 'task_delete', ... }（OpsTasks.gs）
+ *   ctx:     { authenticate, readLedger, tasks }（省略時は GAS Session 認証器 / Sheets API 読み取り / 専用保存先）
  *   戻り値:  { ok: true, ...} | { ok: false, error: { code, message } }（codeは OpsContract.ERROR_CODES）
  * 全要求で毎回認可し、拒否時は予約情報を一切返さない。ログは件数と固定コードのみ。
  * GAS専用の入口（doGet / opsListReservations / opsGetReservation）はこのファイル末尾の薄いアダプターで、
@@ -74,6 +75,28 @@ var OpsApi = (function () {
         fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
         getToken: function () { return ScriptApp.getOAuthToken(); }
       })
+    };
+  }
+
+  /*
+   * メモ（Issue #941）の既定の保存先（GAS）。保存先IDはサーバー側のScript Property（OPS_TASKS_SPREADSHEET_ID）だけ。
+   * 端末から受け取らない。排他はスクリプトロック（取れなければ busy）。ロックが使えない場合は例外→保存せず失敗扱い。
+   */
+  function tasksGas_() {
+    var props = PropertiesService.getScriptProperties();
+    return {
+      store: OpsTasksStore.create({
+        getSpreadsheetId: function () { return props.getProperty('OPS_TASKS_SPREADSHEET_ID'); },
+        setSpreadsheetId: function (id) { props.setProperty('OPS_TASKS_SPREADSHEET_ID', id); },
+        getLedgerId: function () { return props.getProperty('OPS_SPREADSHEET_ID'); },
+        fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
+        getToken: function () { return ScriptApp.getOAuthToken(); }
+      }),
+      withLock: function (fn) {
+        var lock = LockService.getScriptLock();
+        if (!lock.tryLock(15000)) return { busy: true };
+        try { return fn(); } finally { lock.releaseLock(); }
+      }
     };
   }
 
@@ -160,6 +183,10 @@ var OpsApi = (function () {
     var op = request && request.op;
     if (op === 'list') return list_(request.params, full, nowMs);
     if (op === 'detail') return detail_(request.id, full, nowMs);
+    /* メモ（Issue #941）。認可は上で済み。予約台帳（readLedger）には触れず、専用の保存先だけを使う。 */
+    if (op === 'tasks_list' || op === 'task_save' || op === 'task_delete') {
+      return OpsTasks.handle(request, context.tasks || tasksGas_(), nowMs);
+    }
     return error_('INVALID_PARAMS', '要求の種類が不正です。');
   }
 
@@ -175,6 +202,17 @@ function doGet() {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-/* google.script.run から呼ぶ公開関数（読み取り専用）。 */
+/* google.script.run から呼ぶ公開関数。予約（opsListReservations / opsGetReservation）は読み取り専用。 */
 function opsListReservations(params) { return OpsApi.handle({ op: 'list', params: params }); }
 function opsGetReservation(bookingId) { return OpsApi.handle({ op: 'detail', id: bookingId }); }
+
+/* メモ（Issue #941）。毎回、所有者認可を通す。書込み先は専用スプレッドシートのTasks表に固定。 */
+function opsListTasks() { return OpsApi.handle({ op: 'tasks_list' }); }
+function opsSaveTask(payload) {
+  var p = payload && typeof payload === 'object' ? payload : {};
+  return OpsApi.handle({ op: 'task_save', input: p.input, expectedRevision: p.expectedRevision });
+}
+function opsDeleteTask(payload) {
+  var p = payload && typeof payload === 'object' ? payload : {};
+  return OpsApi.handle({ op: 'task_delete', taskId: p.taskId, expectedRevision: p.expectedRevision });
+}

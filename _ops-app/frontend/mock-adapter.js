@@ -5,6 +5,7 @@
  *   画面には常に「モックデータ」の表示が出ます。
  * 共通接続契約（docs/ops-reservations-936.md §6）と同じ形の応答を返します。実バックエンドには接続しません。
  * scenario: 'ok'（既定）| 'empty' | 'error' | 'not_connected' | 'denied' | 'flaky'（初回成功→以降失敗＝古いデータ表示の確認）
+ * メモ（#941）のモックは createMockTasksApi（?tasks=ok|empty|not_ready|save_error|conflict|denied）。
  */
 (function (root, factory) {
   var api = factory();
@@ -131,5 +132,104 @@
     };
   }
 
-  return { createMockApi: createMockApi };
+  /*
+   * メモ（Issue #941）のモック。メモリ上だけに保存する架空データで、再読込で消える（実際のメモは保存されない）。
+   * バックエンドと同じ契約: 版番号による競合、新規の冪等（同じIDの同内容は保存済み扱い）、状態/期限超過の判定。
+   * scenario: 'ok' | 'empty' | 'not_ready'（保存先未作成）| 'save_error'（保存が必ず失敗）| 'conflict'（更新が必ず競合）| 'denied'
+   */
+  var TASK_STATUS_LABELS = { todo: '未対応', doing: '対応中', done: '完了' };
+  var TASK_CONTENT = ['title', 'bookingId', 'service', 'status', 'memo', 'dueDate', 'evidenceUrl'];
+
+  function createMockTasksApi(options) {
+    var opts = options || {};
+    var scenario = opts.scenario || 'ok';
+    var nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
+    var defer = opts.defer || function (fn) { setTimeout(fn, 0); };
+    var day = 24 * 3600 * 1000;
+    var ready = scenario !== 'not_ready' && scenario !== 'empty';
+    var tasks = scenario === 'ok' || scenario === 'save_error' || scenario === 'conflict' ? [
+      { taskId: 'T-mockaaaa0001', title: '（モック）DM返信の確認', bookingId: '', service: '', status: 'todo', memo: '件名とリンクだけ登録する例', dueDate: dayText(nowMs - 2 * day), evidenceUrl: 'https://example.com/mock-dm', createdAt: isoNow(nowMs - 3 * day), updatedAt: isoNow(nowMs - 3 * day), revision: 1 },
+      { taskId: 'T-mockaaaa0002', title: '（モック）撮影の機材確認', bookingId: 'MOCK-001', service: 'snb', status: 'doing', memo: '', dueDate: dayText(nowMs + 2 * day), evidenceUrl: '', createdAt: isoNow(nowMs - day), updatedAt: isoNow(nowMs - day), revision: 1 },
+      { taskId: 'T-mockaaaa0003', title: '（モック）完了済みの例', bookingId: '', service: '', status: 'done', memo: '', dueDate: '', evidenceUrl: '', createdAt: isoNow(nowMs - 9 * day), updatedAt: isoNow(nowMs - 8 * day), revision: 2 }
+    ] : [];
+
+    function decorate(t) {
+      var open = t.status !== 'done';
+      return Object.assign({}, t, { statusLabel: TASK_STATUS_LABELS[t.status], overdue: open && t.dueDate !== '' && t.dueDate < dayText(nowMs), stale: false });
+    }
+    function rank(t) { return t.status === 'done' ? 2 : t.overdue ? 0 : 1; }
+    function view() {
+      var items = tasks.map(decorate).sort(function (a, b) {
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        var ad = a.dueDate || '9999-99-99', bd = b.dueDate || '9999-99-99';
+        if (rank(a) !== 2 && ad !== bd) return ad < bd ? -1 : 1;
+        return a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0;
+      });
+      return {
+        ok: true, contractVersion: 1, source: 'mock', fetchedAt: isoNow(nowMs), todayJst: dayText(nowMs), retentionDays: 180,
+        statuses: [{ value: 'todo', label: '未対応' }, { value: 'doing', label: '対応中' }, { value: 'done', label: '完了' }],
+        storeReady: ready, items: items,
+        counts: {
+          open: items.filter(function (t) { return t.status !== 'done'; }).length, overdue: items.filter(function (t) { return t.overdue; }).length,
+          done: items.filter(function (t) { return t.status === 'done'; }).length, stale: 0
+        },
+        skippedRows: 0, purge: { deleted: 0, failed: false }
+      };
+    }
+    function same(a, b) { return TASK_CONTENT.every(function (k) { return String(a[k] || '') === String(b[k] || ''); }); }
+    function byId(id) { return tasks.filter(function (t) { return t.taskId === id; })[0] || null; }
+    function denied() { return scenario === 'denied' ? err('FORBIDDEN', '権限がありません。（モック）') : null; }
+
+    return {
+      kind: 'mock',
+      list: function (ok) {
+        defer(function () { ok(denied() || view()); });
+      },
+      save: function (payload, ok) {
+        defer(function () {
+          var d = denied();
+          if (d) return ok(d);
+          if (scenario === 'save_error') return ok(err('STORE_FAILED', 'メモの保存先との通信に失敗しました。保存できたか確認できていません。（モック）'));
+          var input = (payload && payload.input) || {};
+          var expected = payload ? payload.expectedRevision : null;
+          if (!input.title || !String(input.title).trim()) return ok(err('INVALID_PARAMS', '件名は必須です。（モック）'));
+          var existing = byId(input.taskId);
+          var now = isoNow(nowMs);
+          if (expected === null || expected === undefined) {
+            if (existing) {
+              if (same(existing, input)) return ok({ ok: true, task: decorate(existing), replayed: true, fetchedAt: now });
+              return ok(Object.assign(err('CONFLICT', '別の端末・操作で先に更新されています。上書きはしていません。（モック）'), {}));
+            }
+            ready = true;
+            var made = { taskId: input.taskId, title: String(input.title).trim(), bookingId: input.bookingId || '', service: input.service || '', status: input.status || 'todo', memo: input.memo || '', dueDate: input.dueDate || '', evidenceUrl: input.evidenceUrl || '', createdAt: now, updatedAt: now, revision: 1 };
+            tasks.push(made);
+            return ok({ ok: true, task: decorate(made), fetchedAt: now });
+          }
+          if (!existing) return ok(err('NOT_FOUND', '該当するメモが見つかりません。（モック）'));
+          if (scenario === 'conflict' || existing.revision !== expected) {
+            var c = err('CONFLICT', '別の端末・操作で先に更新されています。上書きはしていません。（モック）');
+            c.error.current = decorate(existing);
+            return ok(c);
+          }
+          TASK_CONTENT.forEach(function (k) { existing[k] = input[k] === undefined || input[k] === null ? '' : input[k]; });
+          existing.updatedAt = now; existing.revision += 1;
+          ok({ ok: true, task: decorate(existing), fetchedAt: now });
+        });
+      },
+      remove: function (payload, ok) {
+        defer(function () {
+          var d = denied();
+          if (d) return ok(d);
+          if (scenario === 'save_error') return ok(err('STORE_FAILED', 'メモの保存先との通信に失敗しました。（モック）'));
+          var existing = byId(payload && payload.taskId);
+          if (!existing) return ok({ ok: true, deleted: false, alreadyDeleted: true, fetchedAt: isoNow(nowMs) });
+          if (existing.revision !== payload.expectedRevision) { var c = err('CONFLICT', '別の端末・操作で先に更新されています。上書きはしていません。（モック）'); c.error.current = decorate(existing); return ok(c); }
+          tasks = tasks.filter(function (t) { return t !== existing; });
+          ok({ ok: true, deleted: true, fetchedAt: isoNow(nowMs) });
+        });
+      }
+    };
+  }
+
+  return { createMockApi: createMockApi, createMockTasksApi: createMockTasksApi };
 });

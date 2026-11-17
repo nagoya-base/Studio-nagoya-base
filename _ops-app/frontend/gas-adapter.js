@@ -2,7 +2,8 @@
  * gas-adapter.js — 共通接続契約のGAS実アダプター（Issue #936）。
  *
  * GASのWebアプリ内（HtmlService配信）でだけ使う。google.script.run はここに閉じ込め、画面ロジック
- * （ops-client.js）は契約 { list, detail } だけに依存する。呼ぶのは読み取り専用の2関数のみ。
+ * （ops-client.js）は契約 { list, detail } だけに依存する。予約は読み取り専用の2関数のみ。
+ * メモ（#941）は createGasTasksApi（一覧・保存・削除の3関数。保存先は専用スプレッドシートに固定）。
  * 失敗ハンドラは通信失敗を「取得に失敗」として扱う（0件・正常にはしない）。応答の中身は検証せず
  * バックエンドの応答をそのまま渡す（権限判定はサーバー側）。
  */
@@ -29,5 +30,26 @@
     };
   }
 
-  return { createGasApi: createGasApi };
+  /*
+   * メモ（Issue #941）用のGASアダプター。保存・削除は端末の項目と版番号だけを渡し、保存先のID・範囲・
+   * 権限は一切渡さない（サーバーが毎回、所有者認可して専用の保存先に固定して書く）。
+   * 通信失敗は ng として通知する。成功か失敗かの判断（保存を確認できたか）は応答の ok だけに基づく。
+   */
+  function createGasTasksApi(runner) {
+    function call(name, arg, ok, ng) {
+      try {
+        runner.withSuccessHandler(ok).withFailureHandler(ng)[name](arg);
+      } catch (e) {
+        ng(e);
+      }
+    }
+    return {
+      kind: 'gas',
+      list: function (ok, ng) { call('opsListTasks', {}, ok, ng); },
+      save: function (payload, ok, ng) { call('opsSaveTask', payload, ok, ng); },
+      remove: function (payload, ok, ng) { call('opsDeleteTask', payload, ok, ng); }
+    };
+  }
+
+  return { createGasApi: createGasApi, createGasTasksApi: createGasTasksApi };
 });

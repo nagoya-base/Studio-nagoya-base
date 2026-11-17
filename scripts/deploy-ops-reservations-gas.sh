@@ -194,5 +194,5 @@ else
 fi
 summary "- 処理日時: $(now_stamp)"
 summary "- 利用URL: 変わりません（同じDeployment IDを更新し、更新後に同一IDで照合済み）。公開ログにはURL・IDを出しません。一度ブックマークしたURLがそのまま使えます"
-summary "- 設定: 所有者のみ・実行者=デプロイ者・読み取り専用scopeを維持（配布物のmanifestを検査し、pushしたソースを照合済み）。Script Properties（所有者・台帳接続先）・トリガーは未操作"
+summary "- 設定: 所有者のみ・実行者=デプロイ者・承認済みscope（予約台帳は読み取り専用、メモ専用ファイルのdrive.file）のみ（配布物のmanifestを検査し、pushしたソースを照合済み）。Script Properties（所有者・台帳接続先）・トリガーは未操作"
 summary "- 区別: これは機械的な更新成功です。スマホで実際に一覧・詳細が表示されることの確認（画面の実利用確認）は別に行ってください"

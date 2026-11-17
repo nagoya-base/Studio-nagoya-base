@@ -96,11 +96,13 @@ test('bundle: lib BUNDLE_FILES equals prepare output and gas/ops-reservations; t
   assert.ok(!fs.readdirSync(dir).some((n) => /^(Booking|Survey|SwitchBot|Access)|\.test\.|\.log$|\.env|clasp/i.test(n)));
 });
 
-test('bundle/manifest: owner-only, read-only scopes, only the exact Sheets v4 advanced service; extras, missing or empty files are rejected', () => {
+test('bundle/manifest: owner-only, ledger read-only + drive.file for the memo file only, only the exact Sheets v4 advanced service; extras, missing or empty files are rejected', () => {
   const m = JSON.parse(fs.readFileSync(path.join(root, 'gas/ops-reservations/appsscript.json'), 'utf8'));
   assert.deepEqual(m.webapp, { access: 'MYSELF', executeAs: 'USER_DEPLOYING' });
   assert.deepEqual(m.oauthScopes.slice().sort(), lib.APPROVED_SCOPES.slice().sort());
-  assert.ok(!m.oauthScopes.some((s) => /auth\/(spreadsheets|drive|drive\.file|gmail\.\w+|script\.scriptapp|script\.send_mail|script\.container\.ui)$/.test(s)), 'no write/mail/trigger scope');
+  assert.ok(!m.oauthScopes.some((s) => /auth\/(spreadsheets|drive|gmail\.\w+|script\.scriptapp|script\.send_mail|script\.container\.ui)$/.test(s)), 'no broad write/mail/trigger scope (whole-Sheets write and whole-Drive are not approved)');
+  assert.ok(m.oauthScopes.includes('https://www.googleapis.com/auth/spreadsheets.readonly'), 'the ledger stays read-only');
+  assert.ok(m.oauthScopes.includes('https://www.googleapis.com/auth/drive.file'), '#941: only files this app created (the memo file)');
   const fresh = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-b2-')); prepare.prepareProject(d); return d; };
   let d = fresh(); fs.writeFileSync(path.join(d, 'BookingCore.gs'), 'x');
   assert.equal(lib.checkBundle(d), 'BUNDLE_FILE_SET_MISMATCH');
@@ -112,6 +114,8 @@ test('bundle/manifest: owner-only, read-only scopes, only the exact Sheets v4 ad
   assert.equal(lib.checkBundle(mutate((j) => { j.webapp.access = 'ANYONE_ANONYMOUS'; })), 'BUNDLE_MANIFEST_NOT_OWNER_ONLY');
   assert.equal(lib.checkBundle(mutate((j) => { j.webapp.executeAs = 'USER_ACCESSING'; })), 'BUNDLE_MANIFEST_NOT_OWNER_ONLY');
   assert.equal(lib.checkBundle(mutate((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/spreadsheets'); })), 'BUNDLE_MANIFEST_SCOPE_NOT_APPROVED');
+  assert.equal(lib.checkBundle(mutate((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/drive'); })), 'BUNDLE_MANIFEST_SCOPE_NOT_APPROVED');
+  assert.equal(lib.checkBundle(mutate((j) => { j.oauthScopes = j.oauthScopes.filter((x) => !/drive\.file/.test(x)); })), 'BUNDLE_MANIFEST_SCOPE_NOT_APPROVED', 'dropping an approved scope is also a mismatch (exact set)');
   assert.equal(lib.checkBundle(mutate((j) => { j.oauthScopes.pop(); })), 'BUNDLE_MANIFEST_SCOPE_NOT_APPROVED');
   assert.deepEqual(m.dependencies, { enabledAdvancedServices: [{ userSymbol: 'Sheets', serviceId: 'sheets', version: 'v4' }] });
   assert.equal(lib.checkBundle(fresh()), 'OK');
@@ -172,6 +176,8 @@ test('manifest: remote webapp settings must match; remote with unapproved scopes
   assert.equal(check((j) => { delete j.webapp; }), 'MANIFEST_WEBAPP_MISMATCH');
   assert.equal(check((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/spreadsheets'); }), 'MANIFEST_REMOTE_UNAPPROVED_SCOPE');
   assert.equal(check((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/gmail.send'); }), 'MANIFEST_REMOTE_UNAPPROVED_SCOPE');
+  assert.equal(check((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/drive'); }), 'MANIFEST_REMOTE_UNAPPROVED_SCOPE');
+  assert.equal(check((j) => { j.oauthScopes = ['https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/userinfo.email']; }), 'OK', '#941: the previously approved read-only deployment can be updated to the new scope set');
   // 初回移行: remote 未宣言（無し/空）→ 新manifestへ。Sheets v4 のみ既存でも可。
   assert.equal(check((j) => { delete j.dependencies; }), 'OK');
   assert.equal(check((j) => { j.dependencies = {}; }), 'OK');

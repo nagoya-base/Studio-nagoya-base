@@ -52,10 +52,10 @@ test('生成物: OpsPage.html は _ops-app/frontend/ の正本と一致し、モ
   assert.ok(!/<script[^>]+src=/.test(page), '外部スクリプトを読み込まない');
 });
 
-test('生成物: 書き込み系・秘密情報・外部送信を含まない（呼ぶのは読み取り2関数だけ）', function () {
+test('生成物: 秘密情報・外部送信を含まない（呼ぶのは予約の読み取り2関数とメモの3関数だけ）', function () {
   var page = fs.readFileSync(builder.OUT, 'utf8');
   var names = (page.match(/'ops[A-Za-z]+'/g) || []).sort();
-  assert.deepStrictEqual(names, ["'opsGetReservation'", "'opsListReservations'"]);
+  assert.deepStrictEqual(names, ["'opsDeleteTask'", "'opsGetReservation'", "'opsListReservations'", "'opsListTasks'", "'opsSaveTask'"]);
   var code = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
   assert.ok(!/fetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|document\.cookie/.test(code));
   assert.ok(!/OPS_OWNER_EMAIL|OPS_SPREADSHEET_ID|Bearer |api[_-]?key/i.test(code));
