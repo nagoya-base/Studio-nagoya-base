@@ -92,7 +92,6 @@ jobs:
       - name: Repository tests pass as the isolated user (same command as the production workflow)
         run: |
           set -euo pipefail
-          exec 2> >(tee -a "$RUNNER_TEMP/isolation-timing.log" >&2)
           bash scripts/run-booking-tests-isolated.sh repository-tests
           for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
             if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
@@ -103,7 +102,6 @@ jobs:
           BOOKING_ISOLATION_PREWARM: '0' # 直前のリポジトリテストで既に温まっている。
         run: |
           set -euo pipefail
-          exec 2> >(tee -a "$RUNNER_TEMP/isolation-timing.log" >&2)
           sudo mkdir -p /srv/booking-isolation-canary
           sudo chmod 1777 /srv/booking-isolation-canary
           BOOKING_ISOLATION_CANARY=/srv/booking-isolation-canary \
@@ -180,9 +178,3 @@ jobs:
             if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
           done > "$RUNNER_TEMP/host-state-after.txt"
           diff "$RUNNER_TEMP/host-state-before.txt" "$RUNNER_TEMP/host-state-after.txt"
-      # Issue #950（計測専用・最終版で削除）: 区間別の経過時間（ミリ秒のみ）をjobログの末尾にまとめて出す。
-      - name: Timing summary (measurement only)
-        if: always()
-        run: |
-          echo "TIMING_SUMMARY"
-          grep -h '_TIMING ' "$RUNNER_TEMP/isolation-timing.log" 2>/dev/null | cut -c1-120 || true
