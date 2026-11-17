@@ -21,10 +21,36 @@ var OpsTasksStore = (function () {
   var LAST_COL = 'K';
   var ID_PATTERN = /^[A-Za-z0-9_-]{20,100}$/;
 
-  function fail_(reason, http) {
+  /*
+   * HTTPエラーの原因分類（Issue #941 / #953と同じ方針）。応答本文は**判定にだけ使い**、保持・出力しない。
+   * 結果は許可リストの固定語（reasonコードの末尾）だけ。判定できなければ付けない（原因を断定しない）。
+   */
+  var REASON_CLASSES = {
+    ACCESS_TOKEN_SCOPE_INSUFFICIENT: 'SCOPE_INSUFFICIENT', insufficientPermissions: 'PERMISSION_DENIED',
+    SERVICE_DISABLED: 'API_DISABLED', accessNotConfigured: 'API_DISABLED',
+    rateLimitExceeded: 'RATE_LIMITED', userRateLimitExceeded: 'RATE_LIMITED', RATE_LIMIT_EXCEEDED: 'RATE_LIMITED'
+  };
+  var STATUS_CLASSES = { PERMISSION_DENIED: 'PERMISSION_DENIED', FAILED_PRECONDITION: 'PRECONDITION', RESOURCE_EXHAUSTED: 'RATE_LIMITED' };
+  function own_(map, key) { return typeof key === 'string' && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null; }
+  function classifyBody_(text) {
+    var body;
+    try { body = JSON.parse(text); } catch (e) { return null; }
+    var err = body && typeof body === 'object' ? body.error : null;
+    if (!err || typeof err !== 'object') return null;
+    var found = null;
+    [].concat(Array.isArray(err.details) ? err.details : [], Array.isArray(err.errors) ? err.errors : []).forEach(function (d) {
+      if (!found && d && typeof d === 'object') found = own_(REASON_CLASSES, d.reason);
+    });
+    /* 保護された範囲への書込み拒否は、メッセージの既知の言い回しだけで識別する（本文は出さない）。 */
+    if (!found && typeof err.message === 'string' && /protected cell or object/i.test(err.message)) found = 'PROTECTED_RANGE';
+    if (!found && typeof err.message === 'string' && /operation is not supported for this document/i.test(err.message)) found = 'UNSUPPORTED_FILE';
+    return found || own_(STATUS_CLASSES, err.status);
+  }
+
+  function fail_(reason, http, cls) {
     var e = new Error('store');
     e.opsCode = 'STORE_FAILED';
-    e.opsReason = reason + (typeof http === 'number' ? '/' + http : '');
+    e.opsReason = reason + (typeof http === 'number' ? '/' + http : '') + (typeof cls === 'string' && /^[A-Z_]{1,24}$/.test(cls) ? '/' + cls : '');
     return e;
   }
 
@@ -49,7 +75,11 @@ var OpsTasksStore = (function () {
       var res;
       try { res = deps.fetch(url, options); } catch (e1) { throw fail_(reason + '_NETWORK'); }
       var status = res.getResponseCode();
-      if (status !== 200) throw fail_(reason + '_HTTP', status);
+      if (status !== 200) {
+        var cls = null;
+        try { cls = classifyBody_(res.getContentText()); } catch (e3) { cls = null; }
+        throw fail_(reason + '_HTTP', status, cls);
+      }
       try { return JSON.parse(res.getContentText()); } catch (e2) { throw fail_(reason + '_PARSE'); }
     }
 

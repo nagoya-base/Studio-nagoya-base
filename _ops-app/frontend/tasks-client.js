@@ -25,7 +25,7 @@
   function withHint(err) {
     var m = (err && err.message) || '';
     if (err && typeof err.hint === 'string' && err.hint) m += ' ' + err.hint;
-    if (err && typeof err.reason === 'string' && /^[A-Z0-9_\/]{1,40}$/.test(err.reason)) m += '（診断コード: ' + err.reason + '）';
+    if (err && typeof err.reason === 'string' && /^[A-Z0-9_\/]{1,48}$/.test(err.reason)) m += '（診断コード: ' + err.reason + '）';
     return m;
   }
   var UNCONFIRMED = '保存できたか確認できていません。一覧を再読み込みして内容を確認してください（入力は残しています）。';
