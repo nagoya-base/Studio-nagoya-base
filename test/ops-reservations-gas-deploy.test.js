@@ -96,7 +96,7 @@ test('bundle: lib BUNDLE_FILES equals prepare output and gas/ops-reservations; t
   assert.ok(!fs.readdirSync(dir).some((n) => /^(Booking|Survey|SwitchBot|Access)|\.test\.|\.log$|\.env|clasp/i.test(n)));
 });
 
-test('bundle/manifest: owner-only, read-only scopes, no dependencies; extras, missing or empty files are rejected', () => {
+test('bundle/manifest: owner-only, read-only scopes, only the exact Sheets v4 advanced service; extras, missing or empty files are rejected', () => {
   const m = JSON.parse(fs.readFileSync(path.join(root, 'gas/ops-reservations/appsscript.json'), 'utf8'));
   assert.deepEqual(m.webapp, { access: 'MYSELF', executeAs: 'USER_DEPLOYING' });
   assert.deepEqual(m.oauthScopes.slice().sort(), lib.APPROVED_SCOPES.slice().sort());
@@ -113,7 +113,20 @@ test('bundle/manifest: owner-only, read-only scopes, no dependencies; extras, mi
   assert.equal(lib.checkBundle(mutate((j) => { j.webapp.executeAs = 'USER_ACCESSING'; })), 'BUNDLE_MANIFEST_NOT_OWNER_ONLY');
   assert.equal(lib.checkBundle(mutate((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/spreadsheets'); })), 'BUNDLE_MANIFEST_SCOPE_NOT_APPROVED');
   assert.equal(lib.checkBundle(mutate((j) => { j.oauthScopes.pop(); })), 'BUNDLE_MANIFEST_SCOPE_NOT_APPROVED');
-  assert.equal(lib.checkBundle(mutate((j) => { j.dependencies = { enabledAdvancedServices: [{ userSymbol: 'Sheets', serviceId: 'sheets', version: 'v4' }] }; })), 'BUNDLE_MANIFEST_HAS_DEPENDENCY');
+  assert.deepEqual(m.dependencies, { enabledAdvancedServices: [{ userSymbol: 'Sheets', serviceId: 'sheets', version: 'v4' }] });
+  assert.equal(lib.checkBundle(fresh()), 'OK');
+  const sheets = { userSymbol: 'Sheets', serviceId: 'sheets', version: 'v4' };
+  const bad = (dep) => lib.checkBundle(mutate((j) => { j.dependencies = dep; }));
+  const NA = 'BUNDLE_MANIFEST_DEPENDENCY_NOT_APPROVED';
+  assert.equal(bad({}), NA, 'bundle must declare Sheets v4');
+  assert.equal(bad({ enabledAdvancedServices: [] }), NA);
+  assert.equal(bad({ enabledAdvancedServices: [sheets, { userSymbol: 'Drive', serviceId: 'drive', version: 'v3' }] }), NA);
+  assert.equal(bad({ enabledAdvancedServices: [{ userSymbol: 'Drive', serviceId: 'drive', version: 'v3' }] }), NA);
+  assert.equal(bad({ enabledAdvancedServices: [{ ...sheets, version: 'v3' }] }), NA);
+  assert.equal(bad({ enabledAdvancedServices: [{ ...sheets, userSymbol: 'Spreadsheets' }] }), NA);
+  assert.equal(bad({ enabledAdvancedServices: [{ ...sheets, extra: 1 }] }), NA);
+  assert.equal(bad({ enabledAdvancedServices: [sheets], libraries: [{ userSymbol: 'L', libraryId: 'x', version: '1' }] }), NA);
+  assert.equal(bad({ enabledAdvancedServices: sheets }), NA);
 });
 
 // ---- 起動ゲート ----
@@ -159,6 +172,15 @@ test('manifest: remote webapp settings must match; remote with unapproved scopes
   assert.equal(check((j) => { delete j.webapp; }), 'MANIFEST_WEBAPP_MISMATCH');
   assert.equal(check((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/spreadsheets'); }), 'MANIFEST_REMOTE_UNAPPROVED_SCOPE');
   assert.equal(check((j) => { j.oauthScopes.push('https://www.googleapis.com/auth/gmail.send'); }), 'MANIFEST_REMOTE_UNAPPROVED_SCOPE');
+  // 初回移行: remote 未宣言（無し/空）→ 新manifestへ。Sheets v4 のみ既存でも可。
+  assert.equal(check((j) => { delete j.dependencies; }), 'OK');
+  assert.equal(check((j) => { j.dependencies = {}; }), 'OK');
+  assert.equal(check((j) => { j.dependencies = { enabledAdvancedServices: [] }; }), 'OK');
+  const RD = 'MANIFEST_REMOTE_UNAPPROVED_DEPENDENCY';
+  assert.equal(check((j) => { j.dependencies.enabledAdvancedServices.push({ userSymbol: 'Drive', serviceId: 'drive', version: 'v3' }); }), RD);
+  assert.equal(check((j) => { j.dependencies.enabledAdvancedServices[0].version = 'v3'; }), RD);
+  assert.equal(check((j) => { j.dependencies.libraries = [{ userSymbol: 'L', libraryId: 'x', version: '1' }]; }), RD);
+  assert.equal(check((j) => { j.dependencies = { enabledAdvancedServices: [{ userSymbol: 'Gmail', serviceId: 'gmail', version: 'v1' }] }; }), RD);
 });
 
 test('lib: deployment pick is exact, unique and versioned; description match is exact', () => {

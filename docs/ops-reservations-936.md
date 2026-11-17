@@ -165,7 +165,7 @@
 
 | 分類 | 意味（根拠） | 対応 |
 | --- | --- | --- |
-| `API_DISABLED` | Googleが `SERVICE_DISABLED` / `accessNotConfigured` を返した（このGASのGCPプロジェクトでSheets API無効） | **この根拠が出た場合のみ**GCP側の対応を検討する。デフォルトGCPプロジェクトはコンソールから設定できないため、標準GCPプロジェクトへの切替が必要かを別Issueで判断（本PRでは実施しない） |
+| `API_DISABLED` | Googleが `SERVICE_DISABLED` / `accessNotConfigured` を返した（このGASのGCPプロジェクトでSheets API無効） | デフォルトGCPのままで、manifestに宣言した Google Sheets v4 拡張サービス（Issue #955）でAPIが自動有効化される（公式: Apps Script 拡張サービス）。**標準GCPへの切替は先に求めない**。専用Actionsで更新→必要なら所有者が承認→再取得で確認し、それでも同じコードなら診断コードを共有 |
 | `SCOPE_INSUFFICIENT` / `EXCEPTION_AUTH_REQUIRED` / `TOKEN_UNAVAILABLE` / `AUTH_REJECTED` | 承認不足・認証拒否 | 所有者本人で専用URLを開き直し、読み取り専用の承認画面が出たら承認（スコープ拡大は不要） |
 | `PERMISSION_DENIED` | 権限拒否（API未有効化とは限らない） | GASの実行アカウントと台帳を開けるアカウントの一致を確認 |
 | `TARGET_NOT_FOUND` / `BAD_REQUEST` | 対象不明・要求不正 | `OPS_SPREADSHEET_ID` がIDのみか、Googleスプレッドシート形式かを確認 |
@@ -173,3 +173,12 @@
 | `NETWORK_EXCEPTION` / `PARSE_FAILED` / `HTTP_403_UNCLASSIFIED` / `HTTP_OTHER` / `UNKNOWN` | 判別不能 | 診断コードを共有（原因は断定しない） |
 
 **#936の完了条件**: 診断コードで原因を特定し、接続を直し、所有者が専用URLで予約一覧・詳細を実際に確認するまで、#936は完了にしない。
+
+## 10. Sheets API 有効化（Issue #955）
+実環境で `META/API_DISABLED/403` を確認（GCPはデフォルト）。公式は、デフォルトGCPでは拡張サービス追加時に対応APIが自動で有効になると説明している。
+
+- 正本 `gas/ops-reservations/appsscript.json` に Google Sheets v4 拡張サービス（`userSymbol: Sheets` / `serviceId: sheets` / `version: v4`）を宣言。`oauthScopes` は変えず読み取り専用（`spreadsheets.readonly`）を維持。取得処理は既存の Sheets API GET のまま（`Sheets.*` のコードは使わない）。
+- デプロイ検査（`checkManifest`）は、この正確な宣言1件だけを許可。他の拡張サービス・ライブラリ・余分なキー/項目は配布側 `BUNDLE_MANIFEST_DEPENDENCY_NOT_APPROVED`、リモート側 `MANIFEST_REMOTE_UNAPPROVED_DEPENDENCY` で拒否。リモートが未宣言（初回）なら新manifestへ移行できる。
+- UIから手でサービスを追加する必要はない（検査が拒否しうるため、正本manifestから更新する）。
+- 手順: mainマージ後に運営アプリ専用Actionsで同じDeploymentへ更新 → 必要なら所有者が承認 → 専用URLで再取得。
+- **API有効化の反映は実環境で未確認**。PR時点では解決済みとしない。#936は予約一覧・詳細の実確認まで閉じない。GCP切替・台帳の公開共有は不要。
