@@ -533,6 +533,7 @@
     }
     var d = state.data;
     if (state.phase === 'ready' && d) {
+      if (d.skippedRows > 0) html += '<div class="banner err" role="alert">保存先の ' + esc(d.skippedRows) + ' 行を読み込めませんでした。一覧・件数は不完全です（未対応のメモが表示されていない可能性があります）。メモ専用スプレッドシートの該当行（taskId・状態・版番号）を確認・修正してください。</div>';
       if (d.storeReady === false) html += '<div class="banner stale">メモの保存先はまだ作成されていません。最初のメモを保存すると、このアプリ専用のスプレッドシートが自動で作られます（予約台帳とは別のファイルです）。</div>';
       if (d.purge && d.purge.deleted > 0) html += '<div class="banner">完了から' + esc(d.retentionDays) + '日を過ぎたメモ ' + esc(d.purge.deleted) + '件を削除しました。</div>';
       if (d.purge && d.purge.failed) html += '<div class="banner stale">期限切れメモの削除に失敗しました（次回の取得で再試行します）。</div>';
@@ -547,10 +548,12 @@
     var c = d.counts;
     return '<div class="summary"><span class="tag">未完了 ' + esc(c.open) + '件</span> ' +
       '<span class="tag ' + (c.overdue ? 'danger' : '') + '">期限超過 ' + esc(c.overdue) + '件</span>' +
-      (c.stale ? ' <span class="tag">見直し ' + esc(c.stale) + '件</span>' : '') + '</div>';
+      (c.stale ? ' <span class="tag">見直し ' + esc(c.stale) + '件</span>' : '') +
+      (d.skippedRows > 0 ? ' <span class="tag danger">一覧は不完全（読込不可 ' + esc(d.skippedRows) + '行）</span>' : '') + '</div>';
   }
 
-  function renderCard(t) {
+  function renderCard(t, busy) {
+    var dis = busy ? ' disabled' : '';
     var tags = '<span class="tag">' + esc(t.statusLabel) + '</span>';
     if (t.overdue) tags += '<span class="tag danger">期限超過</span>';
     if (t.stale) tags += '<span class="tag">' + '更新なし・要見直し</span>';
@@ -563,27 +566,29 @@
     meta.push('更新 ' + esc(jstText(t.updatedAt) || '') + ' JST');
     var link = /^https:\/\/[^\s<>"'\\@]+$/.test(t.evidenceUrl || '') ? '<div><a href="' + esc(t.evidenceUrl) + '" target="_blank" rel="noopener noreferrer">証跡リンク（新しいタブで開く）</a></div>' : '';
     var quick = STATUS_OPTIONS.filter(function (o) { return o[0] !== t.status; }).map(function (o) {
-      return '<button type="button" data-act="status" data-id="' + esc(t.taskId) + '" data-status="' + esc(o[0]) + '">' + esc(o[1]) + 'にする</button>';
+      return '<button type="button" data-act="status" data-id="' + esc(t.taskId) + '" data-status="' + esc(o[0]) + '"' + dis + '>' + esc(o[1]) + 'にする</button>';
     }).join('');
     return '<li class="card task' + (t.overdue ? ' overdue' : '') + '"><div class="top">' + tags + '</div>' +
       '<div class="when">' + esc(t.title) + '</div>' +
       (t.memo ? '<div class="memo">' + esc(t.memo) + '</div>' : '') + link +
       '<div class="note">' + meta.join(' / ') + '</div>' +
-      '<div class="actions">' + quick + '<button type="button" data-act="edit" data-id="' + esc(t.taskId) + '">編集</button><button type="button" data-act="delete" data-id="' + esc(t.taskId) + '">削除</button></div></li>';
+      '<div class="actions">' + quick + '<button type="button" data-act="edit" data-id="' + esc(t.taskId) + '"' + dis + '>編集</button><button type="button" data-act="delete" data-id="' + esc(t.taskId) + '"' + dis + '>削除</button></div></li>';
   }
 
   function renderList(state) {
     var d = state.data;
     if (!d) return '';
+    var busy = state.save.phase === 'saving';
+    var skipped = d.skippedRows > 0;
     var overdue = d.items.filter(function (t) { return t.overdue; });
     var open = d.items.filter(function (t) { return !t.overdue && t.status !== 'done'; });
     var done = d.items.filter(function (t) { return t.status === 'done'; });
     var html = '';
-    if (overdue.length) html += '<h2>期限超過（' + esc(overdue.length) + '件）</h2><ul class="cards">' + overdue.map(renderCard).join('') + '</ul>';
+    if (overdue.length) html += '<h2>期限超過（' + esc(overdue.length) + '件）</h2><ul class="cards">' + overdue.map(function (t) { return renderCard(t, busy); }).join('') + '</ul>';
     html += '<h2>未対応・対応中（' + esc(open.length) + '件）</h2>';
-    html += open.length ? '<ul class="cards">' + open.map(renderCard).join('') + '</ul>' : '<div class="banner">未対応のメモはありません（取得は正常に完了しています）。</div>';
+    html += open.length ? '<ul class="cards">' + open.map(function (t) { return renderCard(t, busy); }).join('') + '</ul>' : (skipped ? '<div class="banner stale">表示できる未完了のメモはありません。ただし読み込めない行があるため、一覧は不完全です。</div>' : '<div class="banner">未対応のメモはありません（取得は正常に完了しています）。</div>');
     html += '<h2>完了（' + esc(done.length) + '件）</h2><button type="button" data-act="toggle-done">' + (state.showDone ? '完了を隠す' : '完了を表示') + '</button>';
-    if (state.showDone) html += done.length ? '<ul class="cards">' + done.map(renderCard).join('') + '</ul>' : '<div class="banner">完了したメモはありません。</div>';
+    if (state.showDone) html += done.length ? '<ul class="cards">' + done.map(function (t) { return renderCard(t, busy); }).join('') + '</ul>' : '<div class="banner">完了したメモはありません。</div>';
     html += '<p class="note">完了から' + esc(d.retentionDays) + '日を過ぎたメモは自動で削除されます（完了後に編集すると起算が更新されます）。未完了のメモは自動削除されません。</p>';
     return html;
   }
@@ -600,6 +605,12 @@
     $('t-service').innerHTML = optionsHtml(SERVICE_OPTIONS);
     $('t-status').innerHTML = optionsHtml(STATUS_OPTIONS);
     var editing = { revision: null, taskId: null };
+    var FIELD_IDS = ['t-title', 't-service', 't-booking', 't-status', 't-due', 't-memo', 't-url'];
+    function snapshot() { return FIELD_IDS.map(function (id) { return $(id).value; }).join('\u0001'); }
+    /* 保存中は下書きを切り替える操作・編集を止める（保存した下書きと別の入力を、遅れて返った応答が閉じない）。 */
+    function setBusy(busy) {
+      FIELD_IDS.concat(['t-cancel', 't-new']).forEach(function (id) { $(id).disabled = busy; });
+    }
 
     var ctl = createController(api, function (state) {
       $('tasks-banner').innerHTML = renderBanner(state);
@@ -607,6 +618,7 @@
       $('tasks-view').innerHTML = renderList(state);
       $('t-submit').disabled = state.save.phase === 'saving';
       $('t-submit').textContent = state.save.phase === 'saving' ? '保存中…' : '保存';
+      setBusy(state.save.phase === 'saving');
       /* 競合時は、次の保存を「最新の版に対する明示的な上書き」にする（入力は消さない）。 */
       if (state.save.phase === 'conflict' && state.save.current && editing.taskId === state.save.current.taskId) editing.revision = state.save.current.revision;
     });
@@ -622,19 +634,24 @@
     }
     function closeForm() { $('t-form').hidden = true; editing = { revision: null, taskId: null }; }
 
-    $('t-new').addEventListener('click', function () { openForm(null); });
-    $('t-cancel').addEventListener('click', closeForm);
+    $('t-new').addEventListener('click', function () { if (ctl.state.save.phase !== 'saving') openForm(null); });
+    $('t-cancel').addEventListener('click', function () { if (ctl.state.save.phase !== 'saving') closeForm(); });
     $('t-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var input = inputFromFields({
         taskId: editing.taskId, title: $('t-title').value, bookingId: $('t-booking').value, service: $('t-service').value, status: $('t-status').value,
         memo: $('t-memo').value, dueDate: $('t-due').value, evidenceUrl: $('t-url').value
       });
-      /* 成功するまでフォームを閉じない・入力を消さない。 */
-      ctl.save(input, editing.revision, function (ok) { if (ok) closeForm(); });
+      if (ctl.state.save.phase === 'saving') return;
+      /* 成功するまでフォームを閉じない・入力を消さない。送信した下書きと同一（同じ下書き・未変更）の場合だけ閉じる。 */
+      var submitted = editing, sent = snapshot();
+      ctl.save(input, editing.revision, function (ok) {
+        if (ok && editing === submitted && snapshot() === sent) closeForm();
+      });
     });
     $('tasks-view').addEventListener('click', function (e) {
       var node = e.target;
+      if (ctl.state.save.phase === 'saving') return; /* 保存中は対象の操作を受け付けない */
       while (node && node !== $('tasks-view')) {
         var act = node.getAttribute && node.getAttribute('data-act');
         if (act === 'toggle-done') { ctl.toggleDone(); return; }

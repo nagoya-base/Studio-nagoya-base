@@ -872,3 +872,146 @@ test('文書: 保存先・保持/削除基準・退避/復旧・初回設定が�
   ['保存先', '180日', '削除', '退避', '復旧', '初回', 'drive.file', '競合', '二重送信', '未実施'].forEach(function (w) { assert.ok(doc.indexOf(w) !== -1, w); });
   assert.ok(!/AKfycb[0-9A-Za-z_-]{10,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(com|jp|net)\b/.test(doc), '実在のID・メールを書かない');
 });
+
+/* ===================== レビュー指摘(#957): 下書きの保護・読込不可行の警告 ===================== */
+/* mount を実際に動かすための最小の疑似DOM（要素は id ごとに1つ。イベントは addEventListener したものを呼ぶ）。 */
+function fakeDoc() {
+  var els = {};
+  function el(id) {
+    if (!els[id]) {
+      els[id] = { id: id, value: '', hidden: false, disabled: false, innerHTML: '', textContent: '', _l: {}, _attr: {},
+        addEventListener: function (t, f) { (this._l[t] = this._l[t] || []).push(f); },
+        setAttribute: function (k, v) { this._attr[k] = v; }, getAttribute: function (k) { return this._attr[k] === undefined ? null : this._attr[k]; },
+        focus: function () {}, parentNode: null };
+    }
+    return els[id];
+  }
+  function fire(id, type, extra) { var ev = Object.assign({ preventDefault: function () {}, target: el(id) }, extra || {}); (el(id)._l[type] || []).forEach(function (f) { f(ev); }); }
+  return { getElementById: el, el: el, fire: fire };
+}
+function button(attrs) { return { getAttribute: function (k) { return attrs[k] === undefined ? null : attrs[k]; }, parentNode: null }; }
+function mounted(api) {
+  var doc = fakeDoc();
+  var ctl = T.mount(doc, api, { confirm: function () { return true; } });
+  return { doc: doc, ctl: ctl };
+}
+function fillForm(doc, title) { doc.el('t-title').value = title; doc.el('t-status').value = 'todo'; }
+
+test('回帰(P2): 保存中は下書きを切り替える操作（追加・編集・キャンセル・状態変更・入力）が止まり、入力欄は無効になる', function () {
+  var api = fakeTasksApi();
+  var m = mounted(api);
+  m.doc.fire('tab-tasks', 'click');
+  api.pending.list[0].ok(listRes([ti({ taskId: 'T-aaaaaaaa0001', title: '既存' })]));
+  m.doc.fire('t-new', 'click');
+  fillForm(m.doc, '下書きA');
+  m.doc.fire('t-form', 'submit');
+  assert.strictEqual(api.pending.save.length, 1);
+  ['t-title', 't-memo', 't-due', 't-url', 't-service', 't-status', 't-booking', 't-cancel', 't-new', 't-submit'].forEach(function (id) { assert.strictEqual(m.doc.el(id).disabled, true, id + ' は保存中は無効'); });
+  assert.ok(/data-act="edit"[^>]*disabled/.test(m.doc.el('tasks-view').innerHTML), 'カードの操作も無効');
+  /* 無効でも届いた操作は無視する（保存中に新しい下書きを開かない・状態変更を送らない・二重送信しない） */
+  m.doc.fire('t-new', 'click');
+  m.doc.fire('t-form', 'submit');
+  m.doc.fire('tasks-view', 'click', { target: button({ 'data-act': 'status', 'data-id': 'T-aaaaaaaa0001', 'data-status': 'done' }) });
+  m.doc.fire('tasks-view', 'click', { target: button({ 'data-act': 'edit', 'data-id': 'T-aaaaaaaa0001' }) });
+  assert.strictEqual(api.pending.save.length, 1);
+  assert.strictEqual(m.doc.el('t-title').value, '下書きA', '保存中に別の下書きへ置き換わらない');
+  api.pending.save[0].ok({ ok: true, task: ti({ title: '下書きA' }) });
+  assert.strictEqual(m.doc.el('t-form').hidden, true, '同じ未変更の下書きは成功後に閉じる');
+  ['t-title', 't-new', 't-cancel'].forEach(function (id) { assert.strictEqual(m.doc.el(id).disabled, false, id + ' は保存後に戻る'); });
+});
+
+test('回帰(P2): 下書きA→遅延応答→別の下書きB（または編集された入力）は、Aの成功でフォームを閉じず入力を消さない', function () {
+  var api = fakeTasksApi();
+  var m = mounted(api);
+  m.doc.fire('tab-tasks', 'click');
+  api.pending.list[0].ok(listRes([]));
+  m.doc.fire('t-new', 'click');
+  fillForm(m.doc, '下書きA');
+  m.doc.fire('t-form', 'submit');
+  /* 万一（無効化をすり抜けて）入力が変わっても、遅れて返ったAの成功は変更後の入力を閉じない */
+  m.doc.el('t-title').value = '下書きA を保存中に編集した内容';
+  api.pending.save[0].ok({ ok: true, task: ti({ title: '下書きA' }) });
+  assert.strictEqual(m.doc.el('t-form').hidden, false, '送信後に変わった入力は閉じない');
+  assert.strictEqual(m.doc.el('t-title').value, '下書きA を保存中に編集した内容');
+  /* 別の下書きB（新しい下書きID）へ切り替わった後に、Aの遅延応答が来ても閉じない */
+  var api2 = fakeTasksApi();
+  var m2 = mounted(api2);
+  m2.doc.fire('tab-tasks', 'click');
+  api2.pending.list[0].ok(listRes([]));
+  m2.doc.fire('t-new', 'click');
+  fillForm(m2.doc, '下書きA');
+  m2.doc.fire('t-form', 'submit');
+  m2.ctl.state.save.phase = 'idle'; /* 状態の取り違え（保存中解除）を仮定しても、下書きの同一性で守る */
+  m2.doc.fire('t-new', 'click');
+  fillForm(m2.doc, '下書きB');
+  api2.pending.save[0].ok({ ok: true, task: ti({ title: '下書きA' }) });
+  assert.strictEqual(m2.doc.el('t-form').hidden, false, 'Bのフォームを閉じない');
+  assert.strictEqual(m2.doc.el('t-title').value, '下書きB');
+  assert.strictEqual(m2.doc.el('t-form-title').textContent, 'メモを追加');
+});
+
+test('回帰(P2): 保存失敗・競合でも下書きを閉じず、入力を残す。古い一覧応答で操作対象を失わない', function () {
+  var api = fakeTasksApi();
+  var m = mounted(api);
+  m.doc.fire('tab-tasks', 'click');
+  api.pending.list[0].ok(listRes([ti({ taskId: 'T-aaaaaaaa0001', title: '既存', revision: 1 })]));
+  m.doc.fire('tasks-view', 'click', { target: button({ 'data-act': 'edit', 'data-id': 'T-aaaaaaaa0001' }) });
+  m.doc.el('t-title').value = '編集中の件名';
+  m.doc.fire('t-form', 'submit');
+  api.pending.save[0].ok({ ok: false, error: { code: 'CONFLICT', message: '別の端末・操作で先に更新されています。上書きはしていません。', current: ti({ title: '先に保存', revision: 2 }) } });
+  assert.strictEqual(m.doc.el('t-form').hidden, false);
+  assert.strictEqual(m.doc.el('t-title').value, '編集中の件名');
+  /* 競合後に取り直した一覧が返っても、編集対象（taskId）は同じで、次の保存は最新の版2に対する明示的な上書き */
+  api.pending.list[1].ok(listRes([ti({ taskId: 'T-aaaaaaaa0001', title: '先に保存', revision: 2 })]));
+  m.doc.fire('t-form', 'submit');
+  assert.deepStrictEqual(api.pending.save[1].payload.expectedRevision, 2);
+  assert.strictEqual(api.pending.save[1].payload.input.taskId, 'T-aaaaaaaa0001');
+  assert.strictEqual(api.pending.save[1].payload.input.title, '編集中の件名');
+  api.pending.save[1].ng(new Error('net'));
+  assert.strictEqual(m.doc.el('t-form').hidden, false, '通信失敗でも閉じない');
+  assert.strictEqual(m.doc.el('t-title').value, '編集中の件名');
+  /* 失敗後の再送は同じ下書きIDで送れる */
+  m.doc.fire('t-form', 'submit');
+  assert.strictEqual(api.pending.save[2].payload.input.taskId, 'T-aaaaaaaa0001');
+  /* 保存・削除中に遅れて返った古い一覧応答は破棄される（後から要求した一覧が正） */
+  var api3 = fakeTasksApi();
+  var c3 = T.createController(api3);
+  c3.load(); c3.load();
+  api3.pending.list[1].ok(listRes([ti({ title: '新しい一覧' })]));
+  api3.pending.list[0].ok(listRes([ti({ title: '古い一覧' })]));
+  assert.strictEqual(c3.state.data.items[0].title, '新しい一覧');
+});
+
+test('回帰(P2): 読み込めない保存行（skippedRows）は警告し、一覧・件数が不完全だと示す。全行不正でも「未対応なし・正常」としない', function () {
+  function state(res) { var api = fakeTasksApi(); var c = T.createController(api); c.load(); api.pending.list[0].ok(res); return c.state; }
+  /* 一部が不正 */
+  var partial = state(listRes([ti({ title: '読めるメモ' })], { skippedRows: 2 }));
+  var html = T.renderBanner(partial) + T.renderSummary(partial) + T.renderList(partial);
+  assert.ok(/2 行を読み込めませんでした。一覧・件数は不完全/.test(html), html);
+  assert.ok(/一覧は不完全（読込不可 2行）/.test(html));
+  assert.ok(/読めるメモ/.test(html));
+  /* 全行が不正（表示できる行が0） */
+  var all = state(listRes([], { skippedRows: 3 }));
+  var allHtml = T.renderBanner(all) + T.renderSummary(all) + T.renderList(all);
+  assert.ok(/3 行を読み込めませんでした/.test(allHtml));
+  assert.ok(!/未対応のメモはありません（取得は正常に完了しています）/.test(allHtml), '誤って正常表示にしない');
+  assert.ok(/一覧は不完全/.test(allHtml));
+  /* 正常（0行）は警告を出さず、従来どおり */
+  var clean = state(listRes([], { skippedRows: 0 }));
+  var cleanHtml = T.renderBanner(clean) + T.renderSummary(clean) + T.renderList(clean);
+  assert.ok(!/読み込めませんでした|不完全/.test(cleanHtml));
+  assert.ok(/未対応のメモはありません（取得は正常に完了しています）/.test(cleanHtml));
+  /* 警告に行の中身を出さない（件数のみ）。ログにも行内容を出さない。 */
+  var leaky = state(listRes([], { skippedRows: 1 }));
+  assert.ok(!/T-bad|SECRET/.test(T.renderBanner(leaky)));
+});
+
+test('回帰(P2): バックエンドは壊れた行を件数で返し、行の内容を応答・ログに出さない', function () {
+  var world = makeWorld({ preload: [HEADER, taskRow({ title: '読めるメモ' }), ['T-bad', 'SECRET-ROW-CONTENT'], ['', 'SECRET-ROW-2', '', '', 'not-a-status', '', '', '', '', '', 'x']] });
+  var b = backend(world);
+  var l = b.list();
+  assert.strictEqual(l.ok, true);
+  assert.strictEqual(l.skippedRows, 2);
+  assert.strictEqual(l.items.length, 1);
+  assert.ok(!/SECRET-ROW/.test(JSON.stringify(l) + b.sb._logs.join('\n')));
+});
