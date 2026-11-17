@@ -42,6 +42,9 @@ test('workflow: gate is main-only, takes inputs via env, checks the main head an
   assert.doesNotMatch(run, /\$\{\{/, 'inputs must never be expanded inside the script body');
   assert.match(run, /STALE_SHA_NOT_MAIN_HEAD/);
   assert.match(run, /git rev-parse FETCH_HEAD\)" == "\$GITHUB_SHA"/);
+  // ops-frontend.test.js が CI では Jekyll 必須のため、verify に既存CIと同じRuby/Bundler準備が要る（テストより前）
+  assert.match(gate, /ruby\/setup-ruby@v1\n\s+with:\n\s+ruby-version: '3\.3'\n\s+bundler-cache: true/);
+  assert.ok(gate.indexOf('ruby/setup-ruby') < gate.indexOf('node --test test/ops-*.test.js'));
   // フロント生成物の同期 → テスト → 配布物検査 は秘密なしのjobで、deploy前に行う
   assert.match(gate, /build-ops-gas-page\.js --check/);
   assert.match(gate, /node --test test\/ops-\*\.test\.js/);

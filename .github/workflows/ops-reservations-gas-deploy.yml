@@ -61,6 +61,14 @@ jobs:
           if [[ -n "${DG_ROLLBACK_VERSION//[[:space:]]/}" ]]; then mode=rollback; else mode=deploy; fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "- ✅ 入力ゲート: 通過（操作: \`$mode\` / 対象: main \`$GITHUB_SHA\`）" >> "$GITHUB_STEP_SUMMARY"
+      # test/ops-frontend.test.js は Jekyll のビルドで「画面がGitHub Pagesへ混入しない」ことを検査し、
+      # CIではJekyllが無いと失敗する。既存CI（pr-required-gate.yml）と同じRuby/Bundler/Gemを準備する。
+      - name: Set up Ruby and Jekyll (same as the PR CI)
+        if: steps.gate.outputs.mode == 'deploy'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
       - name: Frontend is in sync with the generated GAS page
         if: steps.gate.outputs.mode == 'deploy'
         run: node scripts/build-ops-gas-page.js --check
