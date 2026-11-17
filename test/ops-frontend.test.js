@@ -343,8 +343,9 @@ test('境界: フロントはGAS・Sheets・SwitchBotに直接依存せず、秘
   });
   assert.deepStrictEqual(users, ['OpsPage.html']);
   var page = fs.readFileSync(path.join(gasDir, 'OpsPage.html'), 'utf8');
-  assert.ok(/Sitesフロントではありません/.test(page));
-  assert.ok(!/ops-client|OpsClient/.test(page), 'GAS検証画面は画面ロジックを共有・複製しない');
+  /* GAS配信画面は _ops-app/frontend/ からの生成物（手で複製・編集しない）。同期は test/ops-gas-page.test.js で検証。 */
+  assert.ok(/自動生成（scripts\/build-ops-gas-page\.js）/.test(page));
+  assert.ok(!/OpsMockAdapter/.test(page), 'GAS配信画面にモックを含めない');
 });
 
 /* 既存のGitHub Pagesビルド（Jekyll）の生成物に、モックHTML/JSが含まれないこと。
@@ -381,8 +382,8 @@ test('境界: 既存GitHub Pagesのビルド生成物にモックフロント（
     var files = walk(dest, []).map(function (f) { return path.relative(dest, f); });
     var leaked = files.filter(function (f) { return /(^|\/)_?ops-app(\/|$)/.test(f) || /(^|\/)(ops-client|mock-adapter)\.js$/.test(f); });
     assert.deepStrictEqual(leaked, [], 'モックフロントが生成物に含まれている');
-    /* 内容でも確認（ファイル名を変えて混入していないこと）。生成物のうち公開サイト側（docs/test/gasのソース配布を除く）を対象にする */
-    var site = files.filter(function (f) { return !/^(test|docs|gas)\//.test(f) && /\.(html|js|css|json|xml)$/.test(f); });
+    /* 内容でも確認（ファイル名を変えて混入していないこと）。生成物のうち公開サイト側（docs/test/gas/scriptsのソース配布を除く。scripts/build-ops-gas-page.js は画面名を含む開発用ビルドスクリプトで、データ・秘密を含まない）を対象にする */
+    var site = files.filter(function (f) { return !/^(test|docs|gas|scripts)\//.test(f) && /\.(html|js|css|json|xml)$/.test(f); });
     site.forEach(function (f) {
       var body = fs.readFileSync(path.join(dest, f), 'utf8');
       assert.ok(!/OpsMockAdapter|OpsClient|モックデータ（架空）/.test(body), f + 'にモックフロントの内容が含まれている');

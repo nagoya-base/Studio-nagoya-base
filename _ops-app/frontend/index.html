@@ -42,8 +42,10 @@
 </head>
 <body>
   <header>
+    <!--OPS:HEAD-->
     <h1>予約確認（読み取り専用・モック）</h1>
     <p class="note">架空のモックデータです。実際の予約は表示されません。</p>
+    <!--/OPS:HEAD-->
     <div class="filters">
       <label>サービス<select id="f-service"></select></label>
       <label>状態<select id="f-status"></select></label>
@@ -57,6 +59,7 @@
     <div id="banner"></div>
     <div id="view"></div>
   </main>
+  <!--OPS:SCRIPTS-->
   <script src="ops-client.js"></script>
   <script src="mock-adapter.js"></script>
   <script>
@@ -65,5 +68,6 @@
       OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: scenario }));
     })();
   </script>
+  <!--/OPS:SCRIPTS-->
 </body>
 </html>
