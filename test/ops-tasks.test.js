@@ -1046,3 +1046,14 @@ test('回帰(P2): バックエンドは壊れた行を件数で返し、行の�
   assert.strictEqual(l.items.length, 1);
   assert.ok(!/SECRET-ROW/.test(JSON.stringify(l) + b.sb._logs.join('\n')));
 });
+
+test('診断文言: 権限の説明は spreadsheets（表示・編集）に合っており、「読み取り専用の承認」「権限の拡大は不要」と案内しない', function () {
+  var api = code('OpsApi.gs');
+  var m = /SCOPE_INSUFFICIENT: '([^']*)'/.exec(readFile('OpsApi.gs'));
+  var n = /EXCEPTION_AUTH_REQUIRED: '([^']*)'/.exec(readFile('OpsApi.gs'));
+  assert.ok(m && n);
+  assert.ok(/表示・編集/.test(m[1]) && /表示・編集/.test(n[1]));
+  assert.ok(!/読み取り専用の承認|権限の拡大は不要|読み取り権限の承認/.test(m[1] + n[1]));
+  assert.ok(/OAuthレベルの読み取り専用ではありません/.test(fs.readFileSync(path.join(ROOT, 'docs', 'ops-tasks-941.md'), 'utf8')));
+  assert.ok(api.length > 0);
+});

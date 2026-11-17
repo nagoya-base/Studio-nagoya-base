@@ -1,6 +1,6 @@
 /*
  * OpsApi.gs — バックエンドの要求処理（Issue #936 / #941）。通信方式に依存しない。
- * 予約台帳は読み取り専用（#936）。書込みはメモ（#941）の専用保存先だけで、予約台帳には書かない。
+ * 予約台帳はコード上、読み取りのみ（#936。#941で権限は spreadsheets になり、OAuthレベルの読み取り専用ではない）。書込みはメモ（#941）の専用保存先だけで、予約台帳には書かない。
  *
  * handle(request, ctx) が共通の接続契約の入口:
  *   request: { op: 'list', params } | { op: 'detail', id } | { op: 'tasks_list' | 'task_save' | 'task_delete', ... }（OpsTasks.gs）
@@ -28,8 +28,8 @@ var OpsApi = (function () {
   var DIAG_STAGES_ = ['META', 'HEADER', 'DATA'];
   var DIAG_ADVICE_ = {
     API_DISABLED: 'Googleが「このGASのGCPプロジェクトでSheets APIが無効」と返しています。GCPの切替は不要です。GASにGoogle Sheets拡張サービス（Sheets v4）を追加するとAPIが自動で有効になります。正本のデプロイ（運営アプリ専用Actions）で更新後に再取得し、同じ診断コードが続く場合はコードを開発担当へ共有してください。',
-    SCOPE_INSUFFICIENT: '承認済みの権限が不足しています。所有者本人のアカウントで専用URLを開き直し、読み取り専用の承認画面が出たら承認してください（権限の拡大は不要）。',
-    EXCEPTION_AUTH_REQUIRED: 'GASの外部通信（script.external_request）または読み取り権限の承認が済んでいない可能性があります。所有者本人で専用URLを開き直し、承認画面が出たら承認してください。',
+    SCOPE_INSUFFICIENT: '承認済みの権限が不足しています。所有者本人のアカウントで専用URLを開き直し、Googleスプレッドシートの表示・編集の承認画面が出たら承認してください（#941で権限が「読み取り専用」から「スプレッドシートの表示・編集」へ変わっています。予約台帳へはコード上、読み取りしか行いません）。',
+    EXCEPTION_AUTH_REQUIRED: 'GASの外部通信（script.external_request）またはスプレッドシート権限（表示・編集）の承認が済んでいない可能性があります。所有者本人で専用URLを開き直し、承認画面が出たら承認してください。',
     TOKEN_UNAVAILABLE: 'GASの認証トークンを取得できませんでした。所有者本人で専用URLを開き直して承認状態を確認し、改善しなければ診断コードを開発担当へ共有してください。',
     AUTH_REJECTED: 'Googleが認証を受け付けませんでした。所有者本人で専用URLを開き直して再承認してください。繰り返す場合は診断コードを開発担当へ共有してください。',
     PERMISSION_DENIED: 'Googleがこのアカウントでの台帳アクセスを拒否しました（API未有効化とは限りません）。GASを実行しているアカウントが台帳を直接開けるアカウントと同一か確認し、診断コードを開発担当へ共有してください。',
