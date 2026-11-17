@@ -63,7 +63,7 @@ function makeWorld(opts) {
     var body = options.payload ? JSON.parse(options.payload) : null;
     requests.push({ method: method, url: u, body: body, auth: options.headers && options.headers.Authorization, contentType: options.contentType });
     if (opts.fetchThrows) throw new Error('boom SECRET-ID ' + TASKS_ID);
-    if (opts.failOn && opts.failOn(method, u)) return res({ error: { message: 'SECRET-BODY' } }, opts.failStatus || 500);
+    if (opts.failOn && opts.failOn(method, u)) return res(opts.failBody || { error: { message: 'SECRET-BODY' } }, opts.failStatus || 500);
     var base = 'https://sheets.googleapis.com/v4/spreadsheets';
     if (u.indexOf(base) !== 0) return res({}, 404);
     var rest = u.slice(base.length);
@@ -1056,4 +1056,35 @@ test('診断文言: 権限の説明は spreadsheets（表示・編集）に合�
   assert.ok(!/読み取り専用の承認|権限の拡大は不要|読み取り権限の承認/.test(m[1] + n[1]));
   assert.ok(/OAuthレベルの読み取り専用ではありません/.test(fs.readFileSync(path.join(ROOT, 'docs', 'ops-tasks-941.md'), 'utf8')));
   assert.ok(api.length > 0);
+});
+
+/* ===================== #941 実環境: 読み取り成功・追記だけ403 の原因分類 ===================== */
+test('診断(APPEND 403): 読み取り成功・追記だけ403のとき、Googleの拒否分類を固定コードで識別し、本文・IDを出さず、1回しか追記しない', function () {
+  var cases = [
+    ['保護された範囲', { error: { code: 403, status: 'PERMISSION_DENIED', message: 'You are trying to edit a protected cell or object. SECRET-BODY' } }, 'APPEND_HTTP/403/PROTECTED_RANGE', /保護/],
+    ['書込み権限なし(閲覧者)', { error: { code: 403, status: 'PERMISSION_DENIED', message: 'The caller does not have permission SECRET-BODY' } }, 'APPEND_HTTP/403/PERMISSION_DENIED', /編集者/],
+    ['scope不足', { error: { code: 403, status: 'PERMISSION_DENIED', details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } }, 'APPEND_HTTP/403/SCOPE_INSUFFICIENT', /再承認/],
+    ['API無効', { error: { code: 403, status: 'PERMISSION_DENIED', errors: [{ reason: 'accessNotConfigured' }] } }, 'APPEND_HTTP/403/API_DISABLED', /Sheets API/],
+    ['分類不能', { error: { message: 'SECRET-BODY' } }, 'APPEND_HTTP/403', /断定できません/],
+    ['本文がJSONでない', 'SECRET-BODY-NOT-JSON', 'APPEND_HTTP/403', /断定できません/]
+  ];
+  cases.forEach(function (c) {
+    var world = makeWorld({ preload: [HEADER, taskRow()], failOn: function (m, u) { return m === 'POST' && /:append/.test(u); }, failStatus: 403, failBody: c[1] });
+    var b = backend(world);
+    var l = b.list();
+    assert.strictEqual(l.ok, true, c[0] + ': 読み取りは成功');
+    var r = b.save(input(), null);
+    assert.strictEqual(r.ok, false, c[0]);
+    assert.strictEqual(r.error.code, 'STORE_FAILED', c[0]);
+    assert.strictEqual(r.error.reason, c[2], c[0]);
+    assert.ok(c[3].test(r.error.hint), c[0] + ': ' + r.error.hint);
+    assert.deepStrictEqual(contract.validateError(r), [], c[0]);
+    assert.ok(!/SECRET|FAKE-TASKS|FAKE-TOKEN/.test(JSON.stringify(r) + JSON.stringify(l) + b.sb._logs.join('\n')), c[0] + ': 本文・IDを出さない');
+    assert.strictEqual(world.requests.filter(function (q) { return /:append/.test(q.url); }).length, 1, c[0] + ': 追記を自動で繰り返さない');
+    assert.strictEqual(tasksRows(world).length, 2, c[0] + ': 何も書かれていない');
+    assert.strictEqual(world.ledgerTouchedByWrite, false);
+  });
+  /* 更新・削除の403も同じ分類で、末尾の語は固定の許可リスト形式だけ。 */
+  var w2 = makeWorld({ preload: [HEADER, taskRow()], failOn: function (m) { return m === 'PUT'; }, failStatus: 403, failBody: { error: { status: 'PERMISSION_DENIED', message: 'protected cell or object' } } });
+  assert.strictEqual(backend(w2).save(input({ taskId: 'T-aaaaaaaa0001', title: '更新' }), 1).error.reason, 'UPDATE_HTTP/403/PROTECTED_RANGE');
 });
