@@ -80,4 +80,28 @@ function validateDetail(res) {
   return problems;
 }
 
-module.exports = { validateList: validateList, validateDetail: validateDetail, validateError: validateError, ERROR_CODES: ERROR_CODES };
+/* 鍵・案内の状況（#942）の応答の形。実バックエンドとモックの両方を同じ関数で検証する。 */
+var VERDICT_CODES = ['NOT_CONNECTED', 'FETCH_FAILED', 'UNVERIFIABLE', 'NEEDS_REVIEW', 'MISMATCH', 'ISSUE_PENDING', 'ISSUE_UNCONFIRMED', 'GUIDE_NOT_SENT',
+  'ISSUED_GUIDED', 'ISSUED_GUIDE_UNKNOWN', 'REVOKE_UNCONFIRMED', 'REVOKED_CONFIRMED'];
+var KEY_VIEW_KEYS = ['connection', 'consistency', 'failure', 'jobs', 'notes', 'opCount', 'ops', 'reasons', 'truncated', 'verdict'];
+var KEY_OP_KEYS = ['current', 'deliveryLabel', 'kindLabel', 'rev', 'stateLabel', 'updatedAt', 'validFrom', 'validTo'];
+
+function validateKeyStatus(res) {
+  if (res && res.ok === false) return validateError(res);
+  var problems = [];
+  check(res && res.ok === true && res.contractVersion === 1 && ISO_JST.test(res.fetchedAt) && typeof res.bookingId === 'string', 'key_status 共通項目', problems);
+  var v = (res && res.keyStatus) || {};
+  var keys = Object.keys(v).sort();
+  var allowed = KEY_VIEW_KEYS.slice();
+  check(keys.every(function (k) { return allowed.indexOf(k) !== -1; }) && KEY_VIEW_KEYS.every(function (k) { return keys.indexOf(k) !== -1; }), 'keyStatus のキーが許可リスト: ' + keys.join(), problems);
+  check(v.verdict && VERDICT_CODES.indexOf(v.verdict.code) !== -1 && /^(ok|info|warn|ng)$/.test(v.verdict.tone) && typeof v.verdict.label === 'string', 'verdict', problems);
+  check(Array.isArray(v.reasons) && v.reasons.every(function (r) { return typeof r.code === 'string' && typeof r.text === 'string'; }), 'reasons', problems);
+  check(/^(CONNECTED|NOT_CONNECTED|FETCH_FAILED|UNSUPPORTED)$/.test(v.connection), 'connection', problems);
+  check(Array.isArray(v.ops) && v.ops.every(function (o) {
+    return Object.keys(o).sort().join() === KEY_OP_KEYS.join() && (o.validFrom === null || ISO_JST.test(o.validFrom)) && (o.validTo === null || ISO_JST.test(o.validTo)) && (o.updatedAt === null || ISO_JST.test(o.updatedAt));
+  }), 'ops の形（許可リスト）', problems);
+  check(Array.isArray(v.jobs) && v.jobs.every(function (j) { return typeof j.label === 'string' && (j.ageMinutes === null || typeof j.ageMinutes === 'number'); }), 'jobs', problems);
+  return problems;
+}
+
+module.exports = { validateKeyStatus: validateKeyStatus, validateList: validateList, validateDetail: validateDetail, validateError: validateError, ERROR_CODES: ERROR_CODES };

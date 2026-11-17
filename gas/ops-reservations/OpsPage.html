@@ -153,14 +153,14 @@
 
   /* 手動再取得・連続操作で、遅れて返った古い応答が最新結果を上書きしないようにする。 */
   function createController(api, onChange) {
-    var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null, mock: api && api.kind === 'mock' };
-    var listSeq = 0, detailSeq = 0;
+    var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null, key: { phase: 'idle', data: null, error: null, fetchedAt: null }, mock: api && api.kind === 'mock' };
+    var listSeq = 0, detailSeq = 0, keySeq = 0;
     function emit() { if (onChange) onChange(state); }
     function fail(err) {
       state.error = err;
       if (DENIED_CODES.indexOf(err.code) !== -1) {
         /* 認可失敗では、以前の表示を残さない。 */
-        state.phase = 'denied'; state.data = null; state.stale = false; state.detail = null; state.detailPhase = 'idle'; state.detailId = null;
+        state.phase = 'denied'; state.data = null; state.stale = false; state.detail = null; state.detailPhase = 'idle'; state.detailId = null; keySeq++; state.key = { phase: 'idle', data: null, error: null, fetchedAt: null };
         /* 実行中の他の要求（一覧・詳細）の遅れて返る成功応答が、消した表示を復活させないよう、保留中の要求を無効化する。 */
         listSeq++; detailSeq++;
       } else {
@@ -193,10 +193,11 @@
       var mine = ++detailSeq;
       state.detailId = id;
       state.detail = null; state.detailPhase = 'loading'; state.detailError = null;
+      keySeq++; state.key = { phase: 'idle', data: null, error: null, fetchedAt: null };
       emit();
       api.detail(id, function (res) {
         if (mine !== detailSeq) return;
-        if (res && res.ok) { state.detail = res.reservation; state.detailPhase = 'ready'; }
+        if (res && res.ok) { state.detail = res.reservation; state.detailPhase = 'ready'; loadKey(id); }
         else {
           state.detailPhase = 'error'; state.detailError = res && res.error ? res.error : { message: '取得に失敗しました。' };
           if (res && res.error && DENIED_CODES.indexOf(res.error.code) !== -1) fail(res.error);
@@ -208,7 +209,23 @@
         emit();
       });
     }
-    function closeDetail() { detailSeq++; state.detailId = null; state.detail = null; state.detailPhase = 'idle'; state.detailError = null; emit(); }
+    /* 鍵・案内の状況（#942）は予約詳細とは別の要求。失敗しても詳細は壊さず、「未取得」と表示する（成功扱いにしない）。 */
+    function loadKey(id) {
+      var mine = ++keySeq;
+      if (!api.keyStatus) { state.key = { phase: 'error', data: null, error: { message: 'この画面では鍵・案内の状況を取得できません。' }, fetchedAt: null }; return; }
+      state.key = { phase: 'loading', data: null, error: null, fetchedAt: null };
+      api.keyStatus(id, function (res) {
+        if (mine !== keySeq) return;
+        if (res && res.ok && res.keyStatus) state.key = { phase: 'ready', data: res.keyStatus, error: null, fetchedAt: res.fetchedAt || null };
+        else state.key = { phase: 'error', data: null, error: res && res.error ? res.error : { message: '取得に失敗しました。' }, fetchedAt: null };
+        emit();
+      }, function () {
+        if (mine !== keySeq) return;
+        state.key = { phase: 'error', data: null, error: { message: '取得に失敗しました。', diagnostic: CLIENT_CALL_FAILED }, fetchedAt: null };
+        emit();
+      });
+    }
+    function closeDetail() { detailSeq++; keySeq++; state.detailId = null; state.detail = null; state.detailPhase = 'idle'; state.detailError = null; state.key = { phase: 'idle', data: null, error: null, fetchedAt: null }; emit(); }
     return { state: state, load: load, openDetail: openDetail, closeDetail: closeDetail };
   }
 
@@ -290,7 +307,39 @@
       ['受付経路', show(r.source)], ['作成', show(jstText(r.createdAt, true))], ['更新', show(jstText(r.updatedAt, true))],
       ['確定', show(jstText(r.confirmedAt, true))], ['キャンセル', show(jstText(r.cancelledAt, true))], ['失効', show(jstText(r.expiredAt, true))]
     ];
-    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>';
+    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderKeyStatus(state);
+  }
+
+  /* 鍵・案内の状況（#942。読み取り専用）。取得失敗・未接続・確認不能・不一致・要確認は別の表示。ジョブの稼働は別枠で、鍵の成功を意味しない。 */
+  var TONE_CLASS = { ok: 'ok', info: '', warn: 'stale', ng: 'err' };
+  function renderKeyStatus(state) {
+    var k = state.key;
+    var head = '<h2>鍵・案内の状況（読み取り専用）</h2>';
+    if (!k || k.phase === 'idle') return '';
+    if (k.phase === 'loading') return head + '<div class="banner">取得中…</div>';
+    if (k.phase === 'error') return head + '<div class="banner err">未取得: ' + esc(k.error && k.error.message || '取得に失敗しました。') + renderDiag(k.error || {}) + '</div>';
+    var d = k.data;
+    var html = head + '<div class="banner ' + (TONE_CLASS[d.verdict.tone] || '') + '" data-verdict="' + esc(d.verdict.code) + '"><strong>' + esc(d.verdict.label) + '</strong>';
+    if (d.reasons && d.reasons.length) html += '<ul>' + d.reasons.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('') + '</ul>';
+    html += '</div>';
+    if (d.ops && d.ops.length) {
+      html += '<ul class="cards">' + d.ops.map(function (o) {
+        return '<li class="card"><div class="top"><span class="tag">' + esc(o.kindLabel) + '</span><span class="tag">改訂 ' + esc(o.rev === null ? '不明' : o.rev) + (o.current ? '（現在）' : '') + '</span></div>' +
+          '<dl><dt>状態</dt><dd>' + esc(o.stateLabel) + '</dd>' +
+          '<dt>鍵の有効時間</dt><dd>' + show(jstText(o.validFrom, true)) + ' 〜 ' + show(jstText(o.validTo, true)) + '</dd>' +
+          (o.deliveryLabel ? '<dt>案内</dt><dd>' + esc(o.deliveryLabel) + '</dd>' : '') +
+          '<dt>記録の更新</dt><dd>' + show(jstText(o.updatedAt, true)) + '</dd></dl></li>';
+      }).join('') + '</ul>';
+    }
+    if (d.truncated) html += '<div class="banner stale">操作履歴は ' + esc(d.opCount) + ' 件あり、最新の分だけを読んでいます。</div>';
+    (d.notes || []).forEach(function (n) { html += '<p class="note">' + esc(n) + '</p>'; });
+    if (d.jobs && d.jobs.length) {
+      html += '<details><summary>処理ジョブの稼働（予約ごとの鍵の成功ではありません）</summary><ul>' + d.jobs.map(function (j) {
+        return '<li>' + esc(j.label) + ': ' + (j.ageMinutes === null ? '<span class="empty">記録なし</span>' : esc(j.ageMinutes) + '分前に実行') + '</li>';
+      }).join('') + '</ul></details>';
+    }
+    html += '<p class="note">最終取得: ' + show(jstText(k.fetchedAt, true)) + '（JST）。参考表示です。実際に解錠できるかは確認していません。</p>';
+    return html;
   }
 
   function renderView(state) {
@@ -724,7 +773,9 @@
     return {
       kind: 'gas',
       list: function (params, ok, ng) { call('opsListReservations', params, ok, ng); },
-      detail: function (id, ok, ng) { call('opsGetReservation', id, ok, ng); }
+      detail: function (id, ok, ng) { call('opsGetReservation', id, ok, ng); },
+      /* 鍵・案内の状況（#942）。読み取り専用。接続先・トークンは画面に渡らない。 */
+      keyStatus: function (id, ok, ng) { call('opsGetKeyStatus', id, ok, ng); }
     };
   }
 

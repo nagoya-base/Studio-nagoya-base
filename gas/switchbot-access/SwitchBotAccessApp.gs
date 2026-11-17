@@ -221,7 +221,53 @@ function sba_runtime_() {
 
 // ── Web アプリ（SwitchBot Webhook の常設受信先）──
 // 応答は固定 {"ok":true|false} のみ。ペイロード・理由・設定は返さない。認証前は何も保存しない。
+//
+// 入口の振り分け（Issue #942）: クエリ a が無い要求（SwitchBot の Webhook は t のみ）だけが従来の Webhook 経路へ進む。
+// a=opsStatus（完全一致・1つだけ）は運営アプリ向けの読取り専用の状態参照へ。それ以外の a、または判定で例外が出た場合は
+// Webhook 経路へ落とさず固定の失敗応答で拒否する（運営用要求の判定不能が Webhook 処理を誤起動しないため）。
+// 運営用の経路は sba_runtime_／handleWebhook／ロック／書込みを通らず、Webhook 経路は運営用コードを呼ばない。
+function sba_routeOf_(e) {
+  var p = e && e.parameter;
+  var ps = e && e.parameters;
+  var has = !!p && Object.prototype.hasOwnProperty.call(p, 'a');
+  var hasMulti = !!ps && Object.prototype.hasOwnProperty.call(ps, 'a');
+  if (!has && !hasMulti) return 'WEBHOOK';
+  if (p && p.a === 'opsStatus' && (!ps || (ps.a && ps.a.length === 1 && ps.a[0] === 'opsStatus'))) return 'OPS_STATUS';
+  return 'REJECT';
+}
+
+function sba_opsStatusOutput_(res) {
+  return ContentService.createTextOutput(JSON.stringify(res)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function sba_sha256Hex_(s) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8);
+  return bytes.map(function (b) { return ((b < 0 ? b + 256 : b)).toString(16).padStart(2, '0'); }).join('');
+}
+
+// 運営アプリ向けの読取り専用の状態参照。状態ストアは get のみ（set/del/keys は例外）。ログは固定コードのみ。
+function sba_opsStatusPost_(e) {
+  var res;
+  try {
+    var raw = e && e.postData ? e.postData.contents : '';
+    var props = sba_scriptProps_();
+    var denied = function () { throw new Error('READ_ONLY_STORE'); };
+    res = AccessOpsStatus.handle(raw, {
+      store: { get: function (k) { return props.getProperty(k); }, set: denied, del: denied, keys: denied },
+      expectedDigest: props.getProperty('ACCESS_OPS_STATUS_TOKEN_SHA256'), // 設定（ACCESS_ 接頭辞＝状態ストア対象外）。ダイジェストのみ。認証前に読むのはこの1キーだけ
+      sha256Hex: sba_sha256Hex_,
+      nowSec: function () { return Math.floor(Date.now() / 1000); }
+    });
+  } catch (err) { res = { ok: false, code: 'NOT_AVAILABLE' }; }
+  try { Logger.log(res && res.ok === true ? 'accessOpsStatus OK' : 'accessOpsStatus REJECTED'); } catch (e2) { /* ログ失敗は無視 */ }
+  return sba_opsStatusOutput_(res && res.ok === true ? res : { ok: false, code: 'NOT_AVAILABLE' });
+}
+
 function doPost(e) {
+  var route;
+  try { route = sba_routeOf_(e); } catch (routeErr) { route = 'REJECT'; }
+  if (route === 'OPS_STATUS') return sba_opsStatusPost_(e);
+  if (route !== 'WEBHOOK') return sba_opsStatusOutput_({ ok: false, code: 'NOT_AVAILABLE' });
   var ok = false;
   try {
     var token = e && e.parameter ? e.parameter.t : '';

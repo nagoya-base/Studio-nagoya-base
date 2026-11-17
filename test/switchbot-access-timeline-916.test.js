@@ -250,7 +250,7 @@ test('ソース静的検査: 診断は admin()/runLocked/drainInbox/createRuntim
 });
 
 test('配布物・マニフェストは変えない（ファイル構成・スコープ・Webアプリ設定）', function () {
-  assert.deepStrictEqual(prepare.fileNames(), ['SwitchBotAccessCore.gs', 'AccessKeySnapshot.gs', 'AccessLedgerReader.gs', 'SwitchBotAccessInfra.gs', 'SwitchBotAccessApp.gs', 'appsscript.json']);
+  assert.deepStrictEqual(prepare.fileNames(), ['SwitchBotAccessCore.gs', 'AccessKeySnapshot.gs', 'AccessLedgerReader.gs', 'SwitchBotAccessInfra.gs', 'AccessOpsStatus.gs', 'SwitchBotAccessApp.gs', 'appsscript.json']);
   var m = JSON.parse(fs.readFileSync(path.join(ROOT, 'gas/switchbot-access/appsscript.json'), 'utf8'));
   assert.deepStrictEqual(m.oauthScopes, [
     'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets.readonly',

@@ -13,6 +13,7 @@ const path = require('node:path');
 // 配布物（scripts/prepare-switchbot-access-gas-project.js の出力）。テストが prepare の FILES と一致を確認する。
 const BUNDLE_FILES = [
   'AccessKeySnapshot.gs',
+  'AccessOpsStatus.gs',
   'AccessLedgerReader.gs',
   'SwitchBotAccessApp.gs',
   'SwitchBotAccessCore.gs',

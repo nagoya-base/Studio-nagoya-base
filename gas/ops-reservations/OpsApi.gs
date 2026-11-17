@@ -99,6 +99,21 @@ var OpsApi = (function () {
     };
   }
 
+  /*
+   * 鍵状態（Issue #942）の接続設定（GAS）。接続先URLと共有トークンはサーバー側のScript Propertiesだけ。
+   * どちらかが無ければ未接続（null）。値はログ・戻り値・画面へ出さない。
+   */
+  function accessConfigGas_() {
+    var props = PropertiesService.getScriptProperties();
+    var url = props.getProperty('OPS_ACCESS_STATUS_URL');
+    var token = props.getProperty('OPS_ACCESS_STATUS_TOKEN');
+    if (!url || !token) return null;
+    return {
+      url: url, token: token,
+      fetch: function (u, options) { return UrlFetchApp.fetch(u, options); }
+    };
+  }
+
   function load_(ctx) {
     var read;
     try {
@@ -168,6 +183,37 @@ var OpsApi = (function () {
     return { ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), reservation: OpsQuery.toDetail(found[0], nowMs) };
   }
 
+  /*
+   * 鍵・案内の状況（Issue #942。読み取り専用）。予約の詳細とは別の要求で、取得に失敗しても詳細を壊さない。
+   * 取得失敗・未接続・確認不能・不一致は keyStatus の中で別々に表す（エラー応答にしない）。予約自体の認可・不存在は詳細と同じ。
+   */
+  function keyStatus_(id, ctx, nowMs) {
+    var key = typeof id === 'string' ? id.trim() : '';
+    if (!key) return error_('INVALID_PARAMS', '予約IDが指定されていません。');
+    var loaded = load_(ctx);
+    if (!loaded.ok) return loaded;
+    var n = loaded.normalized;
+    if (n.duplicateIds.indexOf(key) !== -1) return error_('DUPLICATE_ID', '同じ予約IDの行が複数あるため表示できません。');
+    var found = n.records.filter(function (r) { return r.bookingId === key; });
+    if (found.length !== 1) return error_('NOT_FOUND', '該当する予約が見つかりません（空欄・不正な行は表示対象外です）。');
+    var rec = found[0];
+    var view;
+    var cfg = null;
+    try { cfg = ctx.accessConfig(); } catch (e) { cfg = undefined; }
+    if (cfg === undefined) {
+      view = OpsKeyStatus.unavailable('FETCH_FAILED', 'CONFIG_INVALID');
+    } else if (!cfg) {
+      view = OpsKeyStatus.unavailable('NOT_CONNECTED', null);
+    } else if (!OpsKeyStatus.BOOKING_ID_RE.test(rec.bookingId)) {
+      view = OpsKeyStatus.unavailable('UNVERIFIABLE', 'UNSUPPORTED_ID');
+    } else {
+      var got = OpsKeyStatus.fetchAccess(cfg, rec.bookingId);
+      view = got.ok ? OpsKeyStatus.evaluate(rec, got.data, nowMs) : OpsKeyStatus.unavailable('FETCH_FAILED', got.reason);
+    }
+    Logger.log('ops key_status ' + view.verdict.code + (view.failure ? ' ' + view.failure.code : ''));
+    return { ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), bookingId: rec.bookingId, keyStatus: view };
+  }
+
   /* 共通契約の入口。ctx.nowMs は検証用（省略時は現在時刻）。 */
   function handle(request, ctx) {
     var context = ctx || {};
@@ -177,11 +223,12 @@ var OpsApi = (function () {
       var code = auth && auth.code === 'FORBIDDEN' ? 'FORBIDDEN' : 'UNAUTHENTICATED';
       return error_(code, AUTH_MESSAGES_[code]);
     }
-    var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_ };
+    var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_, accessConfig: context.accessConfig || accessConfigGas_ };
     var nowMs = typeof context.nowMs === 'number' ? context.nowMs : Date.now();
     var op = request && request.op;
     if (op === 'list') return list_(request.params, full, nowMs);
     if (op === 'detail') return detail_(request.id, full, nowMs);
+    if (op === 'key_status') return keyStatus_(request.id, full, nowMs);
     /* メモ（Issue #941）。認可は上で済み。予約台帳（readLedger）には触れず、専用の保存先だけを使う。 */
     if (op === 'tasks_list' || op === 'task_save' || op === 'task_delete') {
       return OpsTasks.handle(request, context.tasks || tasksGas_(), nowMs);
@@ -204,6 +251,8 @@ function doGet() {
 /* google.script.run から呼ぶ公開関数。予約（opsListReservations / opsGetReservation）は読み取り専用。 */
 function opsListReservations(params) { return OpsApi.handle({ op: 'list', params: params }); }
 function opsGetReservation(bookingId) { return OpsApi.handle({ op: 'detail', id: bookingId }); }
+/* 鍵・案内の状況（Issue #942）。読み取り専用。接続先・トークンは画面へ渡さない。 */
+function opsGetKeyStatus(bookingId) { return OpsApi.handle({ op: 'key_status', id: bookingId }); }
 
 /* メモ（Issue #941）。毎回、所有者認可を通す。書込み先は専用スプレッドシートのTasks表に固定。 */
 function opsListTasks() { return OpsApi.handle({ op: 'tasks_list' }); }

@@ -18,7 +18,7 @@ var OpsNormalizer = (function () {
     'bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'purpose',
     'paymentMethod', 'status', 'source', 'confirmedAt', 'expiredAt', 'cancelledAt', 'updatedAt',
     'customerType', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt',
-    'planCode', 'largeParty'
+    'planCode', 'largeParty', 'revision'
   ];
   /* 一覧に必要で、無いと意味のある取得ができない列。 */
   var REQUIRED_COLUMNS = ['bookingId', 'date', 'startAt', 'brand', 'status'];
@@ -132,6 +132,7 @@ var OpsNormalizer = (function () {
       endMs: endMs,
       startAt: OpsContract.toIso(startMs),
       endAt: endMs === null ? null : OpsContract.toIso(endMs),
+      revision: revisionOrNull_(get('revision')),
       name: text_(get('name'), 80),
       people: numberOrNull_(get('people')),
       customerType: text_(get('customerType'), 40),
@@ -195,6 +196,12 @@ var OpsNormalizer = (function () {
     issues.sort(function (a, b) { return a.row - b.row; });
     var duplicateIds = Object.keys(idCounts).filter(function (k) { return idCounts[k] > 1; });
     return { schemaError: null, records: records, issues: issues, duplicateIds: duplicateIds, blankRows: blankRows, totalRows: totalRows };
+  }
+
+  /* 予約の改訂番号（鍵の記録との照合用。個人情報ではない）。整数でなければ推測せず null。 */
+  function revisionOrNull_(value) {
+    var n = numberOrNull_(value);
+    return n !== null && Math.floor(n) === n && n >= 0 ? n : null;
   }
 
   function reasonText(code) {

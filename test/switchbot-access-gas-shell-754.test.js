@@ -124,8 +124,8 @@ function setNow(env, iso) {
 
 // ================================================================ 配布物
 
-test('配布物: 6ファイルを決まった順で組み立て、デプロイは行わない。1つのvmコンテキストで衝突なく読める', function () {
-  assert.deepStrictEqual(prepare.fileNames(), ['SwitchBotAccessCore.gs', 'AccessKeySnapshot.gs', 'AccessLedgerReader.gs', 'SwitchBotAccessInfra.gs', 'SwitchBotAccessApp.gs', 'appsscript.json']);
+test('配布物: 7ファイルを決まった順で組み立て、デプロイは行わない。1つのvmコンテキストで衝突なく読める', function () {
+  assert.deepStrictEqual(prepare.fileNames(), ['SwitchBotAccessCore.gs', 'AccessKeySnapshot.gs', 'AccessLedgerReader.gs', 'SwitchBotAccessInfra.gs', 'AccessOpsStatus.gs', 'SwitchBotAccessApp.gs', 'appsscript.json']);
   var env = loadShell();
   ['doPost', 'doGet', 'accessSyncJob', 'accessSweepJob', 'accessWatchdogJob', 'accessDeliverJob', 'accessInstallTriggers', 'accessRemoveTriggers',
     'accessAdminStatus', 'accessAdminDelete', 'accessAdminResolveUnknown', 'accessCheckSetup'].forEach(function (f) {
