@@ -30,8 +30,8 @@ allowed_roots=("$test_home" /tmp /var/tmp /dev/shm)
 
 die() { echo "Isolated tests: $1" >&2; exit "${2:-1}"; }
 
-# 遅延計測（Issue #950）。各区間の経過ミリ秒だけを stderr に出す（パス・環境変数値・Secretは出さない）。
-# ISOLATION_TIMING 行はログ解析用。計測は隔離の判定に一切関与しない。
+# 遅延計測（Issue #950）。主要な区間（準備・実行・先読み待ち・全走査）の経過ミリ秒だけを stderr に出す（パス・環境変数値・Secretは出さない）。
+# 計測は隔離の判定に一切関与しない。
 _t_last="${EPOCHREALTIME//[.,]/}"
 phase() { local now="${EPOCHREALTIME//[.,]/}"; echo "ISOLATION_TIMING $1 $(( (now - _t_last) / 1000 ))ms" >&2; _t_last="$now"; }
 
@@ -65,7 +65,6 @@ workspace_is_clean() {
     [[ -z "$(git -C "$workspace" status --porcelain --untracked-files=all --ignored)" ]]
 }
 workspace_is_clean || die "workspace is not the clean approved commit before the tests"
-phase preflight
 
 # ---- ファイルシステムのメタデータ先読み（Issue #950。判定には一切使わない） ----
 # 後片付けの全走査（find /）は、GitHub-hosted runnerの冷えたディスクでは約5分かかる（温まっていれば約3秒）。
@@ -153,12 +152,10 @@ teardown() {
   status=0
   user_processes_exist "$uid" || status=$?
   [[ "$status" -eq 1 ]] || teardown_fail "processes of the isolated user survived or could not be listed"
-  phase teardown-kill-processes
   # sudoの試行（拒否されても）でsudo自身が作る記録ファイル（root作成・内容はタイムスタンプのみ）は既知の副作用として削除する。
   sudo -n rm -f "/run/sudo/ts/$test_user" "/run/sudo/ts/$uid" "/var/run/sudo/ts/$test_user" "/var/run/sudo/ts/$uid" ||
     teardown_fail "could not remove sudo timestamp records"
   # そのユーザー所有のファイルを全ファイルシステムで探す（/proc・/sysは除外）。許可領域外は隔離不成立。
-  phase teardown-sudo-timestamps
   wait_warm_fs_cache
   phase teardown-wait-warmup
   if ! scan_owned "$uid" "$gid" /; then
@@ -188,13 +185,11 @@ teardown() {
     done
     [[ "$ok" -eq 1 ]] || teardown_fail "SHARED_TEMP_CLEANUP_FAILED: could not delete files of the isolated user in $root"
   done
-  phase teardown-shared-temp-cleanup
   if ! scan_owned "$uid" "$gid" /tmp /var/tmp /dev/shm; then
     teardown_fail "SCAN_FAILED: the re-scan of the shared temp areas did not complete"
   elif [[ -n "$scan_result" ]]; then
     teardown_fail "files of the isolated user remain in shared temp areas"
   fi
-  phase teardown-shared-temp-rescan
   sudo -n userdel --remove "$test_user" >/dev/null 2>&1 || teardown_fail "userdel failed"
   if getent group "$test_user" >/dev/null; then
     sudo -n groupdel "$test_user" >/dev/null 2>&1 || teardown_fail "groupdel failed"
@@ -203,11 +198,9 @@ teardown() {
   if id "$test_user" >/dev/null 2>&1 || getent group "$test_user" >/dev/null || [[ -e "$test_home" ]]; then
     teardown_fail "the isolated user, its group or its home still exists"
   fi
-  phase teardown-remove-user-and-home
   if ! workspace_is_clean; then
     teardown_fail "the workspace changed during the tests"
   fi
-  phase teardown-workspace-check
 }
 
 finish() {
@@ -222,7 +215,6 @@ finish() {
   exit "$status"
 }
 
-phase preflight-checks
 sudo -n useradd --create-home --home-dir "$test_home" --shell /bin/bash --user-group "$test_user"
 trap finish EXIT
 start_warm_fs_cache

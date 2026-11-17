@@ -9,9 +9,6 @@
 set -uo pipefail
 
 escaped=()
-# 遅延計測（Issue #950）。経過ミリ秒のみ出力（パス・環境変数値は出さない）。
-_t_last="${EPOCHREALTIME//[.,]/}"
-phase() { local now="${EPOCHREALTIME//[.,]/}"; echo "PROBE_TIMING $1 $(( (now - _t_last) / 1000 ))ms" >&2; _t_last="$now"; }
 try_write() { # <label> <directory>
   local dir="$2"
   [[ -n "$dir" && -d "$dir" ]] || return 0
@@ -27,12 +24,10 @@ try_write usr-local-bin /usr/local/bin
 try_write etc /etc
 
 try_write canary "${BOOKING_ISOLATION_CANARY:-}"
-phase try-write-targets
 # 既存のworld-writableなファイルを（内容を変えずに）書込みモードで開けたら隔離不成立。
 while IFS= read -r -d '' f; do
   if ( : >> "$f" ) 2>/dev/null; then escaped+=("world-writable-file"); break; fi
 done < <(find /usr /opt /home /etc /var -xdev -type f -perm -0002 -print0 2>/dev/null | head -z -n 20)
-phase world-writable-file-search
 if ( : > /.booking-isolation-probe ) 2>/dev/null; then escaped+=(root-filesystem); fi
 
 if [[ -S /var/run/docker.sock && -w /var/run/docker.sock ]]; then escaped+=(docker-socket); fi
@@ -40,14 +35,12 @@ if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then escaped+
 if sudo -n true >/dev/null 2>&1; then escaped+=(sudo); fi
 if command -v crontab >/dev/null 2>&1 && echo '* * * * * true' | crontab - >/dev/null 2>&1; then escaped+=(crontab); fi
 if command -v at >/dev/null 2>&1 && echo true | at now + 5 minutes >/dev/null 2>&1; then escaped+=(at); fi
-phase docker-sudo-cron-at
 for environ in /proc/[0-9]*/environ; do
   [[ -O "$environ" ]] && continue
   if { tr '\0' '\n' < "$environ"; } 2>/dev/null | grep -qE '^(ACTIONS_RUNTIME_TOKEN|GITHUB_TOKEN|ACTIONS_ID_TOKEN_REQUEST_TOKEN)='; then
     escaped+=("environ-of-other-process"); break
   fi
 done
-phase environ-of-other-processes
 # 環境に GitHub/Actions の変数が無いこと（env -i で起動されている）。
 if env | grep -qE '^(GITHUB_|ACTIONS_|RUNNER_)'; then escaped+=(inherited-github-env); fi
 
