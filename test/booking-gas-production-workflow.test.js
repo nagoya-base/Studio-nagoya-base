@@ -927,7 +927,11 @@ test('#874 review: tests run isolated (separate disposable user, env -i, verifie
   assert.ok(teardownBody.indexOf('wait_warm_fs_cache') > 0 && teardownBody.indexOf('wait_warm_fs_cache') < teardownBody.indexOf('scan_owned "$uid" "$gid" /'), 'the warm-up is awaited before the full scan');
   const warm = script.slice(script.indexOf('warm_fs_cache() {'), script.indexOf('start_warm_fs_cache()'));
   assert.doesNotMatch(warm, /-delete|-exec|rm |chmod|chown|mv |tee |> *[^/&\s]/, 'the warm-up only reads');
-  assert.doesNotMatch(workflow, /BOOKING_ISOLATION_PREWARM/, 'production never toggles the warm-up');
+  assert.doesNotMatch(workflow, /BOOKING_ISOLATION_PREWARM|BOOKING_ISOLATION_WARM_TIMEOUT/, 'production never toggles or tunes the warm-up');
+  // the warm-up is bounded: a short default limit enforced by a root-side timeout (kills the whole process group), then the full scan always runs
+  assert.match(script, /warm_limit="\$\{BOOKING_ISOLATION_WARM_TIMEOUT:-240\}"/, 'short default limit');
+  assert.match(script, /sudo -n env [^\n]* timeout --kill-after=5 "\$warm_limit" bash -c/, 'the timeout runs as root inside sudo so find/xargs are stopped too');
+  assert.doesNotMatch(script, /timeout 900/, 'no long unconditional wait');
 });
 
 test('#874 review: PR CI proves the isolation with a hostile probe, a canary escape (exit 3) and the real test command', () => {
@@ -949,6 +953,8 @@ test('#874 review: PR CI proves the isolation with a hostile probe, a canary esc
   assert.match(job, /diff "\$RUNNER_TEMP\/host-state-before\.txt" "\$RUNNER_TEMP\/host-state-after\.txt"/);
   assert.match(job, /done \| diff "\$RUNNER_TEMP\/host-state-before\.txt" -/);
   assert.match(job, /\n          bash scripts\/run-booking-tests-isolated\.sh repository-tests\n/);
+  assert.match(job, /BOOKING_ISOLATION_WARM_TIMEOUT: '0\.1'/, 'an aborted warm-up is exercised in CI');
+  assert.match(job, /pgrep -f 'xargs -0 -r -P 64'/, 'no warm-up process may survive its time limit');
   const probe = fs.readFileSync(path.join(workspace, 'scripts/booking-test-isolation-probe.sh'), 'utf8');
   for (const target of ['workspace', 'runner-temp', 'node-bin', 'npm-global-prefix', 'usr-local-bin', 'canary', 'world-writable-file', 'root-filesystem',
     'docker-socket', 'docker-api', 'sudo', 'crontab', 'environ-of-other-process', 'inherited-github-env']) {

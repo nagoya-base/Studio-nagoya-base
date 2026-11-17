@@ -72,16 +72,24 @@ workspace_is_clean || die "workspace is not the clean approved commit before the
 # - 先読みはキャッシュを載せるだけ。隔離の成否は、先読みの後に必ず実行する従来どおりの走査（scan_owned）だけが決める。
 # - 先読みの失敗・中断・時間切れは無視してよい（走査はそれでも完全に実行され、失敗すれば従来どおり exit 3）。
 # - 何も書き換えない（find による読取りのみ）。走査の範囲・検査の内容は変えない。
+# - 先読みには短い上限（既定240秒。冷えたrunnerの実測は約130〜220秒）を設ける。上限に達したら、先読みの全プロセス（root側のtimeoutが
+#   プロセスグループごと終了させる）を止めて、必ず元の完全な走査へ進む。任意の最適化が検査時間を押し上げないための上限。
 warm_pid=""
+warm_limit="${BOOKING_ISOLATION_WARM_TIMEOUT:-240}"
+[[ "$warm_limit" =~ ^[0-9]+(\.[0-9]+)?$ ]] || warm_limit=240
 warm_fs_cache() {
-  timeout 900 sudo -n env WARM_WORKERS=64 WARM_DEPTH=3 bash -c '
+  local warm_status=0
+  # timeout はroot側（sudoの内側）で動かす。外側だとsudoにしか届かず、rootのfind/xargsが残りうる。
+  sudo -n env WARM_WORKERS=64 WARM_DEPTH=3 timeout --kill-after=5 "$warm_limit" bash -c '
     prune=( \( -path /proc -o -path /sys \) -prune -o )
     # 浅い階層（DEPTH未満）のディレクトリは直下だけ、DEPTH階層のディレクトリは配下すべてを stat する（ -user はstatを強制するため）。
     find / -maxdepth "$((WARM_DEPTH - 1))" "${prune[@]}" -type d -print0 |
       xargs -0 -r -P "$WARM_WORKERS" -I{} find {} -maxdepth 1 -user 0 -o -nouser -o -print0 >/dev/null 2>&1
     find / -mindepth "$WARM_DEPTH" -maxdepth "$WARM_DEPTH" "${prune[@]}" -type d -print0 |
       xargs -0 -r -P "$WARM_WORKERS" -I{} find {} \( -path /proc -o -path /sys \) -prune -o -user 0 -o -nouser -o -print0 >/dev/null 2>&1
-  ' >/dev/null 2>&1 || :
+  ' >/dev/null 2>&1 || warm_status=$?
+  # 124=時間切れ、137=強制終了。判定には使わず、ログにだけ残す。
+  if [[ "$warm_status" -eq 124 || "$warm_status" -eq 137 ]]; then echo "ISOLATION_TIMING warmup-stopped-at-time-limit ${warm_limit}s" >&2; fi
   return 0
 }
 # BOOKING_ISOLATION_PREWARM=0 は先読みだけを省く（PR CIで、直前のstepで既に温まっている異常注入stepの重複を避ける専用。本番workflowでは使わない）。

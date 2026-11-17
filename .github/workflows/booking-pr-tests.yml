@@ -171,6 +171,21 @@ jobs:
           check '^-n find /tmp /var/tmp /dev/shm ' 'SCAN_FAILED: the re-scan of the shared temp areas'
           check '^-n find /var/tmp -xdev -depth' 'SHARED_TEMP_CLEANUP_FAILED'
           rm -rf "$fake" "$RUNNER_TEMP/isolation-stderr.txt"
+      # Issue #950: 先読みは任意の最適化。上限（ここでは0.1秒）で中断されても、完全な走査と判定まで進み、rootの先読みプロセスが残らないことを確かめる。
+      - name: Warm-up check - a warm-up stopped at its time limit still reaches the full scan and leaves no process
+        env:
+          BOOKING_ISOLATION_WARM_TIMEOUT: '0.1'
+        run: |
+          set -euo pipefail
+          bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh >"$RUNNER_TEMP/isolation-stdout.txt" 2>"$RUNNER_TEMP/isolation-stderr.txt"
+          cat "$RUNNER_TEMP/isolation-stderr.txt" >&2
+          grep -q 'warmup-stopped-at-time-limit' "$RUNNER_TEMP/isolation-stderr.txt"
+          grep -q 'teardown-full-scan-and-classify' "$RUNNER_TEMP/isolation-stderr.txt"
+          grep -q 'Isolation confirmed' "$RUNNER_TEMP/isolation-stdout.txt"
+          sleep 2
+          if pgrep -f 'xargs -0 -r -P 64' >/dev/null; then echo "a warm-up process survived its time limit" >&2; exit 1; fi
+          if getent passwd | grep -q '^booking-test-'; then echo "the isolated user remains" >&2; exit 1; fi
+          rm -f "$RUNNER_TEMP/isolation-stdout.txt" "$RUNNER_TEMP/isolation-stderr.txt"
       - name: Host account and cron/at files are unchanged after the probe runs
         run: |
           set -euo pipefail
