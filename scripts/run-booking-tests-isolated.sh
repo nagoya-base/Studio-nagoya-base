@@ -30,6 +30,11 @@ allowed_roots=("$test_home" /tmp /var/tmp /dev/shm)
 
 die() { echo "Isolated tests: $1" >&2; exit "${2:-1}"; }
 
+# 遅延計測（Issue #950）。主要な区間（準備・実行・先読み待ち・全走査）の経過ミリ秒だけを stderr に出す（パス・環境変数値・Secretは出さない）。
+# 計測は隔離の判定に一切関与しない。
+_t_last="${EPOCHREALTIME//[.,]/}"
+phase() { local now="${EPOCHREALTIME//[.,]/}"; echo "ISOLATION_TIMING $1 $(( (now - _t_last) / 1000 ))ms" >&2; _t_last="$now"; }
+
 probe_env=()
 case "$mode" in
   repository-tests)
@@ -61,6 +66,43 @@ workspace_is_clean() {
 }
 workspace_is_clean || die "workspace is not the clean approved commit before the tests"
 
+# ---- ファイルシステムのメタデータ先読み（Issue #950。判定には一切使わない） ----
+# 後片付けの全走査（find /）は、GitHub-hosted runnerの冷えたディスクでは約5分かかる（温まっていれば約3秒）。
+# 遅いのは走査の中身ではなく、メタデータの逐次I/O待ちなので、テストの実行中に読取りだけの並列statでキャッシュを温める。
+# - 先読みはキャッシュを載せるだけ。隔離の成否は、先読みの後に必ず実行する従来どおりの走査（scan_owned）だけが決める。
+# - 先読みの失敗・中断・時間切れは無視してよい（走査はそれでも完全に実行され、失敗すれば従来どおり exit 3）。
+# - 何も書き換えない（find による読取りのみ）。走査の範囲・検査の内容は変えない。
+# - 先読みには短い上限（既定240秒。冷えたrunnerの実測は約130〜220秒）を設ける。上限に達したら、先読みの全プロセス（root側のtimeoutが
+#   プロセスグループごと終了させる）を止めて、必ず元の完全な走査へ進む。任意の最適化が検査時間を押し上げないための上限。
+warm_pid=""
+warm_limit="${BOOKING_ISOLATION_WARM_TIMEOUT:-240}"
+[[ "$warm_limit" =~ ^[0-9]+(\.[0-9]+)?$ ]] || warm_limit=240
+warm_fs_cache() {
+  local warm_status=0
+  # timeout はroot側（sudoの内側）で動かす。外側だとsudoにしか届かず、rootのfind/xargsが残りうる。
+  sudo -n env WARM_WORKERS=64 WARM_DEPTH=3 timeout --kill-after=5 "$warm_limit" bash -c '
+    prune=( \( -path /proc -o -path /sys \) -prune -o )
+    # 浅い階層（DEPTH未満）のディレクトリは直下だけ、DEPTH階層のディレクトリは配下すべてを stat する（ -user はstatを強制するため）。
+    find / -maxdepth "$((WARM_DEPTH - 1))" "${prune[@]}" -type d -print0 |
+      xargs -0 -r -P "$WARM_WORKERS" -I{} find {} -maxdepth 1 -user 0 -o -nouser -o -print0 >/dev/null 2>&1
+    find / -mindepth "$WARM_DEPTH" -maxdepth "$WARM_DEPTH" "${prune[@]}" -type d -print0 |
+      xargs -0 -r -P "$WARM_WORKERS" -I{} find {} \( -path /proc -o -path /sys \) -prune -o -user 0 -o -nouser -o -print0 >/dev/null 2>&1
+  ' >/dev/null 2>&1 || warm_status=$?
+  # 124=時間切れ、137=強制終了。判定には使わず、ログにだけ残す。
+  if [[ "$warm_status" -eq 124 || "$warm_status" -eq 137 ]]; then echo "ISOLATION_TIMING warmup-stopped-at-time-limit ${warm_limit}s" >&2; fi
+  return 0
+}
+# BOOKING_ISOLATION_PREWARM=0 は先読みだけを省く（PR CIで、直前のstepで既に温まっている異常注入stepの重複を避ける専用。本番workflowでは使わない）。
+# 先読みは判定に関与しないため、これを0にしても走査・隔離条件・exit 3は変わらない。
+start_warm_fs_cache() { [[ "${BOOKING_ISOLATION_PREWARM:-1}" != "0" ]] || return 0; warm_fs_cache & warm_pid=$!; }
+# 走査の直前に先読みの終了を待つ。待った時間は計測に出す（先読みの結果は成否に影響しない）。
+wait_warm_fs_cache() {
+  [[ -n "$warm_pid" ]] || return 0
+  wait "$warm_pid" 2>/dev/null || :
+  warm_pid=""
+  return 0
+}
+
 # ---- 後片付けと検証（trapで必ず実行。失敗はexit 3） ----
 # 方針: 後片付けの各コマンドの失敗・部分的な走査は握りつぶさず、すべて隔離不成立（teardown_failed=1 → exit 3）とする。
 teardown_failed=0
@@ -90,6 +132,7 @@ scan_owned() { # <uid> <gid> <find対象...>（findの式は固定）
       scan_result="$out"
       return 0
     fi
+    echo "ISOLATION_TIMING scan-attempt-$attempt-incomplete" >&2
     sleep 1
   done
   return 1
@@ -121,6 +164,8 @@ teardown() {
   sudo -n rm -f "/run/sudo/ts/$test_user" "/run/sudo/ts/$uid" "/var/run/sudo/ts/$test_user" "/var/run/sudo/ts/$uid" ||
     teardown_fail "could not remove sudo timestamp records"
   # そのユーザー所有のファイルを全ファイルシステムで探す（/proc・/sysは除外）。許可領域外は隔離不成立。
+  wait_warm_fs_cache
+  phase teardown-wait-warmup
   if ! scan_owned "$uid" "$gid" /; then
     teardown_fail "SCAN_FAILED: the filesystem scan for files of the isolated user did not complete"
   else
@@ -138,6 +183,7 @@ teardown() {
       printf '%s' "$outside" | head -n 20 | sed 's/^/  /' >&2
     fi
   fi
+  phase teardown-full-scan-and-classify
   # 共有一時領域に残った所有ファイルを削除し、必ず再走査で0件を確認する（削除・再走査の失敗も隔離不成立）。
   for root in /tmp /var/tmp /dev/shm; do
     ok=0
@@ -179,6 +225,7 @@ finish() {
 
 sudo -n useradd --create-home --home-dir "$test_home" --shell /bin/bash --user-group "$test_user"
 trap finish EXIT
+start_warm_fs_cache
 # cron/atの登録はホストのファイルを変えずに防ぐ: spool（/var/spool）はnamespace内で読取り専用、crontab/atの
 # setgidは no_new_privs で効かない。後片付けの全走査でも所有ファイルが残れば隔離不成立になる（/etc/cron.deny等は触らない）。
 sudo -n cp -a "$workspace/." "$test_home/repo"
@@ -186,6 +233,7 @@ sudo -n rm -f "$test_home/repo/.git/config.lock"
 sudo -n chown -R "$test_user:$test_user" "$test_home/repo"
 sudo -n mkdir -p "$test_home/tmp"
 sudo -n chown "$test_user:$test_user" "$test_home/tmp"
+phase setup-user-and-copy-workspace
 
 # 依存取得のためのproxy／CA設定だけは引き継ぐ（GitHub-hosted runnerでは通常未設定。Secretではない）。
 net_env=()
@@ -234,6 +282,7 @@ sudo -n unshare --mount --pid --fork --mount-proc --propagation private \
   env -i HOME="$test_home" PATH="$PATH" LANG=C.UTF-8 CI=true TMPDIR="$test_home/tmp" \
     BUNDLE_DEPLOYMENT=true BUNDLE_PATH="$test_home/bundle" ${probe_env[@]+"${probe_env[@]}"} ${net_env[@]+"${net_env[@]}"} \
     bash -c "cd \"\$HOME/repo\" && $inner" || status=$?
+phase run-in-namespace
 if [[ "$status" -eq 97 ]]; then
   echo "Isolated tests: the isolation namespace could not be set up." >&2
   teardown_failed=1

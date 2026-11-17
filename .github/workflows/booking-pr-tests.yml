@@ -86,8 +86,20 @@ jobs:
             if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
           done > "$RUNNER_TEMP/host-state-before.txt"
           cat "$RUNNER_TEMP/host-state-before.txt"
+      # Issue #950: 冷えたrunnerの全走査（メタデータの逐次I/O待ち）は、最初に隔離スクリプトを走らせたときに先読みで温める。
+      # その待ちを約1分のリポジトリテストと重ねて隠すため、本番と同じコマンドのこのstepを最初に実行する（検査は1つも減らさない）。
+      # 以降のstepはキャッシュが温まっているので先読みを省く（BOOKING_ISOLATION_PREWARM=0。走査・判定は同じ）。
+      - name: Repository tests pass as the isolated user (same command as the production workflow)
+        run: |
+          set -euo pipefail
+          bash scripts/run-booking-tests-isolated.sh repository-tests
+          for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
+            if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
+          done | diff "$RUNNER_TEMP/host-state-before.txt" -
       # runner上の /usr/local/bin・hostedtoolcache は world-writable。canaryと既存world-writableファイルでその状況を模す。
       - name: Probe - forbidden operations (incl. world-writable host paths) are refused and leftovers are removed
+        env:
+          BOOKING_ISOLATION_PREWARM: '0' # 直前のリポジトリテストで既に温まっている。
         run: |
           set -euo pipefail
           sudo mkdir -p /srv/booking-isolation-canary
@@ -105,6 +117,8 @@ jobs:
           sudo rm -rf /srv/booking-isolation-canary
       # 隔離の外（root）から、隔離ユーザー所有のファイルと常駐プロセスを注入し、後片付けの検証が exit 3 で止めることを確かめる。
       - name: Teardown check - an injected leftover outside the allowed areas stops with ISOLATION_NOT_CONFIRMED (exit 3)
+        env:
+          BOOKING_ISOLATION_PREWARM: '0' # 直前のProbeで既に温まっている。先読みだけを省く（走査・判定は同じ）。
         run: |
           set -euo pipefail
           sudo mkdir -p /srv/booking-isolation-inject
@@ -132,6 +146,8 @@ jobs:
       # 後片付けの走査・削除・再走査が失敗した場合（sudoを包むラッパーで該当コマンドだけを失敗させる）に、
       # 握りつぶさず exit 3 で止まり、隔離ユーザー自体は削除されることを確かめる。
       - name: Teardown check - scan, cleanup and re-scan failures fail closed (exit 3)
+        env:
+          BOOKING_ISOLATION_PREWARM: '0' # 同上。
         run: |
           set -euo pipefail
           fake="$RUNNER_TEMP/fake-sudo"
@@ -155,6 +171,21 @@ jobs:
           check '^-n find /tmp /var/tmp /dev/shm ' 'SCAN_FAILED: the re-scan of the shared temp areas'
           check '^-n find /var/tmp -xdev -depth' 'SHARED_TEMP_CLEANUP_FAILED'
           rm -rf "$fake" "$RUNNER_TEMP/isolation-stderr.txt"
+      # Issue #950: 先読みは任意の最適化。上限（ここでは0.1秒）で中断されても、完全な走査と判定まで進み、rootの先読みプロセスが残らないことを確かめる。
+      - name: Warm-up check - a warm-up stopped at its time limit still reaches the full scan and leaves no process
+        env:
+          BOOKING_ISOLATION_WARM_TIMEOUT: '0.1'
+        run: |
+          set -euo pipefail
+          bash scripts/run-booking-tests-isolated.sh probe scripts/booking-test-isolation-probe.sh >"$RUNNER_TEMP/isolation-stdout.txt" 2>"$RUNNER_TEMP/isolation-stderr.txt"
+          cat "$RUNNER_TEMP/isolation-stderr.txt" >&2
+          grep -q 'warmup-stopped-at-time-limit' "$RUNNER_TEMP/isolation-stderr.txt"
+          grep -q 'teardown-full-scan-and-classify' "$RUNNER_TEMP/isolation-stderr.txt"
+          grep -q 'Isolation confirmed' "$RUNNER_TEMP/isolation-stdout.txt"
+          sleep 2
+          if pgrep -f 'xargs -0 -r -P 64' >/dev/null; then echo "a warm-up process survived its time limit" >&2; exit 1; fi
+          if getent passwd | grep -q '^booking-test-'; then echo "the isolated user remains" >&2; exit 1; fi
+          rm -f "$RUNNER_TEMP/isolation-stdout.txt" "$RUNNER_TEMP/isolation-stderr.txt"
       - name: Host account and cron/at files are unchanged after the probe runs
         run: |
           set -euo pipefail
@@ -162,10 +193,3 @@ jobs:
             if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
           done > "$RUNNER_TEMP/host-state-after.txt"
           diff "$RUNNER_TEMP/host-state-before.txt" "$RUNNER_TEMP/host-state-after.txt"
-      - name: Repository tests pass as the isolated user (same command as the production workflow)
-        run: |
-          set -euo pipefail
-          bash scripts/run-booking-tests-isolated.sh repository-tests
-          for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/subuid /etc/subgid /etc/cron.deny /etc/at.deny /etc/cron.allow /etc/at.allow; do
-            if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
-          done | diff "$RUNNER_TEMP/host-state-before.txt" -

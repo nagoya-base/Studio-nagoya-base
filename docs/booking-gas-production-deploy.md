@@ -212,6 +212,9 @@ Spreadsheet ID Secret・WIF/OIDCは使わず、`booking-production`に登録す�
   6. 後片付けの各コマンドの失敗は握りつぶさない。所有ファイルの全探索は`find`が正常終了した走査だけを有効とし（不完全な走査は最大3回までやり直し）、
      走査・共有一時領域の削除・再走査・pkill/pgrep・ユーザー削除のどれかが失敗すれば`SCAN_FAILED`／`SHARED_TEMP_CLEANUP_FAILED`などで隔離不成立とする。
      ホストのmountは、既に読取り専用のもの（snapの`/snap/core*`などのsquashfs）を除いて`remount,bind,ro`にし、その後に読取り専用でないmountが残っていないことを再確認する（Issue #925。既にroのmountへの再mountが`Read-only file system`で失敗しても隔離を弱めずに成立させるため。writableなmountの再mount失敗や再確認の不一致は従来どおりexit 97→exit 3）。
+     全探索の前に、テスト実行と並行して**読取りのみの並列stat（メタデータ先読み。Issue #950）**でディスクキャッシュを温める。GitHub-hosted runnerの冷えたディスクでは全探索が約5分かかるが、温まっていれば約3秒で、遅延は探索の中身ではなくメタデータの逐次I/O待ちだったため。
+     先読みは何も書き換えず、隔離の成否には一切関与しない（失敗・時間切れは無視でき、判定は先読みの後に必ず行う従来どおりの全探索だけが行う。探索範囲・許可領域・再走査・exit 3の条件は不変）。
+     先読みには短い上限（既定240秒。冷えたrunnerの実測は約130〜220秒）があり、root側の`timeout`がプロセスグループごと（`find`・`xargs`を含む）止める。最悪時の追加時間は「上限＋従来の直列全探索（先読みが進めた分は温まる）」で、先読みが止まっても無制限に待たない。PR CIでは上限0.1秒で中断しても、全探索・判定まで進みrootの先読みプロセスが残らないことを毎回確認する。`BOOKING_ISOLATION_PREWARM=0`で先読みだけを省けるが、PR CIの異常注入stepだけが使い、本番workflowでは使わない（テストで固定）。
   7. namespaceの構築やこれらの確認のどれかに失敗すれば `ISOLATION_NOT_CONFIRMED`（exit 3）で停止し、Summaryに`テスト隔離の確認`で「更新前停止」と出る。Secret付きstepへは進まない。
 - 隔離の成立はPR CI（`booking-pr-tests.yml` の `booking-test-isolation` job）で毎回検証する。悪意あるテスト／依存を模したprobe
   （workspace・`RUNNER_TEMP`・Node/npm導入先・`/usr/local/bin`・`/etc`・ルートFS・ホスト上のworld-writableなディレクトリ（canary）と既存world-writableファイルへの書込み、
