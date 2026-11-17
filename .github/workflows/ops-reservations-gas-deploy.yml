@@ -1,0 +1,123 @@
+name: Deploy ops reservations GAS
+
+# Issue #936: 運営アプリ（予約確認）専用GAS（gas/ops-reservations/）を、既存の専用Webアプリ Deployment のまま更新する。
+# 通常更新: Actions → このworkflow → Run workflow（Branch は main のまま）。**入力は不要**。
+#   mainの版を反映する。反映後も利用URLは同じ。mainへのpushでは起動しない（自動デプロイなし）。
+# 復旧: 任意入力 rollback_version に既存の版番号を入れて実行すると、同じDeploymentを直前の版へ戻す。
+# 対象はこのツール専用GASのみ。予約・決済・鍵（Access）・Webhook・Pagesのworkflow／Secrets／Environment／concurrencyは使わない。
+# 初回だけ専用GASの作成・認証・Secrets設定が必要（docs/ops-reservations-gas-deploy-936.md）。ID未設定時に新規プロジェクトは作らない。
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_version:
+        description: '【通常は空欄】復旧用: 戻し先の既存の版番号（例: 3）。指定すると、コードを反映せず同じDeploymentをその版へ戻す'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+# 専用対象の並行更新を防ぐ。実行中のrunは強制キャンセルしない（状態不明を避ける）。
+concurrency:
+  group: ops-reservations-gas-deploy
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify main (no secrets)
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.gate.outputs.valid }}
+      mode: ${{ steps.gate.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Gate (main only, manual only, fail closed)
+        id: gate
+        shell: bash
+        env:
+          # 入力は env 経由でのみ渡す（run へ直接展開しない）。
+          DG_EVENT: ${{ github.event_name }}
+          DG_REF: ${{ github.ref }}
+          DG_ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+        run: |
+          set -euo pipefail
+          stop() {
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "- ❌ 失敗: 安全停止（$1）。何も反映していません" >> "$GITHUB_STEP_SUMMARY"
+            echo "Gate stopped safely: $1" >&2
+            exit 1
+          }
+          rc=0
+          status="$(node scripts/ops-reservations-gas-deploy-lib.js dispatch-gate)" || rc=$?
+          [[ "$rc" -eq 0 && "$status" == "OK" ]] || stop "${status:-GATE_ERROR}"
+          # 古いSHA対策: 実行時点のmain先頭と一致しなければ停止（古いコミットを反映しない）。
+          git fetch --no-tags --depth=1 origin main
+          [[ "$(git rev-parse FETCH_HEAD)" == "$GITHUB_SHA" ]] || stop "STALE_SHA_NOT_MAIN_HEAD"
+          echo "valid=true" >> "$GITHUB_OUTPUT"
+          if [[ -n "${DG_ROLLBACK_VERSION//[[:space:]]/}" ]]; then mode=rollback; else mode=deploy; fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "- ✅ 入力ゲート: 通過（操作: \`$mode\` / 対象: main \`$GITHUB_SHA\`）" >> "$GITHUB_STEP_SUMMARY"
+      - name: Frontend is in sync with the generated GAS page
+        if: steps.gate.outputs.mode == 'deploy'
+        run: node scripts/build-ops-gas-page.js --check
+      - name: Run ops app tests
+        if: steps.gate.outputs.mode == 'deploy'
+        run: node --test test/ops-*.test.js
+      - name: Assemble and inspect the bundle (no deploy)
+        if: steps.gate.outputs.mode == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-ops-reservations-gas-project.js "$RUNNER_TEMP/bundle"
+          node scripts/ops-reservations-gas-deploy-lib.js check-bundle "$RUNNER_TEMP/bundle"
+          echo "- ✅ テスト・フロント生成物の同期・配布物検査: 成功" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Update the dedicated ops deployment
+    needs: verify
+    if: ${{ needs.verify.result == 'success' && needs.verify.outputs.valid == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    # Secrets（専用3件）はこのEnvironmentにだけ置く。他のEnvironment・Secretsは使わない。
+    environment: ops-reservations-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned clasp
+        run: npm install --global @google/clasp@3.4.1
+      - name: Skip if a newer main commit changed the target
+        id: fresh
+        if: needs.verify.outputs.mode == 'deploy'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          mapfile -t target_paths < <(node scripts/ops-reservations-gas-deploy-lib.js target-paths)
+          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- "${target_paths[@]}"; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "- ⏭ 新しいmainコミットが対象を変更済みのためスキップ（古いrunは反映しません）。最新のmainで再実行してください" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Push source and update the existing deployment
+        if: needs.verify.outputs.mode == 'deploy' && steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          OPS_CLASPRC_JSON: ${{ secrets.OPS_RESERVATIONS_CLASPRC_JSON }}
+          OPS_SCRIPT_ID: ${{ secrets.OPS_RESERVATIONS_SCRIPT_ID }}
+          OPS_DEPLOYMENT_ID: ${{ secrets.OPS_RESERVATIONS_DEPLOYMENT_ID }}
+        run: bash scripts/deploy-ops-reservations-gas.sh deploy
+      - name: Roll the same deployment back to an existing version
+        if: needs.verify.outputs.mode == 'rollback'
+        shell: bash
+        env:
+          OPS_CLASPRC_JSON: ${{ secrets.OPS_RESERVATIONS_CLASPRC_JSON }}
+          OPS_SCRIPT_ID: ${{ secrets.OPS_RESERVATIONS_SCRIPT_ID }}
+          OPS_DEPLOYMENT_ID: ${{ secrets.OPS_RESERVATIONS_DEPLOYMENT_ID }}
+          ROLLBACK_VERSION: ${{ inputs.rollback_version }}
+        run: bash scripts/deploy-ops-reservations-gas.sh rollback
