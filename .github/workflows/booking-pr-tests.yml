@@ -106,6 +106,8 @@ jobs:
           sudo rm -rf /srv/booking-isolation-canary
       # 隔離の外（root）から、隔離ユーザー所有のファイルと常駐プロセスを注入し、後片付けの検証が exit 3 で止めることを確かめる。
       - name: Teardown check - an injected leftover outside the allowed areas stops with ISOLATION_NOT_CONFIRMED (exit 3)
+        env:
+          BOOKING_ISOLATION_PREWARM: '0' # 直前のProbeで既に温まっている。先読みだけを省く（走査・判定は同じ）。
         run: |
           set -euo pipefail
           sudo mkdir -p /srv/booking-isolation-inject
@@ -133,6 +135,8 @@ jobs:
       # 後片付けの走査・削除・再走査が失敗した場合（sudoを包むラッパーで該当コマンドだけを失敗させる）に、
       # 握りつぶさず exit 3 で止まり、隔離ユーザー自体は削除されることを確かめる。
       - name: Teardown check - scan, cleanup and re-scan failures fail closed (exit 3)
+        env:
+          BOOKING_ISOLATION_PREWARM: '0' # 同上。
         run: |
           set -euo pipefail
           fake="$RUNNER_TEMP/fake-sudo"

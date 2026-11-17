@@ -85,7 +85,9 @@ warm_fs_cache() {
   ' >/dev/null 2>&1 || :
   return 0
 }
-start_warm_fs_cache() { warm_fs_cache & warm_pid=$!; }
+# BOOKING_ISOLATION_PREWARM=0 は先読みだけを省く（PR CIで、直前のstepで既に温まっている異常注入stepの重複を避ける専用。本番workflowでは使わない）。
+# 先読みは判定に関与しないため、これを0にしても走査・隔離条件・exit 3は変わらない。
+start_warm_fs_cache() { [[ "${BOOKING_ISOLATION_PREWARM:-1}" != "0" ]] || return 0; warm_fs_cache & warm_pid=$!; }
 # 走査の直前に先読みの終了を待つ。待った時間は計測に出す（先読みの結果は成否に影響しない）。
 wait_warm_fs_cache() {
   [[ -n "$warm_pid" ]] || return 0

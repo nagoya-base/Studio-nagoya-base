@@ -922,6 +922,12 @@ test('#874 review: tests run isolated (separate disposable user, env -i, verifie
   assert.match(script, /ISOLATION_NOT_CONFIRMED[^\n]*\n\s+exit 3/);
   assert.match(script, /trap finish EXIT/);
   assert.match(script, /npm ci --ignore-scripts/);
+  // Issue #950: the metadata warm-up is read-only priming. It is waited for before the authoritative scan and never decides the result.
+  const teardownBody = script.slice(script.indexOf('teardown() {'), script.indexOf('finish() {'));
+  assert.ok(teardownBody.indexOf('wait_warm_fs_cache') > 0 && teardownBody.indexOf('wait_warm_fs_cache') < teardownBody.indexOf('scan_owned "$uid" "$gid" /'), 'the warm-up is awaited before the full scan');
+  const warm = script.slice(script.indexOf('warm_fs_cache() {'), script.indexOf('start_warm_fs_cache()'));
+  assert.doesNotMatch(warm, /-delete|-exec|rm |chmod|chown|mv |tee |> *[^/&\s]/, 'the warm-up only reads');
+  assert.doesNotMatch(workflow, /BOOKING_ISOLATION_PREWARM/, 'production never toggles the warm-up');
 });
 
 test('#874 review: PR CI proves the isolation with a hostile probe, a canary escape (exit 3) and the real test command', () => {
