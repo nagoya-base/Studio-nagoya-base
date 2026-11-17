@@ -479,11 +479,11 @@ test('期間: 始端=0:00(含む)・終端=翌0:00(含まない)の時間帯の�
 });
 
 /* ---- 静的な境界（読み取り専用・非干渉） ---- */
-test('境界: 予約台帳は読み取り専用スコープ・自分のみ公開・書き込み/送信APIを含まない（#941: メモ専用のdrive.fileだけ追加）', function () {
+test('境界: 予約台帳は読み取り専用スコープ・自分のみ公開・書き込み/送信APIを含まない（#941: 保存先は設定IDのメモ専用ファイルに固定）', function () {
   var manifest = JSON.parse(readFile('appsscript.json'));
-  /* 予約台帳へ届くのは spreadsheets.readonly のみ。drive.file はこのアプリが作成したファイル（メモ専用）だけに届く。
-     広い書込み権限（spreadsheets / drive 全体）・メール・カレンダー・トリガーは持たない。 */
-  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/userinfo.email']);
+  /* #941 追加修正: 手動用意のメモ専用ファイルに届く最小の scope は spreadsheets（ファイル単位で絞れない）。台帳への書込みは権限では防げないため、
+     コードで固定する（下の静的検査 + test/ops-tasks.test.js）。drive 全体・メール・カレンダー・トリガーは持たない。 */
+  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
   assert.strictEqual(manifest.webapp.access, 'MYSELF');
   var forbidden = /setValue|setValues|appendRow|insertSheet|deleteRow|\.clear\(|MailApp|GmailApp|CalendarApp|SpreadsheetApp|DriveApp|SpreadsheetApp\.create|ANYONE/;
   fs.readdirSync(DIR).forEach(function (f) {
@@ -641,7 +641,7 @@ test('診断: 失敗は成功・0件として返さず、対応案は「時間�
 
 test('診断: 読み取り専用・許可リストの不変条件（既存のGET限定・scope維持）', function () {
   var manifest = JSON.parse(readFile('appsscript.json'));
-  assert.deepStrictEqual(manifest.oauthScopes.filter(function (x) { return /spreadsheets/.test(x); }), ['https://www.googleapis.com/auth/spreadsheets.readonly']);
+  assert.deepStrictEqual(manifest.oauthScopes.filter(function (x) { return /spreadsheets/.test(x); }), ['https://www.googleapis.com/auth/spreadsheets']);
   assert.strictEqual(manifest.webapp.access, 'MYSELF');
   var t = api([row()], { override: failAt('DATA', { status: 503, text: '' }) });
   t.sb.opsListReservations({});

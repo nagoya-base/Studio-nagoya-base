@@ -369,6 +369,13 @@
   var STATUS_OPTIONS = [['todo', '未対応'], ['doing', '対応中'], ['done', '完了']];
   var SERVICE_OPTIONS = [['', '（なし・予約と無関係）'], ['snb', 'SNB'], ['studio_x', 'Studio X'], ['snb_mens', 'SNB Mens'], ['snb_community', 'SNB Community'], ['unclassified', '未分類']];
   var DENIED_CODES = ['UNAUTHENTICATED', 'FORBIDDEN'];
+  /* サーバーが返す固定の対応案と診断コード（許可リスト由来。IDや応答本文は含まれない）を、原因を断定せずに添える。 */
+  function withHint(err) {
+    var m = (err && err.message) || '';
+    if (err && typeof err.hint === 'string' && err.hint) m += ' ' + err.hint;
+    if (err && typeof err.reason === 'string' && /^[A-Z0-9_\/]{1,40}$/.test(err.reason)) m += '（診断コード: ' + err.reason + '）';
+    return m;
+  }
   var UNCONFIRMED = '保存できたか確認できていません。一覧を再読み込みして内容を確認してください（入力は残しています）。';
 
   function esc(value) {
@@ -459,7 +466,7 @@
         load(true);
         return false;
       }
-      state.save = { phase: 'failed', message: (err && err.message) || UNCONFIRMED, current: null, at: null, code: err ? err.code : null };
+      state.save = { phase: 'failed', message: withHint(err) || UNCONFIRMED, current: null, at: null, code: err ? err.code : null };
       emit();
       return false;
     }
@@ -520,7 +527,7 @@
     if (state.phase === 'loading') html += '<div class="banner">取得中…</div>';
     if (state.phase === 'denied') html += '<div class="banner err">' + esc(state.error.message) + '（メモは表示しません）</div>';
     if (state.phase === 'error') {
-      html += '<div class="banner err">' + esc(state.error.message) + '</div>';
+      html += '<div class="banner err">' + esc(withHint(state.error)) + '</div>';
       if (state.stale) html += '<div class="banner stale">古い内容を表示しています（最終取得成功: ' + esc(jstText(state.lastSuccessAt) || state.lastSuccessAt) + ' JST）。最新ではありません。</div>';
     }
     var s = state.save;
@@ -534,7 +541,7 @@
     var d = state.data;
     if (state.phase === 'ready' && d) {
       if (d.skippedRows > 0) html += '<div class="banner err" role="alert">保存先の ' + esc(d.skippedRows) + ' 行を読み込めませんでした。一覧・件数は不完全です（未対応のメモが表示されていない可能性があります）。メモ専用スプレッドシートの該当行（taskId・状態・版番号）を確認・修正してください。</div>';
-      if (d.storeReady === false) html += '<div class="banner stale">メモの保存先はまだ作成されていません。最初のメモを保存すると、このアプリ専用のスプレッドシートが自動で作られます（予約台帳とは別のファイルです）。</div>';
+      if (d.storeReady === false) html += '<div class="banner stale">メモの保存先が未設定です（OPS_TASKS_SPREADSHEET_ID）。予約台帳とは別の専用スプレッドシートを設定すると保存できます。ファイルは自動では作りません。</div>';
       if (d.purge && d.purge.deleted > 0) html += '<div class="banner">完了から' + esc(d.retentionDays) + '日を過ぎたメモ ' + esc(d.purge.deleted) + '件を削除しました。</div>';
       if (d.purge && d.purge.failed) html += '<div class="banner stale">期限切れメモの削除に失敗しました（次回の取得で再試行します）。</div>';
       html += '<div class="note">最終取得成功: ' + esc(jstText(state.lastSuccessAt) || state.lastSuccessAt) + ' JST</div>';

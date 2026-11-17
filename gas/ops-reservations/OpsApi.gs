@@ -87,7 +87,6 @@ var OpsApi = (function () {
     return {
       store: OpsTasksStore.create({
         getSpreadsheetId: function () { return props.getProperty('OPS_TASKS_SPREADSHEET_ID'); },
-        setSpreadsheetId: function (id) { props.setProperty('OPS_TASKS_SPREADSHEET_ID', id); },
         getLedgerId: function () { return props.getProperty('OPS_SPREADSHEET_ID'); },
         fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
         getToken: function () { return ScriptApp.getOAuthToken(); }

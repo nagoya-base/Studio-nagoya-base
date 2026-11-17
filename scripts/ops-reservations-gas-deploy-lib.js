@@ -14,14 +14,21 @@ const path = require('node:path');
 const BUNDLE_FILES = [
   'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsNormalizer.gs', 'OpsPage.html', 'OpsQuery.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
 ];
-// 運営アプリだけが使う権限。予約台帳は読み取り専用（spreadsheets.readonly）。
-// drive.file（Issue #941）は「このアプリ自身が作成したファイルだけ」に届く権限で、メモ専用スプレッドシートの書込み用。
-// 予約台帳（別途作成されたファイル）には届かない。広い権限（spreadsheets / drive 全体）・メール・トリガー等は配布しない。
+// 運営アプリだけが使う権限（Issue #941 追加修正で更新）。
+// 所有者が手動で用意したメモ専用スプレッドシートは、drive.file（このアプリが作成したファイルだけに届く）では読み書きできない。
+// 既存ファイルへ届く最小の権限は spreadsheets（ファイル単位では絞れない）。そのため権限ではなくコードで書込み先を固定する:
+// 書込みは OPS_TASKS_SPREADSHEET_ID のTasks表のみ・台帳IDと同一なら停止・台帳読取り(OpsSource)はGETのみ（静的テストで検査）。
+// spreadsheets.readonly と drive.file は不要になったため外した（spreadsheets に包含 / 作成しない）。drive全体・メール・トリガー等は配布しない。
 const APPROVED_SCOPES = [
-  'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/script.external_request',
-  'https://www.googleapis.com/auth/spreadsheets.readonly',
+  'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/userinfo.email'
+];
+// 移行用: 直前の版（#957）で承認済みだった scope。**リモート（現在デプロイ済みの版）にあっても拒否しない**ためだけの許可で、
+// 配布物（bundle）には含められない（bundleは APPROVED_SCOPES と過不足なく一致が必須）。
+const LEGACY_REMOTE_SCOPES = [
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/spreadsheets.readonly'
 ];
 const REQUIRED_REMOTE_FILES = ['OpsApi.gs', 'OpsAuth.gs'];
 // 鮮度確認（古いrunのスキップ）が参照する対象パス。
@@ -122,7 +129,7 @@ function checkManifest(remoteFile, bundleFile) {
   if (!isSheetsOnlyDependencies(bundle.dependencies, false)) return 'BUNDLE_MANIFEST_DEPENDENCY_NOT_APPROVED';
   const rw = remote.webapp || {};
   if (rw.access !== bw.access || rw.executeAs !== bw.executeAs) return 'MANIFEST_WEBAPP_MISMATCH';
-  if ((remote.oauthScopes || []).some((s) => !APPROVED_SCOPES.includes(s))) return 'MANIFEST_REMOTE_UNAPPROVED_SCOPE';
+  if ((remote.oauthScopes || []).some((s) => !APPROVED_SCOPES.includes(s) && !LEGACY_REMOTE_SCOPES.includes(s))) return 'MANIFEST_REMOTE_UNAPPROVED_SCOPE';
   if (!isSheetsOnlyDependencies(remote.dependencies, true)) return 'MANIFEST_REMOTE_UNAPPROVED_DEPENDENCY';
   return 'OK';
 }
@@ -250,4 +257,4 @@ if (require.main === module) {
   process.exit(code);
 }
 
-module.exports = { APPROVED_SCOPES, BUNDLE_FILES, TARGET_PATHS, checkBundle, checkDispatch, checkManifest, checkRemoteTarget, checkCredential, compareSources, describeVersion, descriptionMatches, parseVersions, pickDeployment };
+module.exports = { APPROVED_SCOPES, LEGACY_REMOTE_SCOPES, BUNDLE_FILES, TARGET_PATHS, checkBundle, checkDispatch, checkManifest, checkRemoteTarget, checkCredential, compareSources, describeVersion, descriptionMatches, parseVersions, pickDeployment };

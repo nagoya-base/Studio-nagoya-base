@@ -63,7 +63,7 @@ function makeWorld(opts) {
     var body = options.payload ? JSON.parse(options.payload) : null;
     requests.push({ method: method, url: u, body: body, auth: options.headers && options.headers.Authorization, contentType: options.contentType });
     if (opts.fetchThrows) throw new Error('boom SECRET-ID ' + TASKS_ID);
-    if (opts.failOn && opts.failOn(method, u)) return res({ error: { message: 'SECRET-BODY' } }, 500);
+    if (opts.failOn && opts.failOn(method, u)) return res({ error: { message: 'SECRET-BODY' } }, opts.failStatus || 500);
     var base = 'https://sheets.googleapis.com/v4/spreadsheets';
     if (u.indexOf(base) !== 0) return res({}, 404);
     var rest = u.slice(base.length);
@@ -190,39 +190,67 @@ test('認可(GAS入口): 所有者以外のメールでは opsListTasks/opsSaveT
   assert.strictEqual(plain(owner.opsListTasks()).items.filter(function (t) { return t.title === '所有者の保存'; }).length, 1);
 });
 
-/* ===================== 保存先の作成・再表示（端末間） ===================== */
-test('初回: 保存先が未作成なら一覧は空で「未作成」を返し、通信しない。最初の保存で専用ファイルを1つだけ作る', function () {
+/* ===================== 保存先（手動用意の専用ファイル）・再表示（端末間） ===================== */
+test('保存先未設定: 一覧は空で「未設定」を返し通信しない。保存は別ファイルを作らず、固定コードで失敗する', function () {
   var world = makeWorld();
   var b = backend(world);
   var l = b.list();
   assert.strictEqual(l.ok, true);
   assert.strictEqual(l.storeReady, false);
   assert.deepStrictEqual(l.items, []);
-  assert.deepStrictEqual(world.requests, [], '未作成の一覧取得で何も作らない・読まない');
   var s = b.save(input({ title: '最初のメモ' }), null);
-  assert.strictEqual(s.ok, true, JSON.stringify(s));
-  var creates = world.requests.filter(function (r) { return r.method === 'POST' && /\/v4\/spreadsheets$/.test(r.url); });
-  assert.strictEqual(creates.length, 1);
-  assert.ok(/専用/.test(creates[0].body.properties.title) && /予約台帳ではありません/.test(creates[0].body.properties.title));
-  var id = b.props.OPS_TASKS_SPREADSHEET_ID;
-  assert.ok(id && id !== LEDGER_ID, '作成したIDをサーバー側の設定に保存する');
-  assert.deepStrictEqual(world.files[id].rows[0], HEADER, 'ヘッダー行つきで作成');
-  assert.strictEqual(world.files[id].rows.length, 2);
-  assert.strictEqual(world.ledgerTouchedByWrite, false);
-  /* 2回目以降は作らない。 */
-  b.save(input({ taskId: 'T-newtask00002', title: '2つ目' }), null);
-  assert.strictEqual(world.requests.filter(function (r) { return r.method === 'POST' && /\/v4\/spreadsheets$/.test(r.url); }).length, 1);
-});
-
-test('初回: 作成後に保存先IDを記録できなければ成功にしない（保存済みと言わない）', function () {
-  var world = makeWorld();
-  var b = backend(world, { propertyFails: true });
-  var s = b.save(input(), null);
   assert.strictEqual(s.ok, false);
   assert.strictEqual(s.error.code, 'STORE_FAILED');
+  assert.strictEqual(s.error.reason, 'NOT_CONFIGURED');
+  assert.ok(/OPS_TASKS_SPREADSHEET_ID/.test(s.error.hint));
   assert.deepStrictEqual(contract.validateError(s), []);
-  assert.strictEqual(b.props.OPS_TASKS_SPREADSHEET_ID, undefined);
-  assert.strictEqual(b.list().storeReady, false);
+  assert.deepStrictEqual(world.requests, [], '未設定では何も読まず・作らず・書かない');
+  assert.strictEqual(b.props.OPS_TASKS_SPREADSHEET_ID, undefined, 'IDを勝手に設定しない');
+  assert.strictEqual(Object.keys(world.files).length, 1, '台帳以外のファイルを作らない');
+});
+
+test('保存先が設定済み: 手動で用意した専用ファイルのTasks表（既存データあり）へ追記し、既存の行・他タブ相当を壊さない', function () {
+  var world = makeWorld({ preload: [HEADER, taskRow({ title: '既存メモ' })] });
+  var b = backend(world);
+  var s = b.save(input({ title: '追加メモ' }), null);
+  assert.strictEqual(s.ok, true, JSON.stringify(s));
+  assert.strictEqual(tasksRows(world).length, 3);
+  assert.strictEqual(tasksRows(world)[1][1], '既存メモ', '既存行は変更しない');
+  assert.strictEqual(world.requests.filter(function (r) { return r.method === 'POST' && /\/v4\/spreadsheets$/.test(r.url); }).length, 0, '新規作成APIは呼ばない');
+  assert.strictEqual(world.ledgerTouchedByWrite, false);
+  assert.strictEqual(Object.keys(world.files).length, 2);
+});
+
+test('アクセス拒否・Tasksタブなし: 書かずに固定コード＋対応案で失敗し、IDや応答本文を出さない', function () {
+  [['403', function (m, u) { return true; }, 403, /READ_HTTP\/403/, /権限|承認/],
+   ['404', function () { return true; }, 404, /READ_HTTP\/404/, /見つけられません/],
+   ['400(タブなし)', function () { return true; }, 400, /READ_HTTP\/400/, /Tasks/]].forEach(function (c) {
+    var world = makeWorld({ preload: [HEADER], failOn: function (m, u) { return true; }, failStatus: c[2] });
+    var b = backend(world);
+    [b.list(), b.save(input(), null)].forEach(function (r) {
+      assert.strictEqual(r.ok, false, c[0]);
+      assert.strictEqual(r.error.code, 'STORE_FAILED', c[0]);
+      assert.ok(c[3].test(r.error.reason), c[0] + ' ' + r.error.reason);
+      assert.ok(c[4].test(r.error.hint), c[0] + ' ' + r.error.hint);
+      assert.ok(!/断定した/.test(r.error.hint));
+      assert.deepStrictEqual(contract.validateError(r), [], c[0]);
+      assert.ok(!/SECRET|FAKE-TASKS|FAKE-TOKEN/.test(JSON.stringify(r) + b.sb._logs.join('\n')), c[0]);
+    });
+    assert.deepStrictEqual(writes(world), [], c[0] + ': 失敗時に書き込まない');
+  });
+});
+
+test('スキーマ不正・空タブ: ヘッダーが無い/違う場合は書込み・初期化せず停止（データを壊さない）', function () {
+  [['空のTasksタブ', []], ['別ヘッダー', [['a', 'b'], ['x', 'y']]], ['列が足りない', [HEADER.slice(0, 10), taskRow().slice(0, 10)]]].forEach(function (c) {
+    var world = makeWorld({ preload: c[1] });
+    var before = JSON.stringify(tasksRows(world));
+    var r = backend(world).save(input(), null);
+    assert.strictEqual(r.ok, false, c[0]);
+    assert.strictEqual(r.error.reason, 'SCHEMA', c[0]);
+    assert.ok(/ヘッダー/.test(r.error.hint));
+    assert.deepStrictEqual(writes(world), [], c[0]);
+    assert.strictEqual(JSON.stringify(tasksRows(world)), before, c[0]);
+  });
 });
 
 test('再表示: 保存した内容を、別の端末（別のhandle呼び出し・再読込）で同じ内容として確認できる', function () {
@@ -589,11 +617,14 @@ test('境界: 配布対象は運営アプリのファイルのみで、メモの
   var lib = require(path.join(ROOT, 'scripts', 'ops-reservations-gas-deploy-lib.js'));
   assert.ok(lib.BUNDLE_FILES.indexOf('OpsTasks.gs') !== -1 && lib.BUNDLE_FILES.indexOf('OpsTasksStore.gs') !== -1);
   assert.deepStrictEqual(lib.APPROVED_SCOPES.slice().sort(), [
-    'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/script.external_request',
-    'https://www.googleapis.com/auth/spreadsheets.readonly', 'https://www.googleapis.com/auth/userinfo.email']);
-  /* 予約台帳に届く書込み権限（spreadsheets 全体・drive 全体）は承認リストに無く、検査で拒否される。 */
-  assert.ok(lib.APPROVED_SCOPES.indexOf('https://www.googleapis.com/auth/spreadsheets') === -1);
-  assert.ok(lib.APPROVED_SCOPES.indexOf('https://www.googleapis.com/auth/drive') === -1);
+    'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
+  /* drive.file（作成ファイルのみ）は手動用意の保存先に届かないため外し、spreadsheets のみ。drive全体・readonly・旧scopeは承認リストに無い。 */
+  ['drive', 'drive.file', 'spreadsheets.readonly'].forEach(function (n) { assert.ok(lib.APPROVED_SCOPES.indexOf('https://www.googleapis.com/auth/' + n) === -1, n); });
+  var manifest = JSON.parse(readFile('appsscript.json'));
+  assert.deepStrictEqual(manifest.oauthScopes.slice().sort(), lib.APPROVED_SCOPES.slice().sort(), 'manifestと承認リストは過不足なく一致');
+  /* 書込みはメモ専用ファイルのTasks表に固定。台帳側コードは書込み・作成APIを持たない。 */
+  var storeSrc = code('OpsTasksStore.gs');
+  assert.ok(!/method: 'post'[^\n]*API_BASE, \{|sheets: \[\{|create: function/.test(storeSrc), '保存先を作成するコードを持たない');
 });
 
 /* ===================== 画面ロジック（フロントエンド） ===================== */
@@ -725,12 +756,12 @@ test('画面: 取得失敗は空・成功にせず、古い内容は「最新で
   assert.strictEqual(c2.state.data, null);
 });
 
-test('画面: 保存先が未作成のとき、その旨を表示する（0件の正常表示と区別）', function () {
+test('画面: 保存先が未設定のとき、その旨を表示する（0件の正常表示と区別）', function () {
   var api = fakeTasksApi();
   var ctl = T.createController(api);
   ctl.load();
   api.pending.list[0].ok(listRes([], { storeReady: false }));
-  assert.ok(/保存先はまだ作成されていません/.test(T.renderBanner(ctl.state)));
+  assert.ok(/保存先が未設定です/.test(T.renderBanner(ctl.state)));
 });
 
 test('画面: 描画はすべてエスケープし、証跡リンクはhttpsのみ（新しいタブ・opener遮断）。削除・保持の通知を表示する', function () {
@@ -869,7 +900,7 @@ test('結合(架空): スマホで作成→状態変更→メモ保存、別端�
 
 test('文書: 保存先・保持/削除基準・退避/復旧・初回設定が記載されている', function () {
   var doc = fs.readFileSync(path.join(ROOT, 'docs', 'ops-tasks-941.md'), 'utf8');
-  ['保存先', '180日', '削除', '退避', '復旧', '初回', 'drive.file', '競合', '二重送信', '未実施'].forEach(function (w) { assert.ok(doc.indexOf(w) !== -1, w); });
+  ['保存先', '180日', '削除', '退避', '復旧', '初回', 'spreadsheets', '競合', '二重送信', '未実施'].forEach(function (w) { assert.ok(doc.indexOf(w) !== -1, w); });
   assert.ok(!/AKfycb[0-9A-Za-z_-]{10,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(com|jp|net)\b/.test(doc), '実在のID・メールを書かない');
 });
 
