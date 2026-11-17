@@ -82,10 +82,32 @@ function checkRemoteTarget(remoteDir) {
 }
 
 /**
+ * 許可する依存は「Google Sheets v4 拡張サービス」の正確な宣言1件のみ（Issue #955）。
+ * 他の拡張サービス・ライブラリ・余分なキー/項目は許可しない。
+ * 配布側(allowEmpty=false)は宣言が必須。リモート(allowEmpty=true)は初回の未宣言（空/無し）も許可。
+ */
+function isSheetsOnlyDependencies(dep, allowEmpty) {
+  if (dep === undefined || dep === null) return allowEmpty;
+  if (typeof dep !== 'object' || Array.isArray(dep)) return false;
+  const keys = Object.keys(dep);
+  if (keys.length === 0) return allowEmpty;
+  if (keys.length !== 1 || keys[0] !== 'enabledAdvancedServices') return false;
+  const list = dep.enabledAdvancedServices;
+  if (!Array.isArray(list)) return false;
+  if (list.length === 0) return allowEmpty;
+  if (list.length !== 1) return false;
+  const e = list[0];
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return false;
+  const k = Object.keys(e).sort();
+  return JSON.stringify(k) === JSON.stringify(['serviceId', 'userSymbol', 'version'])
+    && e.userSymbol === 'Sheets' && e.serviceId === 'sheets' && e.version === 'v4';
+}
+
+/**
  * 公開設定を黙って変えない。
- *  - 配布側manifest: oauthScopes は承認済み（読み取り専用）と過不足なく一致、依存（Advanced Services/ライブラリ）なし、
+ *  - 配布側manifest: oauthScopes は承認済み（読み取り専用）と過不足なく一致、依存は Google Sheets v4 拡張サービスの正確な宣言のみ（他サービス/ライブラリ/余分な項目は拒否）、
  *    webapp は 自分のみ(MYSELF)・実行者=デプロイ者(USER_DEPLOYING)
- *  - リモート: webapp が配布側と一致、承認済み外のscopeを持たない（持つなら別プロジェクトの疑いで停止）
+ *  - リモート: webapp が配布側と一致、承認済み外のscopeを持たない、依存は未宣言または上記Sheets v4のみ（持つなら別プロジェクトの疑いで停止）
  */
 function checkManifest(remoteFile, bundleFile) {
   let remote; let bundle;
@@ -94,13 +116,11 @@ function checkManifest(remoteFile, bundleFile) {
   if (bw.access !== 'MYSELF' || bw.executeAs !== 'USER_DEPLOYING') return 'BUNDLE_MANIFEST_NOT_OWNER_ONLY';
   const scopes = (bundle.oauthScopes || []).slice().sort();
   if (JSON.stringify(scopes) !== JSON.stringify(APPROVED_SCOPES.slice().sort())) return 'BUNDLE_MANIFEST_SCOPE_NOT_APPROVED';
-  const dep = bundle.dependencies || {};
-  if (Object.values(dep).some((v) => (Array.isArray(v) ? v.length : v && typeof v === 'object' ? Object.keys(v).length : !!v))) {
-    return 'BUNDLE_MANIFEST_HAS_DEPENDENCY';
-  }
+  if (!isSheetsOnlyDependencies(bundle.dependencies, false)) return 'BUNDLE_MANIFEST_DEPENDENCY_NOT_APPROVED';
   const rw = remote.webapp || {};
   if (rw.access !== bw.access || rw.executeAs !== bw.executeAs) return 'MANIFEST_WEBAPP_MISMATCH';
   if ((remote.oauthScopes || []).some((s) => !APPROVED_SCOPES.includes(s))) return 'MANIFEST_REMOTE_UNAPPROVED_SCOPE';
+  if (!isSheetsOnlyDependencies(remote.dependencies, true)) return 'MANIFEST_REMOTE_UNAPPROVED_DEPENDENCY';
   return 'OK';
 }
 

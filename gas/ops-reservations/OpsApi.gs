@@ -26,7 +26,7 @@ var OpsApi = (function () {
    */
   var DIAG_STAGES_ = ['META', 'HEADER', 'DATA'];
   var DIAG_ADVICE_ = {
-    API_DISABLED: 'Googleが「このGASのGCPプロジェクトでSheets APIが無効」と返しています。GCPの設定は変えず、この診断コードを開発担当へ共有してください（有効化の方法は根拠に沿って別途案内します）。',
+    API_DISABLED: 'Googleが「このGASのGCPプロジェクトでSheets APIが無効」と返しています。GCPの切替は不要です。GASにGoogle Sheets拡張サービス（Sheets v4）を追加するとAPIが自動で有効になります。正本のデプロイ（運営アプリ専用Actions）で更新後に再取得し、同じ診断コードが続く場合はコードを開発担当へ共有してください。',
     SCOPE_INSUFFICIENT: '承認済みの権限が不足しています。所有者本人のアカウントで専用URLを開き直し、読み取り専用の承認画面が出たら承認してください（権限の拡大は不要）。',
     EXCEPTION_AUTH_REQUIRED: 'GASの外部通信（script.external_request）または読み取り権限の承認が済んでいない可能性があります。所有者本人で専用URLを開き直し、承認画面が出たら承認してください。',
     TOKEN_UNAVAILABLE: 'GASの認証トークンを取得できませんでした。所有者本人で専用URLを開き直して承認状態を確認し、改善しなければ診断コードを開発担当へ共有してください。',
