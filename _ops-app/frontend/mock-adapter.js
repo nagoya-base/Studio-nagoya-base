@@ -135,7 +135,7 @@
   /*
    * メモ（Issue #941）のモック。メモリ上だけに保存する架空データで、再読込で消える（実際のメモは保存されない）。
    * バックエンドと同じ契約: 版番号による競合、新規の冪等（同じIDの同内容は保存済み扱い）、状態/期限超過の判定。
-   * scenario: 'ok' | 'empty' | 'not_ready'（保存先未作成）| 'save_error'（保存が必ず失敗）| 'conflict'（更新が必ず競合）| 'denied'
+   * scenario: 'ok' | 'empty' | 'not_ready'（保存先未設定）| 'save_error'（保存が必ず失敗）| 'conflict'（更新が必ず競合）| 'denied'
    */
   var TASK_STATUS_LABELS = { todo: '未対応', doing: '対応中', done: '完了' };
   var TASK_CONTENT = ['title', 'bookingId', 'service', 'status', 'memo', 'dueDate', 'evidenceUrl'];
@@ -146,7 +146,7 @@
     var nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
     var defer = opts.defer || function (fn) { setTimeout(fn, 0); };
     var day = 24 * 3600 * 1000;
-    var ready = scenario !== 'not_ready' && scenario !== 'empty';
+    var ready = scenario !== 'not_ready';
     var tasks = scenario === 'ok' || scenario === 'save_error' || scenario === 'conflict' ? [
       { taskId: 'T-mockaaaa0001', title: '（モック）DM返信の確認', bookingId: '', service: '', status: 'todo', memo: '件名とリンクだけ登録する例', dueDate: dayText(nowMs - 2 * day), evidenceUrl: 'https://example.com/mock-dm', createdAt: isoNow(nowMs - 3 * day), updatedAt: isoNow(nowMs - 3 * day), revision: 1 },
       { taskId: 'T-mockaaaa0002', title: '（モック）撮影の機材確認', bookingId: 'MOCK-001', service: 'snb', status: 'doing', memo: '', dueDate: dayText(nowMs + 2 * day), evidenceUrl: '', createdAt: isoNow(nowMs - day), updatedAt: isoNow(nowMs - day), revision: 1 },
@@ -200,7 +200,7 @@
               if (same(existing, input)) return ok({ ok: true, task: decorate(existing), replayed: true, fetchedAt: now });
               return ok(Object.assign(err('CONFLICT', '別の端末・操作で先に更新されています。上書きはしていません。（モック）'), {}));
             }
-            ready = true;
+            if (!ready) return ok(Object.assign(err('STORE_FAILED', 'メモの保存先との通信に失敗しました。保存できたか確認できていません。（モック）'), { reason: 'NOT_CONFIGURED' }));
             var made = { taskId: input.taskId, title: String(input.title).trim(), bookingId: input.bookingId || '', service: input.service || '', status: input.status || 'todo', memo: input.memo || '', dueDate: input.dueDate || '', evidenceUrl: input.evidenceUrl || '', createdAt: now, updatedAt: now, revision: 1 };
             tasks.push(made);
             return ok({ ok: true, task: decorate(made), fetchedAt: now });

@@ -1,7 +1,7 @@
 /*
  * OpsTasks.gs — 未対応メモと期限管理（Issue #941）。業務ロジック（検証・競合・保持）。通信方式・保存基盤に依存しない。
  *
- * 保存先は予約台帳とは別の「アプリ専用スプレッドシート」の Tasks 表だけ（OpsTasksStore.gs）。ここでは予約台帳を
+ * 保存先は予約台帳とは別の「所有者が用意した専用スプレッドシート」の Tasks 表だけ（OpsTasksStore.gs）。ここでは予約台帳を
  * 一切読まず・書かない（予約との結び付きは手入力の予約ID/サービスの文字列だけ。同期で手入力メモを上書きしない）。
  *
  * request: { op: 'tasks_list' } | { op: 'task_save', input, expectedRevision } | { op: 'task_delete', taskId, expectedRevision }
@@ -169,10 +169,33 @@ var OpsTasks = (function () {
 
   function storeError_(reason) { var e = new Error('store'); e.opsCode = 'STORE_FAILED'; e.opsReason = reason; return e; }
 
+  /*
+   * 診断コード→対応案（許可リスト）。原因を断定せず、確認する順序だけを案内する。Googleの応答本文・ID・トークンは含めない。
+   * reason は 'READ_HTTP/403' のように段階/HTTP番号を持つ。
+   */
+  var HINTS = [
+    [/^NOT_CONFIGURED$/, '保存先が未設定です。サーバー設定 OPS_TASKS_SPREADSHEET_ID に専用スプレッドシートのIDを設定してください（手順: docs/ops-tasks-941.md）。'],
+    [/^TARGET_IS_LEDGER$/, '保存先のIDが予約台帳と同じです。安全のため停止しました。予約台帳とは別のスプレッドシートのIDを設定してください。'],
+    [/^TARGET_INVALID$/, '保存先のIDの形式が不正です。URLではなくIDのみを設定してください。'],
+    [/^SCHEMA$/, 'Tasksタブの1行目が定義のヘッダー（11列）と一致しません。データは書き換えていません。手順書のヘッダーに合わせてください。'],
+    [/_HTTP\/(401|403)$/, 'Googleが保存先へのアクセスを受け付けませんでした（原因は断定できません）。所有者本人で専用URLを開き直して新しい権限を承認し、保存先ファイルを実行アカウントが編集できるか確認してください。'],
+    [/_HTTP\/404$/, 'Googleが保存先ファイルを見つけられませんでした。IDが正しいGoogleスプレッドシートを指しているか確認してください。'],
+    [/_HTTP\/400$/, 'Googleがリクエストを受け付けませんでした。「Tasks」タブが存在するか、ファイルがGoogleスプレッドシート形式かを確認してください（原因は断定できません）。'],
+    [/_HTTP\/429$/, 'Googleの利用回数制限の可能性があります。数分あけてから1回だけ再試行してください。'],
+    [/_(NETWORK|TOKEN|PARSE)$/, '通信またはGoogle認証で失敗しました（原因は断定できません）。再読み込みして内容を確認してください。']
+  ];
+  function hintFor_(reason) {
+    for (var i = 0; i < HINTS.length; i++) if (HINTS[i][0].test(reason)) return HINTS[i][1];
+    return null;
+  }
+
   function failStore_(e) {
     var reason = e && typeof e.opsReason === 'string' && /^[A-Z0-9_\/]{1,40}$/.test(e.opsReason) ? e.opsReason : 'UNKNOWN';
     Logger.log('ops tasks: store failed ' + reason);
-    return error_('STORE_FAILED', MESSAGES.STORE_FAILED, { reason: reason });
+    var extra = { reason: reason };
+    var hint = hintFor_(reason);
+    if (hint) extra.hint = hint;
+    return error_('STORE_FAILED', MESSAGES.STORE_FAILED, extra);
   }
 
   function locked_(deps, fn) {
@@ -254,10 +277,8 @@ var OpsTasks = (function () {
     return locked_(deps, function () {
       try {
         var state = deps.store.state();
-        if (!state.ready) {
-          if (!creating) return error_('NOT_FOUND');
-          deps.store.create();
-        }
+        /* 保存先（OPS_TASKS_SPREADSHEET_ID）が未設定なら、別ファイルを作らず停止する。 */
+        if (!state.ready) throw storeError_('NOT_CONFIGURED');
         var read = read_(deps.store);
         var existing = null;
         read.tasks.forEach(function (t) { if (t.taskId === input.taskId) existing = t; });

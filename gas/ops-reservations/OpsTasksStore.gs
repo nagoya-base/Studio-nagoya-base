@@ -1,15 +1,16 @@
 /*
  * OpsTasksStore.gs — メモ（Tasks表）の保存先アダプター（Issue #941）。
  *
- * 保存先は「このアプリ自身が Sheets API で作成した専用スプレッドシート」1つだけ。予約台帳とは別のファイル。
- * 書込み権限は drive.file（このアプリが作成したファイルだけ）。予約台帳（別途作成されたファイル）には、
- * このスコープでは書込みも閲覧も届かない。さらにコードでも次を固定する（静的テストで検査）:
+ * 保存先は「所有者が用意した、予約台帳とは別の専用スプレッドシート」1つだけ。このアプリはファイルを作成しない
+ * （drive.file は“このアプリが作成したファイル”にしか届かず、手動で用意したファイルには使えないため）。
+ * 手動作成ファイルへ読み書きできる最小のスコープは spreadsheets（ファイル単位で絞れない）なので、権限の代わりにコードで次を固定する（静的テストで検査）:
  *   - 書込み先は Script Property OPS_TASKS_SPREADSHEET_ID のIDだけ。端末（ブラウザー）からIDや範囲は受け取らない。
  *   - そのIDが予約台帳のID（OPS_SPREADSHEET_ID）と同じなら、読み書きせず停止する。
- *   - 書込みは Tasks シートの固定範囲（A:K）だけ。valueInputOption=RAW（"=..." を式として評価させない）。
+ *   - 読み書きは Tasks シートの固定範囲（A:K）だけ。valueInputOption=RAW（"=..." を式として評価させない）。
+ *   - 保存先が未設定のときに別ファイルを作らない。Tasksタブ・ヘッダーが無い/不一致なら書かずに停止（初期化は手順書の手動）。
  * 失敗時の例外は本文を保持せず、固定コード（e.opsCode='STORE_FAILED', e.opsReason）だけを持つ。
  *
- * deps: { getSpreadsheetId(), setSpreadsheetId(id), getLedgerId(), fetch(url, options), getToken() }
+ * deps: { getSpreadsheetId(), getLedgerId(), fetch(url, options), getToken() }
  * UrlFetchApp / PropertiesService / ScriptApp はこのファイルでは参照しない（GAS専用アダプターが注入する）。
  */
 'use strict';
@@ -18,7 +19,6 @@ var OpsTasksStore = (function () {
   var API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
   var SHEET = 'Tasks';
   var LAST_COL = 'K';
-  var TITLE = '運営アプリ メモ（専用・予約台帳ではありません）';
   var ID_PATTERN = /^[A-Za-z0-9_-]{20,100}$/;
 
   function fail_(reason, http) {
@@ -55,7 +55,7 @@ var OpsTasksStore = (function () {
 
     function requireId_() {
       var id = targetId_();
-      if (!id) throw fail_('NOT_CREATED');
+      if (!id) throw fail_('NOT_CONFIGURED');
       return id;
     }
 
@@ -63,21 +63,6 @@ var OpsTasksStore = (function () {
 
     return {
       state: function () { return { ready: targetId_() !== null }; },
-
-      /* 専用スプレッドシートを1つ作る（ヘッダー行つき・1回のAPI呼び出し）。IDはScript Propertyへ保存。 */
-      create: function () {
-        if (targetId_() !== null) return;
-        var cells = headers_().map(function (h) { return { userEnteredValue: { stringValue: h } }; });
-        var made = request_('post', API_BASE, {
-          properties: { title: TITLE, locale: 'ja_JP', timeZone: 'Asia/Tokyo' },
-          sheets: [{ properties: { title: SHEET, gridProperties: { frozenRowCount: 1 } }, data: [{ startRow: 0, startColumn: 0, rowData: [{ values: cells }] }] }]
-        }, 'CREATE');
-        var id = made && made.spreadsheetId;
-        if (typeof id !== 'string' || !ID_PATTERN.test(id)) throw fail_('CREATE_BAD_RESPONSE');
-        var ledger = deps.getLedgerId();
-        if (ledger && ledger === id) throw fail_('TARGET_IS_LEDGER');
-        try { deps.setSpreadsheetId(id); } catch (e) { throw fail_('CREATE_PROPERTY'); }
-      },
 
       readAll: function () {
         var id = requireId_();
@@ -118,5 +103,5 @@ var OpsTasksStore = (function () {
     };
   }
 
-  return { create: create, SHEET: SHEET, TITLE: TITLE };
+  return { create: create, SHEET: SHEET };
 })();
