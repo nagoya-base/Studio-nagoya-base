@@ -488,9 +488,15 @@ test('境界: 読み取り専用スコープのみ・自分のみ公開・書き
 test('境界: 既存の予約・デプロイ経路へ混在しない（workflow/manifest/既存GASから参照されない）', function () {
   var root = path.join(__dirname, '..');
   var wfDir = path.join(root, '.github', 'workflows');
+  // #936追加指示: 運営アプリ専用の手動デプロイworkflow 1本だけが ops-reservations を参照してよい。
+  // それ以外の既存workflow（予約・決済・鍵・Webhook・Pages等）は参照しない。専用workflowの境界は
+  // test/ops-reservations-gas-deploy.test.js が検査する。
+  var DEDICATED = 'ops-reservations-gas-deploy.yml';
   fs.readdirSync(wfDir).forEach(function (f) {
+    if (f === DEDICATED) return;
     assert.ok(!/ops-reservations/.test(fs.readFileSync(path.join(wfDir, f), 'utf8')), f + 'がops-reservationsを参照している');
   });
+  assert.ok(fs.existsSync(path.join(wfDir, DEDICATED)));
   var manifest = fs.readFileSync(path.join(__dirname, 'helpers', 'booking-deployment-manifest.js'), 'utf8');
   assert.ok(!/ops-reservations|Ops[A-Z]/.test(manifest));
   assert.ok(!/ops-reservations/.test(fs.readFileSync(path.join(root, 'gas', 'booking', 'README.md'), 'utf8')));

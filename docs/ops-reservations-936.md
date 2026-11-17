@@ -137,11 +137,11 @@
 **推奨（提案）**: 初期の個人利用は GAS内案。Sitesを必須とする理由（既存の埋め込み・URL等）があれば、その要件を教えてください。判断までは架空データでの検証と手順準備のみ。
 
 ### 8.3 採用後の運用手順（実施は運営者・承認後。本PRでは未実施）
-- **反映対象**: 新規のスタンドアロンGAS 1つ。ファイルは `gas/ops-reservations/*.gs`、`OpsPage.html`、`appsscript.json`。既存の予約・決済・Access GAS・Pages・認証設定は変更しない（自動デプロイworkflowも追加しない）。
+- **反映対象**: 新規のスタンドアロンGAS 1つ。ファイルは `gas/ops-reservations/*.gs`、`OpsPage.html`、`appsscript.json`。既存の予約・決済・Access GAS・Pages・認証設定は変更しない。
 - **設定（2件）**: Script Properties `OPS_OWNER_EMAIL` / `OPS_SPREADSHEET_ID`（公開リポジトリ・Issue・ログに書かない）。
-- **更新**: フロント変更時は `node scripts/build-ops-gas-page.js` で再生成→GASへ貼り付け→新バージョンでデプロイ。
+- **更新（#936追加運営指示により置き換え）**: 毎回のGAS手貼りはしない。Actions → 専用workflow「Deploy ops reservations GAS」→ Run workflow（main・入力なし・同じURLを更新）。初回設定・復旧・停止は `docs/ops-reservations-gas-deploy-936.md`。
 - **停止**: Webアプリのデプロイをアーカイブ（URLは即時無効）。完全撤去はプロジェクト削除。台帳は読み取りのみで、停止による影響はない。
-- **復旧**: 直前のデプロイバージョンへ戻す（デプロイ管理で以前のバージョンを選択）。`OPS_OWNER_EMAIL` 未設定は全拒否（安全側）。
+- **復旧**: 同じDeploymentを直前の版へ戻す（workflowの任意入力 `rollback_version`、または デプロイ管理で以前のバージョンを選択）。`OPS_OWNER_EMAIL` 未設定は全拒否（安全側）。
 - **実利用確認の順序**:
   1. 所有者のスマホで開き、一覧・詳細を確認。
   2. 別アカウントで拒否を確認。
