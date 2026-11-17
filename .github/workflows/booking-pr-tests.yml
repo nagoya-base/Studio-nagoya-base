@@ -170,35 +170,34 @@ jobs:
             if sudo test -e "$f"; then sudo sha256sum "$f"; else echo "absent $f"; fi
           done | diff "$RUNNER_TEMP/host-state-before.txt" -
 
-  # Issue #950（計測専用・原則として最終版では削除する）: 隔離jobと同じ種類の新しいVMで、隔離後の全走査
-  # （find /）が「冷えたディスク」でどこにどれだけ時間を使うかを、トップレベルのディレクトリ別に測る。
-  # 出力はパス名・件数・秒のみ（Secret・環境変数値は出さない）。ファイルは一切変更しない。
-  isolation-scan-diag-serial:
+  # Issue #950（計測専用・最終版では削除する）: 隔離後の全走査（find /）の冷えたディスクでの所要時間を、
+  # 読み取りだけの並列メタデータ温め（stat）でどこまで短縮できるかを測る。各jobは新しいVM（キャッシュは冷えている）。
+  # 出力はパス名を含まない秒数のみ。ファイルは一切変更しない。
+  isolation-scan-diag:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { workers: 16, depth: 2 }
+          - { workers: 64, depth: 2 }
+          - { workers: 64, depth: 3 }
     steps:
-      - name: Cold scan time per top-level directory (serial, same find expression as the teardown scan)
+      - name: Cold parallel warm-up then the authoritative serial scan (workers=${{ matrix.workers }}, depth=${{ matrix.depth }})
+        env:
+          WORKERS: ${{ matrix.workers }}
+          DEPTH: ${{ matrix.depth }}
         run: |
           set -u
-          df -i / /mnt 2>/dev/null || true
-          findmnt -rno TARGET,FSTYPE | sort | head -n 60
-          total_s=$EPOCHREALTIME
-          for d in /*; do
-            case "$d" in /proc|/sys) continue ;; esac
-            s=$EPOCHREALTIME
-            n="$(sudo -n find "$d" \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -o -printf . 2>/dev/null | wc -c)"
-            e=$EPOCHREALTIME
-            printf 'SCAN_DIAG serial %-14s entries=%-9s %6dms\n' "$d" "$n" "$(( (${e//[.,]/} - ${s//[.,]/}) / 1000 ))"
-          done
-          e=$EPOCHREALTIME
-          printf 'SCAN_DIAG serial TOTAL %dms\n' "$(( (${e//[.,]/} - ${total_s//[.,]/}) / 1000 ))"
-  isolation-scan-diag-parallel:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Cold scan time (one find per top-level directory, 4 in parallel)
-        run: |
-          set -u
-          s=$EPOCHREALTIME
-          ls -1d /* | grep -vE '^/(proc|sys)$' | \
-            xargs -P 4 -I{} sh -c 'sudo -n find "{}" \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -print >/dev/null 2>&1; echo "{}" >/dev/null'
-          e=$EPOCHREALTIME
-          printf 'SCAN_DIAG parallel4 TOTAL %dms\n' "$(( (${e//[.,]/} - ${s//[.,]/}) / 1000 ))"
+          now() { echo "${EPOCHREALTIME//[.,]/}"; }
+          ms() { echo $(( ($2 - $1) / 1000 )); }
+          t0="$(now)"
+          # 浅い階層は直下だけ、DEPTH階層のディレクトリは配下をすべて stat する（find式は本番走査と同じ -user/-group）。
+          sudo -n env WORKERS="$WORKERS" DEPTH="$DEPTH" bash -c '
+            { find / -maxdepth "$((DEPTH-1))" -type d \( -path /proc -o -path /sys \) -prune -o -type d -print0 | xargs -0 -r -P "$WORKERS" -I{} find {} -maxdepth 1 \( -user 99999 -o -group 99999 \) -print0 >/dev/null 2>&1 || true; }
+            find / -mindepth "$DEPTH" -maxdepth "$DEPTH" \( -path /proc -o -path /sys \) -prune -o -type d -print0 | xargs -0 -r -P "$WORKERS" -I{} find {} \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -print >/dev/null 2>&1 || true
+          '
+          t1="$(now)"
+          sudo -n find / \( -path /proc -o -path /sys \) -prune -o \( -user 99999 -o -group 99999 \) -print >/dev/null 2>&1
+          t2="$(now)"
+          echo "SCAN_DIAG workers=$WORKERS depth=$DEPTH warmup=$(ms "$t0" "$t1")ms authoritative-scan-after-warmup=$(ms "$t1" "$t2")ms total=$(ms "$t0" "$t2")ms"
