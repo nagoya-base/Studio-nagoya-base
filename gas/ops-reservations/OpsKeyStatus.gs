@@ -75,6 +75,7 @@ var OpsKeyStatus = (function () {
     UNRECOGNIZED_RECORD: '認識できない状態・種別・改訂の記録があります。',
     LEDGER_REVISION_UNAVAILABLE: '予約台帳の改訂番号を読めないため、鍵の記録と対応づけできません。',
     LEDGER_STATUS_UNKNOWN: '予約台帳の状態を判別できません。',
+    LEDGER_TIME_INVALID: '予約台帳の終了時刻が開始時刻以前（同時刻または逆転）です。利用時間が不正なため、鍵の有効時間との照合・成功判定をしていません。',
     LEDGER_TIME_UNAVAILABLE: '予約の終了時刻が台帳で不明なため、有効時間との照合ができません。',
     VALIDITY_UNAVAILABLE: '鍵の有効時間の記録が読めないため、予約時間との照合ができません。',
     PENDING_WITH_KEY_RECORD: '仮予約なのに鍵の記録があります。',
@@ -221,6 +222,8 @@ var OpsKeyStatus = (function () {
     if (item.ops.some(function (o) { return o.state === 'UNRECOGNIZED' || o.kind === 'UNRECOGNIZED' || o.rev === null || o.delivery === 'UNRECOGNIZED'; })) review.push('UNRECOGNIZED_RECORD');
     if (rec.revision === null) review.push('LEDGER_REVISION_UNAVAILABLE');
     if (rec.status === null) review.push('LEDGER_STATUS_UNKNOWN');
+    /* 終了が開始以前（同時刻・逆転）の台帳時間は、どの成功分岐よりも前に要確認とする（不正な時間を正常と誤認しない）。 */
+    if (rec.endMs !== null && rec.endMs <= rec.startMs) review.push('LEDGER_TIME_INVALID');
     if (review.length) return done('NEEDS_REVIEW', review);
 
     var issues = item.ops.filter(function (o) { return o.kind === 'ISSUE'; });

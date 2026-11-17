@@ -259,6 +259,33 @@ test('照合: 索引不整合・複数候補・読取中の更新・認識でき
   assert.strictEqual(verdict(rec(), data([op({ state: 'PLANNED', delivery: null })]), AFTER_END).code, 'NEEDS_REVIEW');
 });
 
+test('照合: 台帳の終了が開始と同時刻・開始以前（逆転）なら、鍵の有効時間が一致して見えても要確認（成功にしない）', function () {
+  var start = Date.UTC(2026, 11, 2, 1, 0);
+  // 鍵の有効時間（09:45-12:15）が、同時刻・逆転した台帳時間を「覆って」見えるケース
+  [start, start - 3600 * 1000].forEach(function (endMs) {
+    [rec({ endMs: endMs }), rec({ endMs: endMs, status: 'CANCELLED' })].forEach(function (r, i) {
+      var v = verdict(r, data(r.status === 'CANCELLED' ? [op({ state: 'DELETED_CONFIRMED' })] : [op()]));
+      assert.strictEqual(v.code, 'NEEDS_REVIEW', 'end=' + (endMs - start) + ' case ' + i);
+      assert.ok(v.reasons.indexOf('LEDGER_TIME_INVALID') !== -1);
+    });
+  });
+  // 利用終了後の時刻でも、逆転していれば失効確認済みにしない
+  assert.strictEqual(verdict(rec({ endMs: start }), data([op({ state: 'DELETED_CONFIRMED' })]), AFTER_END).code, 'NEEDS_REVIEW');
+  // 正常な時刻（終了が開始より後）は従来どおり成功判定になる
+  assert.strictEqual(verdict(rec({ endMs: start + 1000 }), data([op({ validToSec: Math.floor((start + 1000) / 1000) + 600 })])).code, 'ISSUED_GUIDED');
+  assert.strictEqual(verdict(rec(), data([op()])).code, 'ISSUED_GUIDED');
+});
+
+test('API: 台帳の終了が開始以前の予約は、台帳→照合の通しでも要確認', function () {
+  var sb = load();
+  [jst(2026, 12, 2, 10, 0), jst(2026, 12, 2, 9, 0)].forEach(function (end) {
+    var c = ctxWith({ readLedger: function () { return { values: ledgerValues([ledgerRow({ endAt: end })]) }; } });
+    var res = api(sb, { op: 'key_status', id: REF }, c);
+    assert.strictEqual(res.keyStatus.verdict.code, 'NEEDS_REVIEW');
+    assert.deepStrictEqual(res.keyStatus.reasons.map(function (x) { return x.code; }), ['LEDGER_TIME_INVALID']);
+  });
+});
+
 test('照合: ジョブの稼働は別枠。稼働していても予約の鍵の状態は変えない（記録なしは確認不能のまま）', function () {
   var d = data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] }, jobs: { SYNC: 30, SWEEP: 30, DELIVER: 30, CLEANUP: 30 } });
   var v = verdict(rec(), d);
