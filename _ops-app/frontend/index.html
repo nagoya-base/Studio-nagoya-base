@@ -14,17 +14,24 @@
   <meta name="robots" content="noindex,nofollow">
   <title>予約確認・メモ（モック）</title>
   <style>
-    :root { --bg:#fafafa; --fg:#1d1d1f; --muted:#5f6368; --line:#d9d9de; --card:#fff; --warn:#9a5b00; --err:#b3261e; }
-    @media (prefers-color-scheme: dark) { :root { --bg:#16161a; --fg:#ececf0; --muted:#a0a3ab; --line:#33343a; --card:#202026; --warn:#f2b24c; --err:#f2877f; } }
+    :root { --bg:#f4f6fb; --fg:#14213d; --muted:#5b6478; --line:#d5dbe8; --card:#fff; --warn:#9a5b00; --err:#b3261e; --navy:#14284b; --blue:#1d5bd8; --blue-soft:#e8effd; --on-accent:#fff; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#0f1626; --fg:#e8ecf6; --muted:#9aa5bd; --line:#2a3550; --card:#18223a; --warn:#f2b24c; --err:#f2877f; --navy:#0b1220; --blue:#6f9cf5; --blue-soft:#1d2c52; --on-accent:#0b1220; } }
     * { box-sizing: border-box; }
     body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-    header, main { max-width: 760px; margin: 0 auto; padding: 12px 16px; }
-    h1 { font-size: 1.15rem; margin: 4px 0 8px; }
+    header { background:var(--bg); border-bottom:1px solid var(--line); }
+    header, main { padding: 12px max(16px, calc((100% - 928px) / 2)); }
+    main { padding-bottom: 48px; }
+    h1 { font-size: 1.15rem; margin: 4px 0 8px; color:var(--navy); }
+    @media (prefers-color-scheme: dark) { h1 { color:var(--fg); } }
     .note { color: var(--muted); font-size: .85rem; margin: 0 0 8px; }
     .filters { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .filters label { display:block; font-size:.8rem; color:var(--muted); min-width:0; }
     .filters select, .filters input, button { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 8px; min-width:0; }
     button { cursor:pointer; }
+    button:hover { border-color:var(--blue); }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid var(--blue); outline-offset:1px; }
+    button:disabled { opacity:.5; cursor:default; }
+    #f-reload, #t-new, #t-submit { background:var(--blue); color:var(--on-accent); border-color:var(--blue); font-weight:700; }
     .row2 { grid-column: 1 / -1; display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
     .banner { margin:10px 0; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); font-size:.9rem; overflow-wrap:anywhere; }
     .banner.err { border-color: var(--err); color: var(--err); }
@@ -32,7 +39,19 @@
     .banner .diag code { font-weight:600; }
     .banner.stale { border-color: var(--warn); color: var(--warn); }
     .cards { list-style:none; padding:0; margin:0; display:grid; gap:10px; }
-    .card { display:block; width:100%; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; overflow-wrap:anywhere; }
+    .card { display:block; width:100%; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; overflow-wrap:anywhere; box-shadow:0 1px 2px rgba(20,40,75,.06); }
+    button.card { position:relative; padding-right:36px; }
+    button.card::after { content:"›"; position:absolute; right:14px; top:50%; transform:translateY(-50%); font-size:1.6rem; color:var(--blue); }
+    button.card:hover, button.card:active { border-color:var(--blue); background:var(--blue-soft); }
+    .card .more { color:var(--blue); font-size:.85rem; font-weight:600; margin-top:4px; }
+    .tag.st-CONFIRMED { background:var(--blue-soft); border-color:var(--blue); color:var(--blue); font-weight:600; }
+    .tag.st-PENDING { border-color:var(--warn); color:var(--warn); font-weight:600; }
+    .tag.st-CANCELLED, .tag.st-EXPIRED, .tag.st-UNKNOWN { color:var(--muted); }
+    .taskhead { display:block; width:100%; text-align:left; border:0; background:none; padding:0; min-height:44px; position:relative; padding-right:28px; }
+    .taskhead::after { content:"▾"; position:absolute; right:4px; top:4px; color:var(--blue); }
+    .taskhead[aria-expanded="true"]::after { content:"▴"; }
+    .loading { color:var(--muted); }
+    .banner.err::before { content:"⚠ "; }
     .card .top { display:flex; gap:8px; flex-wrap:wrap; font-size:.8rem; color:var(--muted); }
     .card .when { font-weight:600; font-size:1.05rem; margin:4px 0; }
     .tag { display:inline-block; padding:0 8px; border:1px solid var(--line); border-radius:999px; font-size:.78rem; }
@@ -41,7 +60,8 @@
     .empty { color:var(--muted); font-style:italic; }
     details { margin-top:12px; } details li { overflow-wrap:anywhere; }
     .tabs { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin:8px 0; }
-    .tabs button[aria-selected="true"] { border-color: var(--fg); font-weight:700; }
+    .tabs button { font-weight:600; }
+    .tabs button[aria-selected="true"] { background:var(--navy); border-color:var(--navy); color:#fff; font-weight:700; }
     [hidden] { display:none !important; }
     .banner.ok { border-color:#2e7d32; color:#2e7d32; }
     @media (prefers-color-scheme: dark) { .banner.ok { border-color:#81c995; color:#81c995; } }
@@ -56,6 +76,7 @@
     form.taskform input, form.taskform select, form.taskform textarea { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; min-width:0; }
     form.taskform textarea { min-height:6em; }
     .formbtns { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    @media (min-width: 900px) { header { position:sticky; top:0; z-index:5; } .cards { grid-template-columns: 1fr 1fr; } }
     @media (min-width: 640px) { .filters { grid-template-columns: repeat(4, 1fr); } .row2 { grid-column: auto; grid-template-columns: 1fr; } }
   </style>
 </head>

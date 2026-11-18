@@ -143,7 +143,7 @@
   function renderBanner(state) {
     var html = '';
     if (state.mock) html += '<div class="banner stale">モックデータ（架空）を表示しています。実際の予約ではありません。</div>';
-    if (state.phase === 'loading') html += '<div class="banner">取得中…</div>';
+    if (state.phase === 'loading') html += '<div class="banner loading" role="status">取得中…</div>';
     if (state.phase === 'denied') html += '<div class="banner err">' + esc(state.error.message) + '（予約情報は表示しません）</div>';
     if (state.phase === 'error' || state.phase === 'not_connected') {
       html += '<div class="banner err">' + esc(state.error.message) + renderDiag(state.error) + '</div>';
@@ -156,10 +156,10 @@
   function renderCard(item) {
     var phase = PHASE_LABELS[item.phase];
     return '<li><button type="button" class="card" data-id="' + esc(item.bookingId) + '">' +
-      '<div class="top"><span class="tag">' + esc(item.serviceLabel) + '</span><span class="tag">' + esc(item.statusLabel) + '</span>' + (phase ? '<span class="tag">' + esc(phase) + '</span>' : '') + '</div>' +
+      '<div class="top"><span class="tag">' + esc(item.serviceLabel) + '</span><span class="tag st-' + esc(item.status) + '">' + esc(item.statusLabel) + '</span>' + (phase ? '<span class="tag">' + esc(phase) + '</span>' : '') + '</div>' +
       '<div class="when">' + esc(item.date) + ' ' + show(jstText(item.startAt)) + '〜' + show(endLabel(item.startAt, item.endAt)) + '</div>' +
       '<div>' + show(item.name) + ' / ' + show(item.people, '名') + '</div>' +
-      '<div class="note">' + esc(item.bookingId) + '</div></button></li>';
+      '<div class="note">' + esc(item.bookingId) + '</div><div class="more">タップで詳細・鍵の状況</div></button></li>';
   }
 
   function renderIssues(issues) {
@@ -191,7 +191,7 @@
 
   function renderDetail(state) {
     if (state.detailPhase === 'idle') return '';
-    var html = '<div class="banner"><button type="button" id="detail-close">一覧へ戻る</button></div>';
+    var html = '<div class="banner"><button type="button" id="detail-close">‹ 一覧へ戻る</button></div>';
     if (state.detailPhase === 'loading') return html + '<div class="banner">取得中…</div>';
     if (state.detailPhase === 'error') return html + '<div class="banner err">' + esc(state.detailError.message) + renderDiag(state.detailError) + '</div>';
     var r = state.detail;
@@ -207,7 +207,8 @@
       ['受付経路', show(r.source)], ['作成', show(jstText(r.createdAt, true))], ['更新', show(jstText(r.updatedAt, true))],
       ['確定', show(jstText(r.confirmedAt, true))], ['キャンセル', show(jstText(r.cancelledAt, true))], ['失効', show(jstText(r.expiredAt, true))]
     ];
-    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderKeyStatus(state);
+    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderKeyStatus(state) +
+      '<p><button type="button" id="detail-to-tasks">メモ・期限を開く</button></p>';
   }
 
   /* 鍵・案内の状況（#942。読み取り専用）。取得失敗・未接続・確認不能・不一致・要確認は別の表示。ジョブの稼働は別枠で、鍵の成功を意味しない。 */
@@ -281,6 +282,7 @@
       var node = e.target;
       while (node && node !== $('view')) {
         if (node.id === 'detail-close') { ctl.closeDetail(); return; }
+        if (node.id === 'detail-to-tasks') { var tab = $('tab-tasks'); if (tab) tab.click(); return; }
         if (node.getAttribute && node.getAttribute('data-id')) { ctl.openDetail(node.getAttribute('data-id')); return; }
         node = node.parentNode;
       }
