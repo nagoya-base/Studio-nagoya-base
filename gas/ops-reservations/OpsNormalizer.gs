@@ -18,7 +18,9 @@ var OpsNormalizer = (function () {
     'bookingId', 'createdAt', 'date', 'startAt', 'endAt', 'brand', 'name', 'people', 'purpose',
     'paymentMethod', 'status', 'source', 'confirmedAt', 'expiredAt', 'cancelledAt', 'updatedAt',
     'customerType', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt',
-    'planCode', 'largeParty', 'revision'
+    'planCode', 'largeParty', 'revision',
+    /* メール送信記録（Issue #967）。読み取り専用。来場案内メール・確定メールの「送信記録」であり、SwitchBot個別鍵の発行を意味しない。 */
+    'accessGuideSentAt', 'confirmedMailSentAt'
   ];
   /* 一覧に必要で、無いと意味のある取得ができない列。 */
   var REQUIRED_COLUMNS = ['bookingId', 'date', 'startAt', 'brand', 'status'];
@@ -53,6 +55,16 @@ var OpsNormalizer = (function () {
     var day = OpsContract.parseJstDate(m[1]);
     var clock = OpsContract.parseClock(m[2]);
     return day === null || clock === null ? null : OpsContract.toIso(day + clock * 60000);
+  }
+
+  /* メール送信記録の状態（Issue #967）。列の欠落・空欄・不正値・記録ありを互いに区別し、「未送信」と断定しない。
+     recorded: 日時あり / none: 列はあるが空欄（台帳上の記録なし） / invalid: 値はあるが日時として保証できない /
+     column_missing: シートにその列自体が無い（確認不能）。 */
+  function mailRecord_(hasColumn, value) {
+    if (!hasColumn) return { state: 'column_missing', at: null };
+    if (value === '' || value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return { state: 'none', at: null };
+    var at = stampText_(value);
+    return at === null ? { state: 'invalid', at: null } : { state: 'recorded', at: at };
   }
 
   function numberOrNull_(value) {
@@ -104,7 +116,7 @@ var OpsNormalizer = (function () {
     return baseDateMs + minutes * 60000;
   }
 
-  function buildRecord_(get, rowNumber, issues, idCounts) {
+  function buildRecord_(get, rowNumber, issues, idCounts, has) {
     var bookingId = text_(get('bookingId'), 80);
     var codes = [];
     if (bookingId === null) codes.push('missing_id');
@@ -166,7 +178,9 @@ var OpsNormalizer = (function () {
       updatedAt: stampText_(get('updatedAt')),
       confirmedAt: stampText_(get('confirmedAt')),
       cancelledAt: stampText_(get('cancelledAt')),
-      expiredAt: stampText_(get('expiredAt'))
+      expiredAt: stampText_(get('expiredAt')),
+      accessGuideMail: mailRecord_(has('accessGuideSentAt'), get('accessGuideSentAt')),
+      confirmedMail: mailRecord_(has('confirmedMailSentAt'), get('confirmedMailSentAt'))
     };
   }
 
@@ -208,7 +222,8 @@ var OpsNormalizer = (function () {
       var row = values[r];
       if (isBlankRow_(row)) { blankRows++; continue; }
       totalRows++;
-      var record = buildRecord_(function (key) { return index[key] === undefined ? '' : row[index[key]]; }, r + 1, issues, idCounts);
+      var record = buildRecord_(function (key) { return index[key] === undefined ? '' : row[index[key]]; }, r + 1, issues, idCounts,
+        function (key) { return index[key] !== undefined; });
       if (record) records.push(record);
     }
     issues.sort(function (a, b) { return a.row - b.row; });

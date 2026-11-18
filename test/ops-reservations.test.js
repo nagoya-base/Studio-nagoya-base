@@ -666,3 +666,53 @@ test('診断: 読み取り専用・許可リストの不変条件（既存のGET
   t.sb.opsListReservations({});
   t.world.requests.forEach(function (r) { assert.strictEqual(r.method, 'get'); });
 });
+
+/* ---- #967 メール送信記録（Bookings既存列の読取り専用表示） ---- */
+var MAIL_HEADER = HEADER.concat(['accessGuideSentAt', 'confirmedMailSentAt', 'reminderSentAt', 'lastMailErrorType']);
+function mailRow(over) {
+  var base = row(over);
+  var extra = { accessGuideSentAt: '', confirmedMailSentAt: '', reminderSentAt: jst(2026, 12, 1, 18, 0), lastMailErrorType: 'SECRET-ERRTYPE' };
+  Object.keys(over || {}).forEach(function (k) { if (k in extra) extra[k] = over[k]; });
+  return base.concat([extra.accessGuideSentAt, extra.confirmedMailSentAt, extra.reminderSentAt, extra.lastMailErrorType]);
+}
+function mailDetail(rows, header, id) {
+  var t = api(rows, { header: header });
+  return plain(t.sb.opsGetReservation(id || 'FAKE-001'));
+}
+
+test('メール送信記録(#967): 記録あり・空欄・不正値・列欠落を区別し、「未送信」と断定しない', function () {
+  var res = mailDetail([
+    mailRow({ bookingId: 'M1', accessGuideSentAt: jst(2026, 12, 1, 18, 5), confirmedMailSentAt: '2026-11-20 10:01' }),
+    mailRow({ bookingId: 'M2' }),
+    mailRow({ bookingId: 'M3', accessGuideSentAt: 'not-a-date', confirmedMailSentAt: '2026/11/20' })
+  ], MAIL_HEADER, 'M1').reservation;
+  assert.deepStrictEqual(res.accessGuideMail, { state: 'recorded', at: '2026-12-01T18:05:00+09:00' });
+  assert.deepStrictEqual(res.confirmedMail, { state: 'recorded', at: '2026-11-20T10:01:00+09:00' });
+  var rows = [mailRow({ bookingId: 'M2' }), mailRow({ bookingId: 'M3', accessGuideSentAt: 'not-a-date', confirmedMailSentAt: '2026/11/20' })];
+  var none = mailDetail(rows, MAIL_HEADER, 'M2').reservation;
+  assert.deepStrictEqual(none.accessGuideMail, { state: 'none', at: null });
+  assert.deepStrictEqual(none.confirmedMail, { state: 'none', at: null });
+  var bad = mailDetail(rows, MAIL_HEADER, 'M3').reservation;
+  assert.deepStrictEqual(bad.accessGuideMail, { state: 'invalid', at: null });
+  assert.deepStrictEqual(bad.confirmedMail, { state: 'invalid', at: null });
+});
+
+test('メール送信記録(#967): 列がシートに無い場合は空欄と別の column_missing。他の項目は影響を受けない', function () {
+  var res = mailDetail([row({ bookingId: 'C1' })], HEADER, 'C1');
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(res.reservation.accessGuideMail, { state: 'column_missing', at: null });
+  assert.deepStrictEqual(res.reservation.confirmedMail, { state: 'column_missing', at: null });
+  assert.strictEqual(res.reservation.bookingId, 'C1');
+});
+
+test('メール送信記録(#967): 一覧には出さず、宛先・エラー・reminderSentAt・他の列を返さず、読取りGETのみで書込みしない', function () {
+  var t = api([mailRow({ bookingId: 'L1', accessGuideSentAt: jst(2026, 12, 1, 18, 5) })], { header: MAIL_HEADER });
+  var list = plain(t.sb.opsListReservations({ from: '2026-12-02', to: '2026-12-02' }));
+  assert.ok(!('accessGuideMail' in list.items[0]) && !('confirmedMail' in list.items[0]));
+  var json = JSON.stringify(plain(t.sb.opsGetReservation('L1')));
+  assert.ok(!/SECRET|reminderSentAt|lastMailError|accessApprovedAt/.test(json));
+  t.world.requests.forEach(function (r) { assert.ok(!r.method || /^get$/i.test(r.method)); });
+  assert.ok(t.sb.OpsNormalizer.ALLOWED_COLUMNS.indexOf('accessGuideSentAt') !== -1 && t.sb.OpsNormalizer.ALLOWED_COLUMNS.indexOf('confirmedMailSentAt') !== -1);
+  assert.ok(t.sb.OpsNormalizer.ALLOWED_COLUMNS.indexOf('reminderSentAt') === -1 && t.sb.OpsNormalizer.ALLOWED_COLUMNS.indexOf('accessApprovedAt') === -1);
+  assert.ok(t.sb.OpsSource.DATE_COLUMNS.indexOf('accessGuideSentAt') !== -1 && t.sb.OpsSource.DATE_COLUMNS.indexOf('confirmedMailSentAt') !== -1);
+});

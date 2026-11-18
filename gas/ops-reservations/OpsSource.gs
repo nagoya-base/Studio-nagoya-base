@@ -17,7 +17,7 @@ var OpsSource = (function () {
   var SHEET_NAME = 'Bookings';
   var MAX_ROWS = 20000;
   /* シリアル値（日時セル）として返りうる列。他の数値列（people・料金）は変換しない。 */
-  var DATE_COLUMNS = ['date', 'createdAt', 'startAt', 'endAt', 'confirmedAt', 'expiredAt', 'cancelledAt', 'updatedAt', 'priceOverrideAt'];
+  var DATE_COLUMNS = ['date', 'createdAt', 'startAt', 'endAt', 'confirmedAt', 'expiredAt', 'cancelledAt', 'updatedAt', 'priceOverrideAt', 'accessGuideSentAt', 'confirmedMailSentAt'];
   var RENDER = 'majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER';
 
   function fail_(code) { var e = new Error(code); e.opsCode = code; return e; }

@@ -125,6 +125,9 @@ var OpsQuery = (function () {
     item.confirmedAt = rec.confirmedAt;
     item.cancelledAt = rec.cancelledAt;
     item.expiredAt = rec.expiredAt;
+    /* メール送信記録（#967）。状態と日時のみ。宛先・本文・エラー文は含めない。 */
+    item.accessGuideMail = rec.accessGuideMail;
+    item.confirmedMail = rec.confirmedMail;
     return item;
   }
 
