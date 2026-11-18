@@ -101,7 +101,7 @@ function validateKeyStatus(res) {
   var allowed = KEY_VIEW_KEYS.slice();
   check(keys.every(function (k) { return allowed.indexOf(k) !== -1; }) && KEY_VIEW_KEYS.every(function (k) { return keys.indexOf(k) !== -1; }), 'keyStatus のキーが許可リスト: ' + keys.join(), problems);
   check(v.verdict && VERDICT_CODES.indexOf(v.verdict.code) !== -1 && /^(ok|info|warn|ng)$/.test(v.verdict.tone) && typeof v.verdict.label === 'string', 'verdict', problems);
-  check(v.lifecycle === null || (v.lifecycle && /^(ok|info|warn|ng)$/.test(v.lifecycle.tone) && typeof v.lifecycle.label === 'string' && typeof v.lifecycle.code === 'string' && Object.keys(v.lifecycle).sort().join() === 'code,label,tone'), 'lifecycle', problems);
+  check(v.lifecycle === null || (v.lifecycle && /^(ok|info|warn|ng)$/.test(v.lifecycle.tone) && typeof v.lifecycle.label === 'string' && typeof v.lifecycle.code === 'string' && typeof v.lifecycle.alert === 'boolean' && Object.keys(v.lifecycle).sort().join() === 'alert,code,label,tone'), 'lifecycle', problems);
   check(Array.isArray(v.reasons) && v.reasons.every(function (r) { return typeof r.code === 'string' && typeof r.text === 'string'; }), 'reasons', problems);
   check(/^(CONNECTED|NOT_CONNECTED|FETCH_FAILED|UNSUPPORTED)$/.test(v.connection), 'connection', problems);
   check(Array.isArray(v.ops) && v.ops.every(function (o) {

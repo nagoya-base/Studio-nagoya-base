@@ -250,7 +250,7 @@
     var d = k.data;
     var html = head;
     /* 主表示は個別鍵の実状態（#969）。メール送信記録・予約時刻では代用しない。下の照合結果は鍵の記録と予約台帳の突合。 */
-    if (d.lifecycle) html += '<div class="banner ' + (TONE_CLASS[d.lifecycle.tone] || '') + '" data-lifecycle="' + esc(d.lifecycle.code) + '"><strong>個別鍵の状態: ' + esc(d.lifecycle.label) + '</strong></div><p class="note">照合結果（鍵の記録と予約台帳の突合）:</p>';
+    if (d.lifecycle) html += '<div class="banner ' + (TONE_CLASS[d.lifecycle.tone] || '') + '" data-lifecycle="' + esc(d.lifecycle.code) + '"><strong>個別鍵の状態: ' + esc(d.lifecycle.label) + '</strong>' + (d.lifecycle.alert ? '<div class="banner err" data-lifecycle-alert="1">⚠ 予約・案内との照合に警告があります。下の照合結果を必ず確認してください。</div>' : '') + '</div><p class="note">照合結果（鍵の記録と予約台帳の突合）:</p>';
     html += '<div class="banner ' + (TONE_CLASS[d.verdict.tone] || '') + '" data-verdict="' + esc(d.verdict.code) + '"><strong>' + esc(d.verdict.label) + '</strong>';
     if (d.reasons && d.reasons.length) html += '<ul>' + d.reasons.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('') + '</ul>';
     html += '</div>';

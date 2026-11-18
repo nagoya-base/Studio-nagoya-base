@@ -540,7 +540,7 @@ test('画面(#967): 空欄=台帳上の記録なし／列欠落・日時不正�
 
 // ================================================================ #969 個別鍵の実状態（lifecycle）
 
-function lc(r, d, now) { var o = verdict(r, d, now); return { verdict: o.code, lc: o.out.lifecycle && o.out.lifecycle.code, label: o.out.lifecycle && o.out.lifecycle.label, reasons: o.reasons }; }
+function lc(r, d, now) { var o = verdict(r, d, now); return { verdict: o.code, lc: o.out.lifecycle && o.out.lifecycle.code, label: o.out.lifecycle && o.out.lifecycle.label, alert: o.out.lifecycle && o.out.lifecycle.alert, reasons: o.reasons }; }
 
 test('#969 主表示: 取消/失効かつ発行記録が全て失敗 → 未発行（根拠付き）。発行失敗・発行待ちは未発行に合算しない', function () {
   var a = lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' }), op({ rev: 2, state: 'FAILED' })]));
@@ -550,26 +550,31 @@ test('#969 主表示: 取消/失効かつ発行記録が全て失敗 → 未発�
   assert.strictEqual(lc(rec(), data([op({ state: 'FAILED' })])).lc, 'ISSUE_FAILED');
   // 発行待ち・処理中
   ['PLANNED', 'SENDING', 'SENT_WAIT_WEBHOOK', 'ACCEPTED_NO_COMMAND_ID'].forEach(function (st) { assert.strictEqual(lc(rec(), data([op({ state: st })])).lc, 'ISSUE_PENDING', st); });
-  // 放棄のみ・失効記録のみ・失敗と放棄の混在は、未発行と断定しない
-  assert.notStrictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'ABANDONED' })])).lc, 'NOT_ISSUED');
-  assert.notStrictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' }), op({ rev: 2, state: 'ABANDONED' })])).lc, 'NOT_ISSUED');
-  assert.notStrictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ kind: 'REVOKE', state: 'FAILED' })])).lc, 'NOT_ISSUED');
+  // 放棄のみ・失敗と放棄の混在は、未発行とも発行失敗とも断定せず「発行中止・要確認」。失効記録のみは保留
+  [[rec({ status: 'CANCELLED' }), [op({ state: 'ABANDONED' })]], [rec({ status: 'CANCELLED' }), [op({ state: 'FAILED' }), op({ rev: 2, state: 'ABANDONED' })]],
+    [rec(), [op({ state: 'ABANDONED' })]], [rec({ revision: 2 }), [op({ rev: 1, state: 'FAILED' }), op({ rev: 2, state: 'ABANDONED' })]]].forEach(function (c) {
+    var r = lc(c[0], data(c[1])); assert.strictEqual(r.lc, 'ISSUE_ABORTED'); assert.ok(!/未発行（根拠付き）|発行失敗（/.test(r.label));
+  });
+  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ kind: 'REVOKE', state: 'FAILED' })])).lc, 'HOLD');
   // 失敗の記録でも truncated / 読取中の更新 / 取消後に鍵が残る場合は断定しない
   assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' })], { item: { record: 'FOUND', truncated: true, opCount: 9, ops: [op({ state: 'FAILED' })] } })).lc, 'HOLD');
   assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' })], { consistency: 'CHANGED_DURING_READ' })).lc, 'HOLD');
-  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' }), op({ rev: 2, state: 'ISSUED_CONFIRMED' })])).lc, 'HOLD');
+  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' }), op({ rev: 2, state: 'ISSUED_CONFIRMED' })])).lc, 'ISSUED');
 });
 
 test('#969 主表示: 発行済み／失効処理中／失効済み（確認済み）。期限切れ・利用終了は失効済みにしない', function () {
   assert.strictEqual(lc(rec(), data([op()])).lc, 'ISSUED');
-  ['DELETE_PENDING', 'DELETE_SENDING', 'DELETE_SENT', 'EXPIRED'].forEach(function (st) { assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: st })])).lc, 'REVOKING', st); });
+  ['DELETE_PENDING', 'DELETE_SENDING', 'DELETE_SENT'].forEach(function (st) { assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: st })])).lc, 'REVOKING', st); });
+  // Coreの EXPIRED は「期限切れ（削除とは区別）」。失効処理中とは別表示
+  var exp = lc(rec({ status: 'CANCELLED' }), data([op({ state: 'EXPIRED' })]));
+  assert.strictEqual(exp.lc, 'EXPIRED'); assert.ok(/期限切れ・失効未確認/.test(exp.label) && !/失効処理中/.test(exp.label));
   ['DELETED_CONFIRMED', 'ALREADY_ABSENT', 'ARCHIVED_EXPIRED'].forEach(function (st) {
     assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: st })])).lc, 'REVOKED', st);
     assert.strictEqual(lc(rec(), data([op({ state: st })]), AFTER_END).lc, 'REVOKED', st);
   });
   // 利用終了後でも鍵が登録確認済みのまま（有効期限が過ぎただけ）→ 失効済みではない
   var ended = lc(rec(), data([op()]), AFTER_END);
-  assert.strictEqual(ended.lc, 'EXPIRED_NOT_REVOKED'); assert.ok(/失効は未確認/.test(ended.label));
+  assert.strictEqual(ended.lc, 'ENDED_NOT_REVOKED'); assert.ok(/失効は未確認/.test(ended.label));
   // 反映の有無が不明
   assert.strictEqual(lc(rec(), data([op({ state: 'UNKNOWN' })])).lc, 'STATE_UNKNOWN');
 });
@@ -587,7 +592,6 @@ test('#969 主表示: NONE（履歴なし）は未発行・失効済みの二択
 
 test('#969 主表示: 矛盾・改訂変更・取得エラー・未接続は鍵の状態を主張しない（HOLD / null）', function () {
   assert.strictEqual(lc(rec({ revision: 2 }), data([op({ rev: 1 })])).lc, 'HOLD'); /* 改訂不一致 */
-  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op()])).lc, 'HOLD'); /* 取消なのに鍵が有効 */
   assert.strictEqual(lc(rec({ revision: null }), data([op()])).lc, 'HOLD');
   var sb = load();
   ['NOT_CONNECTED', 'FETCH_FAILED'].forEach(function (c) { assert.strictEqual(plain(sb.OpsKeyStatus.unavailable(c, 'NETWORK')).lifecycle, null); });
@@ -622,4 +626,45 @@ test('#969 画面: 個別鍵の状態が主表示で、照合結果・メール�
   assert.ok(niHtml.indexOf('data-lifecycle="NOT_ISSUED"') !== -1 && /個別鍵の状態: 未発行（根拠付き）/.test(niHtml));
   var nc = ctlWith({ key: 'not_connected' }); nc.openDetail('MOCK-001');
   assert.ok(viewHtml(nc).indexOf('data-lifecycle') === -1);
+});
+
+test('#969 主表示: 鍵の明示的な証拠は予約との矛盾・案内の不明で隠さない（lifecycleは鍵の記録から直接求め、警告はalert/verdictに分離）', function () {
+  // 案内状態だけが不確かでも、登録確認済みの鍵は「発行済み」。verdictは要確認を維持
+  ['SENDING', 'UNKNOWN', 'SUPPRESSED'].forEach(function (d) {
+    var r = lc(rec(), data([op({ delivery: d })]));
+    assert.deepStrictEqual([r.lc, r.verdict, r.alert], ['ISSUED', 'NEEDS_REVIEW', true], d);
+    assert.deepStrictEqual(r.reasons, ['GUIDE_STATE_UNCERTAIN']);
+  });
+  // 取消予約＋有効な鍵が残っている → 発行済み（有効な鍵が残る）を隠さず、MISMATCHの警告つき
+  var c = lc(rec({ status: 'CANCELLED' }), data([op()])); assert.deepStrictEqual([c.lc, c.verdict, c.alert], ['ISSUED', 'MISMATCH', true]);
+  var c2 = lc(rec({ status: 'EXPIRED' }), data([op({ state: 'SENT_WAIT_WEBHOOK' })])); assert.deepStrictEqual([c2.lc, c2.verdict, c2.alert], ['ISSUE_PENDING', 'MISMATCH', true]);
+  // 予約は有効（利用前）なのに鍵は失効確認済み → 失効済み（確認済み）＋警告
+  ['DELETED_CONFIRMED', 'ALREADY_ABSENT'].forEach(function (st) {
+    var r = lc(rec(), data([op({ state: st })])); assert.deepStrictEqual([r.lc, r.verdict, r.alert], ['REVOKED', 'MISMATCH', true], st);
+  });
+  // 失効処理中（予約は有効）
+  var rv = lc(rec(), data([op({ state: 'DELETE_PENDING' })])); assert.deepStrictEqual([rv.lc, rv.verdict, rv.alert], ['REVOKING', 'MISMATCH', true]);
+  // 鍵の有効時間が予約を覆っていない → 登録確認は発行済みのまま、時間不一致はMISMATCH警告
+  var w = lc(rec(), data([op({ validToSec: Math.floor(Date.UTC(2026, 11, 2, 2, 0) / 1000) })])); assert.deepStrictEqual([w.lc, w.verdict, w.alert], ['ISSUED', 'MISMATCH', true]);
+  // 正常は警告なし
+  assert.strictEqual(lc(rec(), data([op()])).alert, false);
+  // 誤成功防止（truncated・複数候補・読取競合・不整合・認識不能・改訂不明）は引き続き保留（鍵の状態を主張しない）
+  var hold = function (d, r) { var x = lc(r || rec(), d); assert.deepStrictEqual([x.lc, x.alert], ['HOLD', true]); };
+  hold(data([op()], { item: { record: 'FOUND', truncated: true, opCount: 9, ops: [op()] } }));
+  hold(data([op()], { item: { record: 'AMBIGUOUS', truncated: false, opCount: 2, ops: [op(), op()] } }));
+  hold(data([op()], { item: { record: 'INVALID_INDEX', truncated: false, opCount: 0, ops: [] } }));
+  hold(data([op()], { consistency: 'CHANGED_DURING_READ' }));
+  hold(data([op({ state: 'UNRECOGNIZED' })]));
+  hold(data([op()]), rec({ revision: null }));
+  hold(data([op({ rev: 1 })]), rec({ revision: 2 })); /* 現在の改訂の鍵記録なし */
+  // 現在の改訂に鍵があり古い改訂の鍵が残る → 現在の改訂の状態＋MISMATCH警告
+  var old = lc(rec({ revision: 2 }), data([op({ rev: 1 }), op({ rev: 2 })])); assert.deepStrictEqual([old.lc, old.verdict, old.alert], ['ISSUED', 'MISMATCH', true]);
+});
+
+test('#969 画面: 警告つきの主表示は、鍵の状態の直下に警告を出す（取消なのに鍵が有効）', function () {
+  var ctl = ctlWith(); ctl.openDetail('MOCK-004');
+  var h = viewHtml(ctl);
+  assert.ok(h.indexOf('data-lifecycle="ISSUED"') !== -1 && h.indexOf('data-lifecycle-alert="1"') !== -1 && h.indexOf('data-lifecycle-alert') < h.indexOf('data-verdict='));
+  var ok = ctlWith(); ok.openDetail('MOCK-001');
+  assert.ok(viewHtml(ok).indexOf('data-lifecycle-alert') === -1);
 });

@@ -100,30 +100,47 @@ var OpsKeyStatus = (function () {
     ISSUED_NO_GUIDE_RECORD: '案内の記録がありません（案内機能が未設定の可能性もあるため、未送信とは断定していません）。'
   };
 
-  /* 個別鍵の実状態（主表示）。メール送信・予約時刻・ACCESS_ENABLED は根拠にしない。verdict（照合結果）とは別に、鍵の記録から言える範囲だけを示す。
-     「有効期限が過ぎた」は「実鍵が失効済み」ではない。発行失敗・発行待ちは「未発行」に合算しない。 */
+  /* 個別鍵の実状態（主表示）。鍵管理側の記録（OPの state / revision / 整合性）だけから求め、予約との矛盾・案内メールの不明は
+     verdict と lifecycle.alert（警告）に分離する（鍵の明示的な証拠を主表示で隠さない）。
+     メール送信・予約時刻・ACCESS_ENABLED は根拠にしない。「有効期限が過ぎた」「期限切れ」は「実鍵が失効済み」ではない。
+     発行失敗・発行待ち・発行中止は「未発行」に合算しない。 */
   var LIFECYCLES = {
     NOT_ISSUED: { label: '未発行（根拠付き）', tone: 'info' },
     ISSUE_FAILED: { label: '発行失敗（鍵は有効になっていません）', tone: 'ng' },
+    ISSUE_ABORTED: { label: '発行中止・要確認（発行失敗や鍵の不在は断定していません）', tone: 'warn' },
     ISSUE_PENDING: { label: '発行待ち・処理中（未発行とは別）', tone: 'warn' },
     ISSUED: { label: '発行済み（登録確認済み）', tone: 'ok' },
     REVOKING: { label: '失効処理中（失効の確認待ち）', tone: 'warn' },
-    EXPIRED_NOT_REVOKED: { label: '利用終了後・失効は未確認（期限切れは失効済みではありません）', tone: 'warn' },
+    EXPIRED: { label: '期限切れ・失効未確認（失効済みではありません）', tone: 'warn' },
+    ENDED_NOT_REVOKED: { label: '利用終了後・失効は未確認（期限切れは失効済みではありません）', tone: 'warn' },
     REVOKED: { label: '失効済み（確認済み）', tone: 'ok' },
     STATE_UNKNOWN: { label: '反映の有無が不明', tone: 'ng' },
     NO_HISTORY: { label: '鍵の履歴なし（判別不可）', tone: 'warn' },
-    HOLD: { label: '判定保留（要確認・不一致）', tone: 'ng' }
+    HOLD: { label: '判定保留（鍵の記録を確定できません）', tone: 'ng' }
   };
-  var LIFECYCLE_BY_VERDICT = {
-    NOT_ISSUED_CONFIRMED: 'NOT_ISSUED', NO_HISTORY: 'NO_HISTORY', ISSUE_PENDING: 'ISSUE_PENDING', GUIDE_NOT_SENT: 'ISSUED', ISSUED_GUIDED: 'ISSUED',
-    ISSUED_GUIDE_UNKNOWN: 'ISSUED', REVOKE_UNCONFIRMED: 'REVOKING', REVOKED_CONFIRMED: 'REVOKED', NEEDS_REVIEW: 'HOLD', MISMATCH: 'HOLD', UNVERIFIABLE: 'HOLD'
-  };
-  function lifecycle_(verdictCode, reasonCodes) {
-    var code = LIFECYCLE_BY_VERDICT[verdictCode];
-    if (verdictCode === 'ISSUE_UNCONFIRMED') code = reasonCodes.indexOf('STATE_UNKNOWN') !== -1 ? 'STATE_UNKNOWN' : 'ISSUE_FAILED';
-    if (verdictCode === 'REVOKE_UNCONFIRMED' && reasonCodes.indexOf('ENDED_NOT_REVOKED') !== -1) code = 'EXPIRED_NOT_REVOKED';
-    if (!code) return null;
-    return { code: code, label: LIFECYCLES[code].label, tone: LIFECYCLES[code].tone };
+  function lifecycleView_(code, alert) {
+    return { code: code, label: LIFECYCLES[code].label, tone: LIFECYCLES[code].tone, alert: alert === true };
+  }
+  /* 鍵の記録の信頼性ゲート（読取中の更新・索引不整合・複数候補・8件超・認識できない記録・台帳の改訂不明）を通った場合だけ状態を主張する。 */
+  function lifecycleOf_(rec, data, nowMs) {
+    var item = data.item;
+    if (data.consistency !== 'STABLE') return 'HOLD';
+    if (item.record === 'NONE') return 'NO_HISTORY';
+    if (item.record !== 'FOUND' || item.truncated || rec.revision === null) return 'HOLD';
+    if (item.ops.some(function (o) { return o.state === 'UNRECOGNIZED' || o.kind === 'UNRECOGNIZED' || o.rev === null; })) return 'HOLD';
+    var cancelled = rec.status === 'CANCELLED' || rec.status === 'EXPIRED';
+    /* 取消・失効の予約は全改訂の鍵が対象。確定・仮予約は現在の改訂の鍵（古い改訂の残存は verdict の警告）。 */
+    var rel = item.ops.filter(function (o) { return o.kind === 'ISSUE' && (cancelled || o.rev === rec.revision); });
+    if (!rel.length) return 'HOLD';
+    function any(list) { return rel.some(function (o) { return has_(list, o.state); }); }
+    if (any(['UNKNOWN'])) return 'STATE_UNKNOWN';
+    if (any(['ISSUED_CONFIRMED'])) return rec.endMs !== null && nowMs >= rec.endMs ? 'ENDED_NOT_REVOKED' : 'ISSUED';
+    if (any(IN_FLIGHT)) return 'ISSUE_PENDING';
+    if (any(['DELETE_PENDING', 'DELETE_SENDING', 'DELETE_SENT'])) return 'REVOKING';
+    if (any(['EXPIRED'])) return 'EXPIRED';
+    if (any(GONE)) return 'REVOKED';
+    if (rel.every(function (o) { return o.state === 'FAILED'; })) return cancelled ? 'NOT_ISSUED' : 'ISSUE_FAILED';
+    return 'ISSUE_ABORTED'; /* ABANDONED のみ、または FAILED との混在 */
   }
 
   function reasons_(codes) { return codes.map(function (c) { return { code: c, text: REASON_TEXTS[c] || c }; }); }
@@ -240,7 +257,7 @@ var OpsKeyStatus = (function () {
     };
     function done(verdict, codes) {
       var out = result_(verdict, codes, base);
-      out.lifecycle = lifecycle_(verdict, codes);
+      out.lifecycle = lifecycleView_(lifecycleOf_(rec, data, nowMs), verdict === 'MISMATCH' || verdict === 'NEEDS_REVIEW');
       out.ops = base.ops.map(function (o) { return opView_(o, current(o)); });
       return out;
     }
