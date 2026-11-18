@@ -257,6 +257,25 @@ test('画面: 入力は契約の一覧要求へ変換される', function () {
   assert.deepStrictEqual(plain(C.paramsFromInputs({ service: 'snb', status: 'all', scope: 'custom', from: '2026-12-01', to: '2026-12-05' })), { service: 'snb', status: 'all', scope: 'upcoming', from: '2026-12-01', to: '2026-12-05' });
 });
 
+test('画面: 初期の状態はキャンセル除外。キャンセル除外では外し、「キャンセル」「すべて」では履歴を確認できる', async function () {
+  assert.strictEqual(C.STATUSES[0][0], 'active');
+  var res = okList([item({ bookingId: 'A', status: 'CONFIRMED' }), item({ bookingId: 'B', status: 'CANCELLED', statusLabel: 'キャンセル' })]);
+  async function run(status) {
+    var sent = null;
+    var ctl = C.createController({ list: function (p, ok) { sent = p; ok(res); }, detail: function () {} }, function () {});
+    ctl.load({ service: 'all', status: status, scope: 'upcoming' });
+    return { sent: sent, state: ctl.state };
+  }
+  var active = await run('active');
+  assert.strictEqual(active.sent.status, 'all');
+  assert.deepStrictEqual(active.state.data.items.map(function (i) { return i.bookingId; }), ['A']);
+  assert.strictEqual(active.state.data.counts.matched, 1);
+  assert.strictEqual(active.state.data.counts.sheetRows, 2);
+  var all = await run('all');
+  assert.strictEqual(all.state.data.items.length, 2);
+  assert.strictEqual((await run('CANCELLED')).sent.status, 'CANCELLED');
+});
+
 /* ---- フロント×バックエンドの契約適合（同一プロセス内。実ネットワークではない） ---- */
 function loadBackend() {
   var sandbox = { Logger: { log: function () {} } };
