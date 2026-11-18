@@ -102,6 +102,13 @@
     function keyOp(stateLabel, deliveryLabel, current) {
       return { rev: 1, current: current !== false, kindLabel: '発行', stateLabel: stateLabel, validFrom: iso(nowMs, 9, 45), validTo: iso(nowMs, 12, 15), updatedAt: iso(nowMs, 8, 0), deliveryLabel: deliveryLabel };
     }
+    /* メール送信記録の架空値（#967）。MOCK-002は鍵記録NONEでも来場案内の送信記録あり、MOCK-003は列欠落、MOCK-004は日時不正。 */
+    function mockMail(id, kind) {
+      if (id === 'MOCK-003') return { state: 'column_missing', at: null };
+      if (id === 'MOCK-004') return { state: 'invalid', at: null };
+      if (id === 'MOCK-005' || id === 'MOCK-006') return { state: 'none', at: null };
+      return { state: 'recorded', at: iso(nowMs, kind === 'access' ? 8 : 7, 0) };
+    }
     var MOCK_KEYS = {
       'MOCK-001': function () { return keyView('ISSUED_GUIDED', '登録確認済み・案内済み', 'ok', [], [keyOp('登録確認済み', '案内済み（送信呼出し成功。利用者への到達は別）')]); },
       'MOCK-002': function () { return keyView('UNVERIFIABLE', '確認不能（記録を確認できません）', 'warn', ['鍵管理側に記録がありません。「未発行」とは判断していません'], []); },
@@ -160,7 +167,8 @@
           if (!found) return ok(err('NOT_FOUND', '該当する予約が見つかりません。（モック）'));
           var detail = Object.assign({}, found, { brandRaw: found.service === 'unclassified' ? 'mock_brand' : null, statusRaw: found.status === null ? 'MOCK' : null,
             customerType: 'モック区分', purpose: 'モック用途', paymentMethod: 'cash', paymentStatus: 'not_started', planCode: null, effectivePriceAmount: 0, priceOverridden: false,
-            largeParty: false, source: 'mock', createdAt: found.startAt, updatedAt: null, confirmedAt: null, cancelledAt: null, expiredAt: null });
+            largeParty: false, source: 'mock', createdAt: found.startAt, updatedAt: null, confirmedAt: null, cancelledAt: null, expiredAt: null,
+            accessGuideMail: mockMail(found.bookingId, 'access'), confirmedMail: mockMail(found.bookingId, 'confirmed') });
           ok({ ok: true, contractVersion: 1, source: 'mock', fetchedAt: isoNow(nowMs), reservation: detail });
         });
       }

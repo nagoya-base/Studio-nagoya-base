@@ -515,3 +515,25 @@ test('GASアダプター: 鍵状態は opsGetKeyStatus だけを呼び、通信�
   assert.deepStrictEqual(got, { ok: true });
   assert.strictEqual(failed, true);
 });
+
+/* ---- #967 メール送信記録と個別鍵状況の分離表示 ---- */
+test('画面(#967): 来場案内の送信記録は鍵記録NONE・取得失敗でも別ブロックで表示され、個別鍵の発行と混同しない', function () {
+  var ok = ctlWith(); ok.openDetail('MOCK-002'); /* 鍵記録なし（確認不能）だが来場案内の送信記録あり */
+  var h = viewHtml(ok);
+  assert.ok(/予約台帳のメール送信記録（読み取り専用）/.test(h) && /予約台帳／来場案内メール<\/dt><dd>送信記録あり（\d{4}-\d{2}-\d{2} \d{2}:\d{2} JST）/.test(h));
+  assert.ok(h.indexOf('data-verdict="UNVERIFIABLE"') !== -1 && /個別鍵の登録・暗証番号の別送・解錠の成否を意味しません/.test(h));
+  assert.ok(!/案内未送信|未発行です/.test(h.split('鍵・案内の状況')[0]));
+  var fl = ctlWith({ key: 'failed' }); fl.openDetail('MOCK-002');
+  var h2 = viewHtml(fl);
+  assert.ok(/送信記録あり/.test(h2) && /未取得/.test(h2));
+});
+
+test('画面(#967): 空欄=台帳上の記録なし／列欠落・日時不正は別表示で、いずれも「未送信」と断定しない', function () {
+  var none = ctlWith(); none.openDetail('MOCK-005');
+  assert.ok(/台帳上の記録なし/.test(viewHtml(none)));
+  var miss = ctlWith(); miss.openDetail('MOCK-003');
+  assert.ok(/確認不能（台帳に該当の項目がありません）/.test(viewHtml(miss)));
+  var bad = ctlWith(); bad.openDetail('MOCK-004');
+  assert.ok(/日時不正・不明/.test(viewHtml(bad)));
+  [none, miss, bad].forEach(function (c) { assert.ok(!/(来場案内|確定)メール<\/dt><dd>[^<]*未送信/.test(viewHtml(c))); });
+});

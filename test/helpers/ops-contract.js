@@ -69,13 +69,19 @@ function validateDetail(res) {
   check(res && res.ok === true && res.contractVersion === 1 && ISO_JST.test(res.fetchedAt), 'detail 共通項目', problems);
   var r = res.reservation || {};
   var base = Object.assign({}, r);
-  ['brandRaw', 'statusRaw', 'customerType', 'purpose', 'paymentMethod', 'paymentStatus', 'planCode', 'effectivePriceAmount', 'priceOverridden', 'largeParty', 'source', 'createdAt', 'updatedAt', 'confirmedAt', 'cancelledAt', 'expiredAt'].forEach(function (k) {
+  ['brandRaw', 'statusRaw', 'customerType', 'purpose', 'paymentMethod', 'paymentStatus', 'planCode', 'effectivePriceAmount', 'priceOverridden', 'largeParty', 'source', 'createdAt', 'updatedAt', 'confirmedAt', 'cancelledAt', 'expiredAt', 'accessGuideMail', 'confirmedMail'].forEach(function (k) {
     check(Object.prototype.hasOwnProperty.call(r, k), '詳細の許可項目 ' + k, problems);
     delete base[k];
   });
   validateItem(base, problems);
   ['createdAt', 'updatedAt', 'confirmedAt', 'cancelledAt', 'expiredAt'].forEach(function (k) {
     check(r[k] === null || ISO_JST.test(r[k]), k + ' はタイムゾーン付きISOまたはnull', problems);
+  });
+  ['accessGuideMail', 'confirmedMail'].forEach(function (k) {
+    var m = r[k] || {};
+    check(Object.keys(m).sort().join() === 'at,state', k + ' は状態と日時のみ（宛先・本文・エラー文を含めない）', problems);
+    check(/^(recorded|none|invalid|column_missing)$/.test(m.state), k + ' の状態', problems);
+    check(m.state === 'recorded' ? ISO_JST.test(m.at) : m.at === null, k + ' の日時は記録ありのときだけ', problems);
   });
   return problems;
 }

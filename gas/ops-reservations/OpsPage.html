@@ -336,8 +336,28 @@
       ['受付経路', show(r.source)], ['作成', show(jstText(r.createdAt, true))], ['更新', show(jstText(r.updatedAt, true))],
       ['確定', show(jstText(r.confirmedAt, true))], ['キャンセル', show(jstText(r.cancelledAt, true))], ['失効', show(jstText(r.expiredAt, true))]
     ];
-    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderKeyStatus(state) +
+    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderMailRecords(r) + renderKeyStatus(state) +
       '<p><button type="button" id="detail-to-tasks">メモ・期限を開く</button></p>';
+  }
+
+  /* 予約台帳のメール送信記録（#967。読み取り専用）。Bookingsの既存列を直接読んだ「送信記録」で、
+     個別鍵の発行・暗証番号の別送・失効の状況ではない（それは下の鍵ブロックが別に示す）。
+     「未送信」とは断定しない（空欄は「台帳上の記録なし」、列が無い場合は「確認不能」）。 */
+  function mailRecordText(rec) {
+    if (!rec || typeof rec !== 'object') return '<span class="empty">確認不能（台帳から読めません）</span>';
+    if (rec.state === 'recorded') {
+      var t = jstText(rec.at, true);
+      return t === null ? '送信記録あり（日時を表示できません）' : '送信記録あり（' + esc(t) + ' JST）';
+    }
+    if (rec.state === 'none') return '<span class="empty">台帳上の記録なし</span>';
+    if (rec.state === 'invalid') return '<span class="empty">日時不正・不明（台帳の値を日時として読めません）</span>';
+    return '<span class="empty">確認不能（台帳に該当の項目がありません）</span>';
+  }
+  function renderMailRecords(r) {
+    return '<h2>予約台帳のメール送信記録（読み取り専用）</h2><dl>' +
+      '<dt>予約台帳／来場案内メール</dt><dd>' + mailRecordText(r.accessGuideMail) + '</dd>' +
+      '<dt>予約台帳／確定メール</dt><dd>' + mailRecordText(r.confirmedMail) + '</dd></dl>' +
+      '<p class="note">メールの送信記録です。個別鍵の登録・暗証番号の別送・解錠の成否を意味しません。</p>';
   }
 
   /* 鍵・案内の状況（#942。読み取り専用）。取得失敗・未接続・確認不能・不一致・要確認は別の表示。ジョブの稼働は別枠で、鍵の成功を意味しない。 */
