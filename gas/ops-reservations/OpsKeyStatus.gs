@@ -49,6 +49,8 @@ var OpsKeyStatus = (function () {
     NOT_CONNECTED: { label: '未接続（鍵状態は取得していません）', tone: 'info' },
     FETCH_FAILED: { label: '未取得（取得に失敗しました）', tone: 'ng' },
     UNVERIFIABLE: { label: '確認不能（記録を確認できません）', tone: 'warn' },
+    NO_HISTORY: { label: '鍵の履歴なし（未発行か失効済みかは判別不可）', tone: 'warn' },
+    NOT_ISSUED_CONFIRMED: { label: '未発行（発行失敗の記録のみ・鍵は登録されていません）', tone: 'info' },
     NEEDS_REVIEW: { label: '要確認', tone: 'ng' },
     MISMATCH: { label: '不一致（予約と鍵の記録が食い違っています）', tone: 'ng' },
     ISSUE_PENDING: { label: '発行待ち（登録確認はまだです）', tone: 'warn' },
@@ -68,7 +70,9 @@ var OpsKeyStatus = (function () {
     NOT_AVAILABLE: '鍵管理側が要求を受け付けませんでした（認証の不一致・停止中・入力不正などを区別できません）。',
     UNSUPPORTED_ID: 'この予約IDの形式は鍵状態の照会に対応していないため、取得していません。',
     CHANGED_DURING_READ: '読取り中に記録が更新されました。少し待って再取得してください。',
-    NO_RECORD: '鍵管理側に記録がありません（未観測・回収済み・対象外のいずれかで、区別できません）。「未発行」とは判断していません。',
+    NO_RECORD: '鍵管理側にこの予約の記録がありません。未発行・失効後に履歴が回収された・対象外のいずれかで、残っている値からは区別できません。「未発行」とも「失効済み」とも判断していません。',
+    NO_RECORD_NEXT: '確認先: SwitchBotアプリの鍵一覧（該当デバイスの個別鍵）と、鍵管理側の通知・実行ログ。予約の日時・状態や案内メールの記録では判別できません。',
+    NOT_ISSUED_ALL_FAILED: '予約は取消・失効済みで、発行の記録はすべて「発行失敗」です（反映していない根拠あり）。登録確認済みの鍵は記録にありません。',
     INVALID_INDEX: '鍵管理側の索引と操作記録が一致しません。',
     AMBIGUOUS: '同じ改訂に有効な発行記録が複数あります。',
     OP_HISTORY_TRUNCATED: '操作履歴が上限（8件）を超えており、古い記録を確認できません。見えている一部の記録から成功とは判断していません。',
@@ -92,9 +96,52 @@ var OpsKeyStatus = (function () {
     ISSUE_PENDING_AFTER_END: '利用終了後も発行が完了していない記録です。',
     WINDOW_NOT_COVERING: '鍵の有効時間が、予約の利用時間を覆っていません（変更・延長の反映漏れの可能性）。',
     GUIDE_STATE_UNCERTAIN: '案内メールの送信状態が確定していません。',
-    ONLY_FAILED_RECORDS: '失敗・放棄の記録のみで、取消後の失効を確認できる記録はありません。',
+    ONLY_FAILED_RECORDS: '発行の記録が無い、または放棄を含むため、鍵が実在しないこと・失効したことを確認できません。',
     ISSUED_NO_GUIDE_RECORD: '案内の記録がありません（案内機能が未設定の可能性もあるため、未送信とは断定していません）。'
   };
+
+  /* 個別鍵の実状態（主表示）。鍵管理側の記録（OPの state / revision / 整合性）だけから求め、予約との矛盾・案内メールの不明は
+     verdict と lifecycle.alert（警告）に分離する（鍵の明示的な証拠を主表示で隠さない）。
+     メール送信・予約時刻・ACCESS_ENABLED は根拠にしない。「有効期限が過ぎた」「期限切れ」は「実鍵が失効済み」ではない。
+     発行失敗・発行待ち・発行中止は「未発行」に合算しない。 */
+  var LIFECYCLES = {
+    NOT_ISSUED: { label: '未発行（根拠付き）', tone: 'info' },
+    ISSUE_FAILED: { label: '発行失敗（鍵は有効になっていません）', tone: 'ng' },
+    ISSUE_ABORTED: { label: '発行中止・要確認（発行失敗や鍵の不在は断定していません）', tone: 'warn' },
+    ISSUE_PENDING: { label: '発行待ち・処理中（未発行とは別）', tone: 'warn' },
+    ISSUED: { label: '発行済み（登録確認済み）', tone: 'ok' },
+    REVOKING: { label: '失効処理中（失効の確認待ち）', tone: 'warn' },
+    EXPIRED: { label: '期限切れ・失効未確認（失効済みではありません）', tone: 'warn' },
+    ENDED_NOT_REVOKED: { label: '利用終了後・失効は未確認（期限切れは失効済みではありません）', tone: 'warn' },
+    REVOKED: { label: '失効済み（確認済み）', tone: 'ok' },
+    STATE_UNKNOWN: { label: '反映の有無が不明', tone: 'ng' },
+    NO_HISTORY: { label: '鍵の履歴なし（判別不可）', tone: 'warn' },
+    HOLD: { label: '判定保留（鍵の記録を確定できません）', tone: 'ng' }
+  };
+  function lifecycleView_(code, alert) {
+    return { code: code, label: LIFECYCLES[code].label, tone: LIFECYCLES[code].tone, alert: alert === true };
+  }
+  /* 鍵の記録の信頼性ゲート（読取中の更新・索引不整合・複数候補・8件超・認識できない記録・台帳の改訂不明）を通った場合だけ状態を主張する。 */
+  function lifecycleOf_(rec, data, nowMs) {
+    var item = data.item;
+    if (data.consistency !== 'STABLE') return 'HOLD';
+    if (item.record === 'NONE') return 'NO_HISTORY';
+    if (item.record !== 'FOUND' || item.truncated || rec.revision === null) return 'HOLD';
+    if (item.ops.some(function (o) { return o.state === 'UNRECOGNIZED' || o.kind === 'UNRECOGNIZED' || o.rev === null; })) return 'HOLD';
+    var cancelled = rec.status === 'CANCELLED' || rec.status === 'EXPIRED';
+    /* 取消・失効の予約は全改訂の鍵が対象。確定・仮予約は現在の改訂の鍵（古い改訂の残存は verdict の警告）。 */
+    var rel = item.ops.filter(function (o) { return o.kind === 'ISSUE' && (cancelled || o.rev === rec.revision); });
+    if (!rel.length) return 'HOLD';
+    function any(list) { return rel.some(function (o) { return has_(list, o.state); }); }
+    if (any(['UNKNOWN'])) return 'STATE_UNKNOWN';
+    if (any(['ISSUED_CONFIRMED'])) return rec.endMs !== null && nowMs >= rec.endMs ? 'ENDED_NOT_REVOKED' : 'ISSUED';
+    if (any(IN_FLIGHT)) return 'ISSUE_PENDING';
+    if (any(['DELETE_PENDING', 'DELETE_SENDING', 'DELETE_SENT'])) return 'REVOKING';
+    if (any(['EXPIRED'])) return 'EXPIRED';
+    if (any(GONE)) return 'REVOKED';
+    if (rel.every(function (o) { return o.state === 'FAILED'; })) return cancelled ? 'NOT_ISSUED' : 'ISSUE_FAILED';
+    return 'ISSUE_ABORTED'; /* ABANDONED のみ、または FAILED との混在 */
+  }
 
   function reasons_(codes) { return codes.map(function (c) { return { code: c, text: REASON_TEXTS[c] || c }; }); }
 
@@ -210,11 +257,12 @@ var OpsKeyStatus = (function () {
     };
     function done(verdict, codes) {
       var out = result_(verdict, codes, base);
+      out.lifecycle = lifecycleView_(lifecycleOf_(rec, data, nowMs), verdict === 'MISMATCH' || verdict === 'NEEDS_REVIEW');
       out.ops = base.ops.map(function (o) { return opView_(o, current(o)); });
       return out;
     }
     if (data.consistency !== 'STABLE') return done('NEEDS_REVIEW', ['CHANGED_DURING_READ']);
-    if (item.record === 'NONE') return done('UNVERIFIABLE', ['NO_RECORD']);
+    if (item.record === 'NONE') return done('NO_HISTORY', ['NO_RECORD', 'NO_RECORD_NEXT']);
     if (item.record === 'INVALID_INDEX') return done('NEEDS_REVIEW', ['INVALID_INDEX']);
     var review = [];
     if (item.record === 'AMBIGUOUS') review.push('AMBIGUOUS');
@@ -236,6 +284,8 @@ var OpsKeyStatus = (function () {
       if (issues.some(function (o) { return o.state === 'UNKNOWN'; })) return done('NEEDS_REVIEW', ['STATE_UNKNOWN']);
       if (issues.some(function (o) { return has_(REVOKING, o.state); })) return done('REVOKE_UNCONFIRMED', []);
       if (issues.some(function (o) { return has_(GONE, o.state); })) return done('REVOKED_CONFIRMED', []);
+      /* 発行の記録が全て FAILED（Core定義: 反映していない根拠あり）のときだけ「未発行（根拠付き）」。放棄・失効記録のみ等は断定しない。 */
+      if (issues.length && issues.every(function (o) { return o.state === 'FAILED'; })) return done('NOT_ISSUED_CONFIRMED', ['NOT_ISSUED_ALL_FAILED']);
       return done('UNVERIFIABLE', ['ONLY_FAILED_RECORDS']);
     }
 
@@ -268,7 +318,7 @@ var OpsKeyStatus = (function () {
   /* 取得できなかった・接続していない場合の画面用の値（鍵の状態は何も主張しない）。 */
   function unavailable(verdictCode, reasonCode) {
     return result_(verdictCode, reasonCode ? [reasonCode] : [], { connection: verdictCode === 'NOT_CONNECTED' ? 'NOT_CONNECTED' : (verdictCode === 'FETCH_FAILED' ? 'FETCH_FAILED' : 'UNSUPPORTED'),
-      failure: reasonCode && verdictCode === 'FETCH_FAILED' ? { code: reasonCode } : null, consistency: null, opCount: 0, truncated: false, ops: [], jobs: [], notes: [] });
+      failure: reasonCode && verdictCode === 'FETCH_FAILED' ? { code: reasonCode } : null, lifecycle: null, consistency: null, opCount: 0, truncated: false, ops: [], jobs: [], notes: [] });
   }
 
   return {

@@ -212,13 +212,13 @@ test('照合: 予約の変更・延長・取消との不一致は MISMATCH（正
 
 test('照合: 記録なしは「確認不能」。未発行・案内済み・失効済みと断定しない', function () {
   var none = verdict(rec(), data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] } }));
-  assert.strictEqual(none.code, 'UNVERIFIABLE'); assert.deepStrictEqual(none.reasons, ['NO_RECORD']);
+  assert.strictEqual(none.code, 'NO_HISTORY'); assert.deepStrictEqual(none.reasons, ['NO_RECORD', 'NO_RECORD_NEXT']);
   assert.ok(!/未発行です|発行されていません/.test(JSON.stringify(none.out)));
   // 取消済みの予約でも同じ（失効済みとは断定しない）
-  assert.strictEqual(verdict(rec({ status: 'CANCELLED' }), data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] } })).code, 'UNVERIFIABLE');
-  // FOUNDだが発行記録が無い（確定）→ 要確認。失敗のみの取消 → 確認不能
+  assert.strictEqual(verdict(rec({ status: 'CANCELLED' }), data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] } })).code, 'NO_HISTORY');
+  // FOUNDだが発行記録が無い（確定）→ 要確認。放棄のみの取消 → 確認不能（未発行と断定しない）
   assert.strictEqual(verdict(rec(), data([])).code, 'NEEDS_REVIEW');
-  assert.strictEqual(verdict(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' })])).code, 'UNVERIFIABLE');
+  assert.strictEqual(verdict(rec({ status: 'CANCELLED' }), data([op({ state: 'ABANDONED' })])).code, 'UNVERIFIABLE');
 });
 
 test('照合: 8件超（truncated）は、見えている記録が正常でも要確認を優先する（成功判定をしない）', function () {
@@ -289,7 +289,7 @@ test('API: 台帳の終了が開始以前の予約は、台帳→照合の通し
 test('照合: ジョブの稼働は別枠。稼働していても予約の鍵の状態は変えない（記録なしは確認不能のまま）', function () {
   var d = data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] }, jobs: { SYNC: 30, SWEEP: 30, DELIVER: 30, CLEANUP: 30 } });
   var v = verdict(rec(), d);
-  assert.strictEqual(v.code, 'UNVERIFIABLE');
+  assert.strictEqual(v.code, 'NO_HISTORY');
   assert.strictEqual(v.out.jobs.length, 4);
   assert.strictEqual(v.out.jobs[0].ageMinutes, 0);
   assert.ok(v.out.jobs.every(function (j) { return !('verdict' in j); }));
@@ -428,7 +428,7 @@ function ctlWith(opts) {
 function viewHtml(ctl) { return C.renderBanner(ctl.state) + C.renderView(ctl.state); }
 
 test('画面: 鍵・案内の状況が予約詳細に出る。状態ごとに別の表示（成功/案内未送信/不一致/確認不能/要確認/失効未確認）', function () {
-  var expect = { 'MOCK-001': 'ISSUED_GUIDED', 'MOCK-002': 'UNVERIFIABLE', 'MOCK-003': 'REVOKED_CONFIRMED', 'MOCK-004': 'MISMATCH', 'MOCK-005': 'NEEDS_REVIEW', 'MOCK-006': 'GUIDE_NOT_SENT', 'MOCK-007': 'REVOKE_UNCONFIRMED' };
+  var expect = { 'MOCK-001': 'ISSUED_GUIDED', 'MOCK-002': 'NO_HISTORY', 'MOCK-003': 'REVOKED_CONFIRMED', 'MOCK-004': 'MISMATCH', 'MOCK-005': 'NEEDS_REVIEW', 'MOCK-006': 'GUIDE_NOT_SENT', 'MOCK-007': 'REVOKE_UNCONFIRMED' };
   var htmls = {};
   Object.keys(expect).forEach(function (id) {
     var ctl = ctlWith();
@@ -440,7 +440,7 @@ test('画面: 鍵・案内の状況が予約詳細に出る。状態ごとに別
     htmls[id] = html;
   });
   assert.ok(/不一致/.test(htmls['MOCK-004']) && !/登録確認済み・案内済み/.test(htmls['MOCK-004']));
-  assert.ok(/確認不能/.test(htmls['MOCK-002']) && /未発行」とは判断していません/.test(htmls['MOCK-002']));
+  assert.ok(/鍵の履歴なし/.test(htmls['MOCK-002']) && /未発行」とも「失効済み」とも判断していません/.test(htmls['MOCK-002']) && /確認先/.test(htmls['MOCK-002']));
   assert.ok(/案内未送信/.test(htmls['MOCK-006']));
   assert.ok(/処理ジョブの稼働（予約ごとの鍵の成功ではありません）/.test(htmls['MOCK-001']));
   assert.ok(/参考表示です。実際に解錠できるかは確認していません/.test(htmls['MOCK-001']));
@@ -498,7 +498,7 @@ test('画面: サーバーの文字列はすべてエスケープして描画す
 test('モックの鍵状態応答は、バックエンドと同じ契約の検証を通る', function () {
   ['ok', 'not_connected', 'failed'].forEach(function (key) {
     var api4 = Mock.createMockApi({ nowMs: NOW, defer: function (fn) { fn(); }, key: key });
-    ['MOCK-001', 'MOCK-002', 'MOCK-003', 'MOCK-004', 'MOCK-005', 'MOCK-006', 'MOCK-007'].forEach(function (id) {
+    ['MOCK-001', 'MOCK-002', 'MOCK-003', 'MOCK-004', 'MOCK-005', 'MOCK-006', 'MOCK-007', 'MOCK-008'].forEach(function (id) {
       api4.keyStatus(id, function (res) { assert.deepStrictEqual(contract.validateKeyStatus(res), [], key + ' ' + id); });
     });
   });
@@ -521,7 +521,7 @@ test('画面(#967): 来場案内の送信記録は鍵記録NONE・取得失敗�
   var ok = ctlWith(); ok.openDetail('MOCK-002'); /* 鍵記録なし（確認不能）だが来場案内の送信記録あり */
   var h = viewHtml(ok);
   assert.ok(/予約台帳のメール送信記録（読み取り専用）/.test(h) && /予約台帳／来場案内メール<\/dt><dd>送信記録あり（\d{4}-\d{2}-\d{2} \d{2}:\d{2} JST）/.test(h));
-  assert.ok(h.indexOf('data-verdict="UNVERIFIABLE"') !== -1 && /個別鍵の登録・暗証番号の別送・解錠の成否を意味しません/.test(h));
+  assert.ok(h.indexOf('data-verdict="NO_HISTORY"') !== -1 && /個別鍵の登録・暗証番号の別送・解錠の成否を意味しません/.test(h));
   assert.ok(!/案内未送信|未発行です/.test(h.split('鍵・案内の状況')[0]));
   var fl = ctlWith({ key: 'failed' }); fl.openDetail('MOCK-002');
   var h2 = viewHtml(fl);
@@ -536,4 +536,135 @@ test('画面(#967): 空欄=台帳上の記録なし／列欠落・日時不正�
   var bad = ctlWith(); bad.openDetail('MOCK-004');
   assert.ok(/日時不正・不明/.test(viewHtml(bad)));
   [none, miss, bad].forEach(function (c) { assert.ok(!/(来場案内|確定)メール<\/dt><dd>[^<]*未送信/.test(viewHtml(c))); });
+});
+
+// ================================================================ #969 個別鍵の実状態（lifecycle）
+
+function lc(r, d, now) { var o = verdict(r, d, now); return { verdict: o.code, lc: o.out.lifecycle && o.out.lifecycle.code, label: o.out.lifecycle && o.out.lifecycle.label, alert: o.out.lifecycle && o.out.lifecycle.alert, reasons: o.reasons }; }
+
+test('#969 主表示: 取消/失効かつ発行記録が全て失敗 → 未発行（根拠付き）。発行失敗・発行待ちは未発行に合算しない', function () {
+  var a = lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' }), op({ rev: 2, state: 'FAILED' })]));
+  assert.deepStrictEqual([a.verdict, a.lc], ['NOT_ISSUED_CONFIRMED', 'NOT_ISSUED']); assert.ok(/未発行（根拠付き）/.test(a.label));
+  assert.strictEqual(lc(rec({ status: 'EXPIRED' }), data([op({ state: 'FAILED' })])).lc, 'NOT_ISSUED');
+  // 確定の予約の発行失敗は「発行失敗」（未発行ではない）
+  assert.strictEqual(lc(rec(), data([op({ state: 'FAILED' })])).lc, 'ISSUE_FAILED');
+  // 発行待ち・処理中
+  ['PLANNED', 'SENDING', 'SENT_WAIT_WEBHOOK', 'ACCEPTED_NO_COMMAND_ID'].forEach(function (st) { assert.strictEqual(lc(rec(), data([op({ state: st })])).lc, 'ISSUE_PENDING', st); });
+  // 放棄のみ・失敗と放棄の混在は、未発行とも発行失敗とも断定せず「発行中止・要確認」。失効記録のみは保留
+  [[rec({ status: 'CANCELLED' }), [op({ state: 'ABANDONED' })]], [rec({ status: 'CANCELLED' }), [op({ state: 'FAILED' }), op({ rev: 2, state: 'ABANDONED' })]],
+    [rec(), [op({ state: 'ABANDONED' })]], [rec({ revision: 2 }), [op({ rev: 1, state: 'FAILED' }), op({ rev: 2, state: 'ABANDONED' })]]].forEach(function (c) {
+    var r = lc(c[0], data(c[1])); assert.strictEqual(r.lc, 'ISSUE_ABORTED'); assert.ok(!/未発行（根拠付き）|発行失敗（/.test(r.label));
+  });
+  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ kind: 'REVOKE', state: 'FAILED' })])).lc, 'HOLD');
+  // 失敗の記録でも truncated / 読取中の更新 / 取消後に鍵が残る場合は断定しない
+  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' })], { item: { record: 'FOUND', truncated: true, opCount: 9, ops: [op({ state: 'FAILED' })] } })).lc, 'HOLD');
+  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' })], { consistency: 'CHANGED_DURING_READ' })).lc, 'HOLD');
+  assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: 'FAILED' }), op({ rev: 2, state: 'ISSUED_CONFIRMED' })])).lc, 'ISSUED');
+});
+
+test('#969 主表示: 発行済み／失効処理中／失効済み（確認済み）。期限切れ・利用終了は失効済みにしない', function () {
+  assert.strictEqual(lc(rec(), data([op()])).lc, 'ISSUED');
+  ['DELETE_PENDING', 'DELETE_SENDING', 'DELETE_SENT'].forEach(function (st) { assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: st })])).lc, 'REVOKING', st); });
+  // Coreの EXPIRED は「期限切れ（削除とは区別）」。失効処理中とは別表示
+  var exp = lc(rec({ status: 'CANCELLED' }), data([op({ state: 'EXPIRED' })]));
+  assert.strictEqual(exp.lc, 'EXPIRED'); assert.ok(/期限切れ・失効未確認/.test(exp.label) && !/失効処理中/.test(exp.label));
+  ['DELETED_CONFIRMED', 'ALREADY_ABSENT', 'ARCHIVED_EXPIRED'].forEach(function (st) {
+    assert.strictEqual(lc(rec({ status: 'CANCELLED' }), data([op({ state: st })])).lc, 'REVOKED', st);
+    assert.strictEqual(lc(rec(), data([op({ state: st })]), AFTER_END).lc, 'REVOKED', st);
+  });
+  // 利用終了後でも鍵が登録確認済みのまま（有効期限が過ぎただけ）→ 失効済みではない
+  var ended = lc(rec(), data([op()]), AFTER_END);
+  assert.strictEqual(ended.lc, 'ENDED_NOT_REVOKED'); assert.ok(/失効は未確認/.test(ended.label));
+  // 反映の有無が不明
+  assert.strictEqual(lc(rec(), data([op({ state: 'UNKNOWN' })])).lc, 'STATE_UNKNOWN');
+});
+
+test('#969 主表示: NONE（履歴なし）は未発行・失効済みの二択にせず、予約の時刻・状態と無関係に判別不可。確認先を示す', function () {
+  var cases = [rec(), rec({ status: 'CANCELLED' }), rec({ status: 'EXPIRED' }), rec({ endMs: Date.UTC(2026, 10, 3, 3, 0), startMs: Date.UTC(2026, 10, 3, 1, 0) })];
+  cases.forEach(function (r) {
+    var o = verdict(r, data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] } }), NOW);
+    assert.strictEqual(o.out.lifecycle.code, 'NO_HISTORY');
+    var text = JSON.stringify(o.out);
+    assert.ok(/鍵の履歴なし（判別不可）/.test(text) && /確認先/.test(text) && /SwitchBot/.test(text));
+    assert.ok(!/"code":"(NOT_ISSUED|REVOKED)"/.test(text));
+  });
+});
+
+test('#969 主表示: 矛盾・改訂変更・取得エラー・未接続は鍵の状態を主張しない（HOLD / null）', function () {
+  assert.strictEqual(lc(rec({ revision: 2 }), data([op({ rev: 1 })])).lc, 'HOLD'); /* 改訂不一致 */
+  assert.strictEqual(lc(rec({ revision: null }), data([op()])).lc, 'HOLD');
+  var sb = load();
+  ['NOT_CONNECTED', 'FETCH_FAILED'].forEach(function (c) { assert.strictEqual(plain(sb.OpsKeyStatus.unavailable(c, 'NETWORK')).lifecycle, null); });
+  assert.strictEqual(plain(sb.OpsKeyStatus.unavailable('UNVERIFIABLE', 'UNSUPPORTED_ID')).lifecycle, null);
+});
+
+test('#969 主表示: メール送信記録・予約の時刻・ACCESS_ENABLED は入力にならない（evaluateの入力はrec/dataのみ）', function () {
+  var sb = load();
+  var base = plain(sb.OpsKeyStatus.evaluate(rec({ status: 'CANCELLED' }), data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] } }), NOW));
+  var withMail = plain(sb.OpsKeyStatus.evaluate(Object.assign(rec({ status: 'CANCELLED' }), { accessGuideMail: { state: 'recorded' }, confirmedMail: { state: 'recorded' }, accessApprovedAt: 1 }), data([], { item: { record: 'NONE', truncated: false, opCount: 0, ops: [] } }), NOW + 400 * DAY));
+  assert.deepStrictEqual(withMail.lifecycle, base.lifecycle);
+  assert.strictEqual(withMail.lifecycle.code, 'NO_HISTORY');
+});
+
+test('#969 画面: 個別鍵の状態が主表示で、照合結果・メール送信記録とは別枠。NONE/未発行/失効済みが別表示', function () {
+  var want = { 'MOCK-001': 'ISSUED', 'MOCK-002': 'NO_HISTORY', 'MOCK-003': 'REVOKED', 'MOCK-007': 'REVOKING' };
+  Object.keys(want).forEach(function (id) {
+    var ctl = ctlWith(); ctl.openDetail(id);
+    var h = viewHtml(ctl);
+    assert.ok(h.indexOf('data-lifecycle="' + want[id] + '"') !== -1, id);
+    assert.ok(h.indexOf('個別鍵の状態:') < h.indexOf('data-verdict='), id + ': 主表示が照合結果より先');
+  });
+  var none = ctlWith(); none.openDetail('MOCK-002');
+  assert.ok(/個別鍵の状態: 鍵の履歴なし（判別不可）/.test(viewHtml(none)) && !/data-lifecycle="(NOT_ISSUED|REVOKED)"/.test(viewHtml(none)));
+  /* 未発行（根拠付き）はモックの予約一覧に無いため、状態を直接組み立てて描画する */
+  var ni = ctlWith(); ni.openDetail('MOCK-003');
+  var apiNi = Mock.createMockApi({ nowMs: NOW, defer: function (fn) { fn(); } });
+  apiNi.keyStatus('MOCK-008', function (res) {
+    ni.state.key = { phase: 'ready', data: res.keyStatus, error: null, fetchedAt: res.fetchedAt };
+  });
+  var niHtml = viewHtml(ni);
+  assert.ok(niHtml.indexOf('data-lifecycle="NOT_ISSUED"') !== -1 && /個別鍵の状態: 未発行（根拠付き）/.test(niHtml));
+  var nc = ctlWith({ key: 'not_connected' }); nc.openDetail('MOCK-001');
+  assert.ok(viewHtml(nc).indexOf('data-lifecycle') === -1);
+});
+
+test('#969 主表示: 鍵の明示的な証拠は予約との矛盾・案内の不明で隠さない（lifecycleは鍵の記録から直接求め、警告はalert/verdictに分離）', function () {
+  // 案内状態だけが不確かでも、登録確認済みの鍵は「発行済み」。verdictは要確認を維持
+  ['SENDING', 'UNKNOWN', 'SUPPRESSED'].forEach(function (d) {
+    var r = lc(rec(), data([op({ delivery: d })]));
+    assert.deepStrictEqual([r.lc, r.verdict, r.alert], ['ISSUED', 'NEEDS_REVIEW', true], d);
+    assert.deepStrictEqual(r.reasons, ['GUIDE_STATE_UNCERTAIN']);
+  });
+  // 取消予約＋有効な鍵が残っている → 発行済み（有効な鍵が残る）を隠さず、MISMATCHの警告つき
+  var c = lc(rec({ status: 'CANCELLED' }), data([op()])); assert.deepStrictEqual([c.lc, c.verdict, c.alert], ['ISSUED', 'MISMATCH', true]);
+  var c2 = lc(rec({ status: 'EXPIRED' }), data([op({ state: 'SENT_WAIT_WEBHOOK' })])); assert.deepStrictEqual([c2.lc, c2.verdict, c2.alert], ['ISSUE_PENDING', 'MISMATCH', true]);
+  // 予約は有効（利用前）なのに鍵は失効確認済み → 失効済み（確認済み）＋警告
+  ['DELETED_CONFIRMED', 'ALREADY_ABSENT'].forEach(function (st) {
+    var r = lc(rec(), data([op({ state: st })])); assert.deepStrictEqual([r.lc, r.verdict, r.alert], ['REVOKED', 'MISMATCH', true], st);
+  });
+  // 失効処理中（予約は有効）
+  var rv = lc(rec(), data([op({ state: 'DELETE_PENDING' })])); assert.deepStrictEqual([rv.lc, rv.verdict, rv.alert], ['REVOKING', 'MISMATCH', true]);
+  // 鍵の有効時間が予約を覆っていない → 登録確認は発行済みのまま、時間不一致はMISMATCH警告
+  var w = lc(rec(), data([op({ validToSec: Math.floor(Date.UTC(2026, 11, 2, 2, 0) / 1000) })])); assert.deepStrictEqual([w.lc, w.verdict, w.alert], ['ISSUED', 'MISMATCH', true]);
+  // 正常は警告なし
+  assert.strictEqual(lc(rec(), data([op()])).alert, false);
+  // 誤成功防止（truncated・複数候補・読取競合・不整合・認識不能・改訂不明）は引き続き保留（鍵の状態を主張しない）
+  var hold = function (d, r) { var x = lc(r || rec(), d); assert.deepStrictEqual([x.lc, x.alert], ['HOLD', true]); };
+  hold(data([op()], { item: { record: 'FOUND', truncated: true, opCount: 9, ops: [op()] } }));
+  hold(data([op()], { item: { record: 'AMBIGUOUS', truncated: false, opCount: 2, ops: [op(), op()] } }));
+  hold(data([op()], { item: { record: 'INVALID_INDEX', truncated: false, opCount: 0, ops: [] } }));
+  hold(data([op()], { consistency: 'CHANGED_DURING_READ' }));
+  hold(data([op({ state: 'UNRECOGNIZED' })]));
+  hold(data([op()]), rec({ revision: null }));
+  hold(data([op({ rev: 1 })]), rec({ revision: 2 })); /* 現在の改訂の鍵記録なし */
+  // 現在の改訂に鍵があり古い改訂の鍵が残る → 現在の改訂の状態＋MISMATCH警告
+  var old = lc(rec({ revision: 2 }), data([op({ rev: 1 }), op({ rev: 2 })])); assert.deepStrictEqual([old.lc, old.verdict, old.alert], ['ISSUED', 'MISMATCH', true]);
+});
+
+test('#969 画面: 警告つきの主表示は、鍵の状態の直下に警告を出す（取消なのに鍵が有効）', function () {
+  var ctl = ctlWith(); ctl.openDetail('MOCK-004');
+  var h = viewHtml(ctl);
+  assert.ok(h.indexOf('data-lifecycle="ISSUED"') !== -1 && h.indexOf('data-lifecycle-alert="1"') !== -1 && h.indexOf('data-lifecycle-alert') < h.indexOf('data-verdict='));
+  var ok = ctlWith(); ok.openDetail('MOCK-001');
+  assert.ok(viewHtml(ok).indexOf('data-lifecycle-alert') === -1);
 });

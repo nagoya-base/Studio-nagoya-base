@@ -92,10 +92,10 @@
 
     /* 鍵・案内の状況（#942）の架空応答。?key=ok|not_connected|failed|denied（予約IDごとに状態が変わる）。 */
     var keyScenario = opts && opts.key ? opts.key : 'ok';
-    function keyView(code, label, tone, reasons, ops) {
+    function keyView(code, label, tone, reasons, ops, lc) {
       return {
         verdict: { code: code, label: label, tone: tone }, reasons: reasons.map(function (t) { return { code: 'MOCK', text: t + '（モック）' }; }),
-        connection: 'CONNECTED', failure: null, consistency: 'STABLE', opCount: ops.length, truncated: false, ops: ops,
+        connection: 'CONNECTED', failure: null, lifecycle: lc || null, consistency: 'STABLE', opCount: ops.length, truncated: false, ops: ops,
         jobs: [{ job: 'SYNC', label: '予約と鍵の同期', ageMinutes: 3 }, { job: 'DELIVER', label: '案内メールの送信', ageMinutes: null }], notes: []
       };
     }
@@ -110,13 +110,14 @@
       return { state: 'recorded', at: iso(nowMs, kind === 'access' ? 8 : 7, 0) };
     }
     var MOCK_KEYS = {
-      'MOCK-001': function () { return keyView('ISSUED_GUIDED', '登録確認済み・案内済み', 'ok', [], [keyOp('登録確認済み', '案内済み（送信呼出し成功。利用者への到達は別）')]); },
-      'MOCK-002': function () { return keyView('UNVERIFIABLE', '確認不能（記録を確認できません）', 'warn', ['鍵管理側に記録がありません。「未発行」とは判断していません'], []); },
-      'MOCK-003': function () { return keyView('REVOKED_CONFIRMED', '失効確認済み', 'ok', [], [keyOp('失効確認済み', '案内済み（送信呼出し成功。利用者への到達は別）')]); },
-      'MOCK-004': function () { return keyView('MISMATCH', '不一致（予約と鍵の記録が食い違っています）', 'ng', ['鍵の有効時間が、予約の利用時間を覆っていません'], [keyOp('登録確認済み', '案内済み（送信呼出し成功。利用者への到達は別）')]); },
-      'MOCK-005': function () { return keyView('NEEDS_REVIEW', '要確認', 'ng', ['予約台帳の状態を判別できません'], []); },
-      'MOCK-006': function () { return keyView('GUIDE_NOT_SENT', '登録確認済み・案内未送信', 'warn', [], [keyOp('登録確認済み', '案内未送信')]); },
-      'MOCK-007': function () { return keyView('REVOKE_UNCONFIRMED', '失効未確認', 'warn', [], [keyOp('失効待ち', null)]); }
+      'MOCK-001': function () { return keyView('ISSUED_GUIDED', '登録確認済み・案内済み', 'ok', [], [keyOp('登録確認済み', '案内済み（送信呼出し成功。利用者への到達は別）')], { code: 'ISSUED', label: '発行済み（登録確認済み）', tone: 'ok', alert: false }); },
+      'MOCK-002': function () { return keyView('NO_HISTORY', '鍵の履歴なし（未発行か失効済みかは判別不可）', 'warn', ['鍵管理側に記録がありません。「未発行」とも「失効済み」とも判断していません', '確認先: 鍵管理アプリ側の鍵一覧と、鍵管理側の通知・実行ログ'], [], { code: 'NO_HISTORY', label: '鍵の履歴なし（判別不可）', tone: 'warn', alert: false }); },
+      'MOCK-003': function () { return keyView('REVOKED_CONFIRMED', '失効確認済み', 'ok', [], [keyOp('失効確認済み', '案内済み（送信呼出し成功。利用者への到達は別）')], { code: 'REVOKED', label: '失効済み（確認済み）', tone: 'ok', alert: false }); },
+      'MOCK-004': function () { return keyView('MISMATCH', '不一致（予約と鍵の記録が食い違っています）', 'ng', ['鍵の有効時間が、予約の利用時間を覆っていません'], [keyOp('登録確認済み', '案内済み（送信呼出し成功。利用者への到達は別）')], { code: 'ISSUED', label: '発行済み（登録確認済み）', tone: 'ok', alert: true }); },
+      'MOCK-005': function () { return keyView('NEEDS_REVIEW', '要確認', 'ng', ['予約台帳の状態を判別できません'], [], { code: 'HOLD', label: '判定保留（鍵の記録を確定できません）', tone: 'ng', alert: true }); },
+      'MOCK-006': function () { return keyView('GUIDE_NOT_SENT', '登録確認済み・案内未送信', 'warn', [], [keyOp('登録確認済み', '案内未送信')], { code: 'ISSUED', label: '発行済み（登録確認済み）', tone: 'ok', alert: false }); },
+      'MOCK-008': function () { return keyView('NOT_ISSUED_CONFIRMED', '未発行（発行失敗の記録のみ・鍵は登録されていません）', 'info', ['発行の記録はすべて発行失敗です'], [keyOp('発行失敗', null)], { code: 'NOT_ISSUED', label: '未発行（根拠付き）', tone: 'info', alert: false }); },
+      'MOCK-007': function () { return keyView('REVOKE_UNCONFIRMED', '失効未確認', 'warn', [], [keyOp('失効待ち', null)], { code: 'REVOKING', label: '失効処理中（失効の確認待ち）', tone: 'warn', alert: false }); }
     };
 
     return {
@@ -126,7 +127,7 @@
           if (keyScenario === 'denied') return ok(err('FORBIDDEN', '権限がありません。（モック）'));
           var v;
           if (keyScenario === 'not_connected') {
-            v = keyView('NOT_CONNECTED', '未接続（鍵状態は取得していません）', 'info', [], []); v.connection = 'NOT_CONNECTED'; v.consistency = null; v.jobs = [];
+            v = keyView('NOT_CONNECTED', '未接続（鍵状態は取得していません）', 'info', [], []); v.connection = 'NOT_CONNECTED'; v.lifecycle = null; v.consistency = null; v.jobs = [];
           } else if (keyScenario === 'failed') {
             v = keyView('FETCH_FAILED', '未取得（取得に失敗しました）', 'ng', ['通信に失敗しました'], []); v.connection = 'FETCH_FAILED'; v.failure = { code: 'NETWORK' }; v.consistency = null; v.jobs = [];
           } else if (MOCK_KEYS[id]) v = MOCK_KEYS[id]();
