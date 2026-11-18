@@ -61,6 +61,24 @@ var OpsNormalizer = (function () {
     return isFinite(n) ? n : null;
   }
 
+  /* 人数。台帳には "2名" のような文字列が入る（Booking.gsは String(input.people).trim() で保存）。
+   * 数値2・"2"・"2名" を整数として扱う。空欄・不正値・小数・負数・複数値・余計な文字・上限超は推測せず null。
+   * 業務上の上限は SNB mens の7名（0は既存契約どおり0のまま保持し、空欄と区別する）。読み取り専用で台帳は書き換えない。 */
+  var MAX_PEOPLE = 7;
+  function peopleOrNull_(value) {
+    var n;
+    if (typeof value === 'number') {
+      n = value;
+    } else if (typeof value === 'string') {
+      var m = /^\s*(\d{1,3})\s*名?\s*$/.exec(value);
+      if (!m) return null;
+      n = Number(m[1]);
+    } else {
+      return null;
+    }
+    return isFinite(n) && Math.floor(n) === n && n >= 0 && n <= MAX_PEOPLE ? n : null;
+  }
+
   function truthy_(value) {
     return value === true || (typeof value === 'string' && /^(true|1|yes)$/i.test(value.trim()));
   }
@@ -134,7 +152,7 @@ var OpsNormalizer = (function () {
       endAt: endMs === null ? null : OpsContract.toIso(endMs),
       revision: revisionOrNull_(get('revision')),
       name: text_(get('name'), 80),
-      people: numberOrNull_(get('people')),
+      people: peopleOrNull_(get('people')),
       customerType: text_(get('customerType'), 40),
       purpose: text_(get('purpose'), 200),
       paymentMethod: text_(get('paymentMethod'), 40),
