@@ -187,6 +187,25 @@ test('正規化: 0と空欄を区別し、不明なサービス・状態を既�
   assert.strictEqual(e.name, null);
 });
 
+test('正規化: 人数は 2 / "2" / "2名"（1〜7名）を整数にし、不正値は補完せずnull (#965)', function () {
+  var sb = loadSandbox({});
+  function ppl(v) {
+    return sb.OpsNormalizer.normalize([HEADER, row({ bookingId: 'PP', people: v })]).records[0].people;
+  }
+  for (var i = 1; i <= 7; i++) {
+    assert.strictEqual(ppl(i), i);
+    assert.strictEqual(ppl(String(i)), i);
+    assert.strictEqual(ppl(i + '名'), i);
+  }
+  assert.strictEqual(ppl(' 2名 '), 2);
+  assert.strictEqual(ppl(0), 0);
+  [ '', null, undefined, true, -1, '-1', '-1名', 1.5, '1.5', '1.5名', '2名様', '2人', '2名 3名', '2,3', '1-2名',
+    '二名', 'abc', '名', '8名', 8, 1e9, '99999名', '2名名', NaN, Infinity
+  ].forEach(function (v) {
+    assert.strictEqual(ppl(v), null, '不正値はnull: ' + String(v));
+  });
+});
+
 test('正規化: 修正料金は修正済みのときだけ実効額になる', function () {
   var sb = loadSandbox({});
   var out = sb.OpsNormalizer.normalize([HEADER,
