@@ -69,7 +69,7 @@
     var state = {
       phase: 'idle', data: null, error: null, lastSuccessAt: null, stale: false,
       save: { phase: 'idle', message: '', current: null, at: null },
-      showDone: false, mock: !!(api && api.kind === 'mock')
+      showDone: false, expanded: {}, mock: !!(api && api.kind === 'mock')
     };
     var listSeq = 0;
     function emit() { if (onChange) onChange(state); }
@@ -164,19 +164,20 @@
 
     function setStatus(task, status, done) { return save(contentOf(task, status), task.revision, done); }
     function toggleDone() { state.showDone = !state.showDone; emit(); }
+    function toggleOpen(id) { state.expanded[id] = !state.expanded[id]; emit(); }
     function find(id) {
       var hit = null;
       ((state.data && state.data.items) || []).forEach(function (t) { if (t.taskId === id) hit = t; });
       return hit;
     }
 
-    return { state: state, load: load, save: save, remove: remove, setStatus: setStatus, toggleDone: toggleDone, find: find };
+    return { state: state, load: load, save: save, remove: remove, setStatus: setStatus, toggleDone: toggleDone, toggleOpen: toggleOpen, find: find };
   }
 
   function renderBanner(state) {
     var html = '';
     if (state.mock) html += '<div class="banner stale">モックデータ（架空）です。実際のメモは保存されません。</div>';
-    if (state.phase === 'loading') html += '<div class="banner">取得中…</div>';
+    if (state.phase === 'loading') html += '<div class="banner loading" role="status">取得中…</div>';
     if (state.phase === 'denied') html += '<div class="banner err">' + esc(state.error.message) + '（メモは表示しません）</div>';
     if (state.phase === 'error') {
       html += '<div class="banner err">' + esc(withHint(state.error)) + '</div>';
@@ -211,7 +212,7 @@
       (d.skippedRows > 0 ? ' <span class="tag danger">一覧は不完全（読込不可 ' + esc(d.skippedRows) + '行）</span>' : '') + '</div>';
   }
 
-  function renderCard(t, busy) {
+  function renderCard(t, busy, open) {
     var dis = busy ? ' disabled' : '';
     var tags = '<span class="tag">' + esc(t.statusLabel) + '</span>';
     if (t.overdue) tags += '<span class="tag danger">期限超過</span>';
@@ -227,11 +228,11 @@
     var quick = STATUS_OPTIONS.filter(function (o) { return o[0] !== t.status; }).map(function (o) {
       return '<button type="button" data-act="status" data-id="' + esc(t.taskId) + '" data-status="' + esc(o[0]) + '"' + dis + '>' + esc(o[1]) + 'にする</button>';
     }).join('');
-    return '<li class="card task' + (t.overdue ? ' overdue' : '') + '"><div class="top">' + tags + '</div>' +
+    return '<li class="card task' + (t.overdue ? ' overdue' : '') + '"><button type="button" class="taskhead" data-act="open" data-id="' + esc(t.taskId) + '" aria-expanded="' + (open ? 'true' : 'false') + '"><div class="top">' + tags + '</div>' +
       '<div class="when">' + esc(t.title) + '</div>' +
+      '<div class="note">' + meta.join(' / ') + '</div></button>' +
       (t.memo ? '<div class="memo">' + esc(t.memo) + '</div>' : '') + link +
-      '<div class="note">' + meta.join(' / ') + '</div>' +
-      '<div class="actions">' + quick + '<button type="button" data-act="edit" data-id="' + esc(t.taskId) + '"' + dis + '>編集</button><button type="button" data-act="delete" data-id="' + esc(t.taskId) + '"' + dis + '>削除</button></div></li>';
+      '<div class="actions"' + (open ? '' : ' hidden') + '>' + quick + '<button type="button" data-act="edit" data-id="' + esc(t.taskId) + '"' + dis + '>編集</button><button type="button" data-act="delete" data-id="' + esc(t.taskId) + '"' + dis + '>削除</button></div></li>';
   }
 
   function renderList(state) {
@@ -243,11 +244,11 @@
     var open = d.items.filter(function (t) { return !t.overdue && t.status !== 'done'; });
     var done = d.items.filter(function (t) { return t.status === 'done'; });
     var html = '';
-    if (overdue.length) html += '<h2>期限超過（' + esc(overdue.length) + '件）</h2><ul class="cards">' + overdue.map(function (t) { return renderCard(t, busy); }).join('') + '</ul>';
+    if (overdue.length) html += '<h2>期限超過（' + esc(overdue.length) + '件）</h2><ul class="cards">' + overdue.map(function (t) { return renderCard(t, busy, state.expanded[t.taskId]); }).join('') + '</ul>';
     html += '<h2>未対応・対応中（' + esc(open.length) + '件）</h2>';
-    html += open.length ? '<ul class="cards">' + open.map(function (t) { return renderCard(t, busy); }).join('') + '</ul>' : (skipped ? '<div class="banner stale">表示できる未完了のメモはありません。ただし読み込めない行があるため、一覧は不完全です。</div>' : '<div class="banner">未対応のメモはありません（取得は正常に完了しています）。</div>');
+    html += open.length ? '<ul class="cards">' + open.map(function (t) { return renderCard(t, busy, state.expanded[t.taskId]); }).join('') + '</ul>' : (skipped ? '<div class="banner stale">表示できる未完了のメモはありません。ただし読み込めない行があるため、一覧は不完全です。</div>' : '<div class="banner">未対応のメモはありません（取得は正常に完了しています）。</div>');
     html += '<h2>完了（' + esc(done.length) + '件）</h2><button type="button" data-act="toggle-done">' + (state.showDone ? '完了を隠す' : '完了を表示') + '</button>';
-    if (state.showDone) html += done.length ? '<ul class="cards">' + done.map(function (t) { return renderCard(t, busy); }).join('') + '</ul>' : '<div class="banner">完了したメモはありません。</div>';
+    if (state.showDone) html += done.length ? '<ul class="cards">' + done.map(function (t) { return renderCard(t, busy, state.expanded[t.taskId]); }).join('') + '</ul>' : '<div class="banner">完了したメモはありません。</div>';
     html += '<p class="note">完了から' + esc(d.retentionDays) + '日を過ぎたメモは自動で削除されます（完了後に編集すると起算が更新されます）。未完了のメモは自動削除されません。</p>';
     return html;
   }
@@ -314,6 +315,7 @@
       while (node && node !== $('tasks-view')) {
         var act = node.getAttribute && node.getAttribute('data-act');
         if (act === 'toggle-done') { ctl.toggleDone(); return; }
+        if (act === 'open') { ctl.toggleOpen(node.getAttribute('data-id')); return; }
         if (act) {
           var task = ctl.find(node.getAttribute('data-id'));
           if (!task) return;
