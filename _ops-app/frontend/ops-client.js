@@ -16,7 +16,7 @@
   'use strict';
 
   var SERVICES = [['all', 'すべて'], ['snb', 'SNB'], ['studio_x', 'Studio X'], ['snb_mens', 'SNB Mens'], ['snb_community', 'SNB Community（未接続）'], ['unclassified', '未分類']];
-  var STATUSES = [['all', 'すべて'], ['PENDING', '仮予約'], ['CONFIRMED', '確定'], ['CANCELLED', 'キャンセル'], ['EXPIRED', '失効'], ['UNKNOWN', '不明']];
+  var STATUSES = [['active', 'キャンセル除外'], ['all', 'すべて（キャンセル含む）'], ['PENDING', '仮予約'], ['CONFIRMED', '確定'], ['CANCELLED', 'キャンセル'], ['EXPIRED', '失効'], ['UNKNOWN', '不明']];
   var PHASE_LABELS = { upcoming: 'これから', in_progress: '利用中', ended: '終了済み', unknown: '開始済み（終了不明）' };
   var DENIED_CODES = ['UNAUTHENTICATED', 'FORBIDDEN'];
 
@@ -68,8 +68,16 @@
         state.stale = !!state.data;
       }
     }
+    /* 状態「キャンセル除外」（初期表示）はバックエンドの絞り込み値ではない。台帳は従来どおり全件取得し、
+       キャンセル済みだけを画面側で外して、件数も表示結果に合わせる。履歴は消さず、状態「キャンセル」「すべて」で確認できる。 */
+    function withoutCancelled(res) {
+      var items = res.items.filter(function (i) { return i.status !== 'CANCELLED'; });
+      return Object.assign({}, res, { items: items, counts: Object.assign({}, res.counts, { matched: items.length }), applied: Object.assign({}, res.applied, { status: 'active' }) });
+    }
     function load(params) {
       var mine = ++listSeq;
+      var hideCancelled = params.status === 'active';
+      if (hideCancelled) params = Object.assign({}, params, { status: 'all' });
       /* 詳細を開いたまま再取得した場合も、詳細を最新の台帳から取り直す。 */
       if (state.detailId !== null) openDetail(state.detailId);
       state.phase = 'loading';
@@ -78,7 +86,7 @@
       api.list(params, function (res) {
         if (mine !== listSeq) return;
         if (res && res.ok) {
-          state.data = res; state.lastSuccessAt = res.fetchedAt; state.stale = false; state.error = null; state.phase = 'ready';
+          state.data = hideCancelled ? withoutCancelled(res) : res; state.lastSuccessAt = res.fetchedAt; state.stale = false; state.error = null; state.phase = 'ready';
         } else {
           fail(res && res.error ? res.error : { code: 'FETCH_FAILED', message: '取得に失敗しました。' });
         }
