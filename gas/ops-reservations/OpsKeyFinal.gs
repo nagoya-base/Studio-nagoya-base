@@ -51,9 +51,10 @@ var OpsKeyFinal = (function () {
 
   function part_(v) { return v === null || v === undefined ? '' : String(v); }
 
-  /* 台帳（正規化済みの予約）の指紋。状態・ブランド・利用日時・確定/取消/失効日時だけ。個人情報は含めない。 */
+  /* 台帳（正規化済みの予約）の指紋。予約ID・状態・ブランド・利用日時・確定/取消/失効日時だけ。個人情報は含めない。
+     予約IDを入力に含めるのは、同じ改訂番号・同じ属性の別予約へ保存値が転記・行ずれで入っても、有効と認識しないため（予約ID自体は保存しない）。 */
   function fingerprint(rec) {
-    var text = ['v1', rec.status, rec.brandRaw, rec.startMs, rec.endMs, rec.confirmedAt, rec.cancelledAt, rec.expiredAt].map(part_).join('|');
+    var text = ['v1', rec.bookingId, rec.status, rec.brandRaw, rec.startMs, rec.endMs, rec.confirmedAt, rec.cancelledAt, rec.expiredAt].map(part_).join('|');
     return fnv_(text, 0x811c9dc5) + fnv_(text, 0x1b873593);
   }
 
@@ -112,16 +113,23 @@ var OpsKeyFinal = (function () {
       /* 発行中・残存鍵・削除未確認・UNKNOWN・ABANDONED・期限切れ（失効の確認前）はすべて対象外。 */
       if (GONE.indexOf(o.state) === -1 && o.state !== FAILED) return no('OP_NOT_SETTLED');
     }
+    /* 既存の照合（OpsKeyStatus.evaluate）の判定が、保存しようとするコードと一致することを必要条件にする。
+       MISMATCH / NEEDS_REVIEW（例: 案内状態が認識できない記録）等の「要確認」を確定結果として永続保存しない。 */
+    function agrees_(code) {
+      var v;
+      try { v = OpsKeyStatus.evaluate(rec, data, nowMs).verdict.code; } catch (e) { return false; }
+      return v === code;
+    }
     if (mode === 'CANCELLED') {
-      if (ops.every(function (o) { return o.state === FAILED; })) return { save: 'NOT_ISSUED_CONFIRMED', reason: 'ALL_ISSUES_FAILED' };
-      return { save: 'REVOKED_CONFIRMED', reason: 'CANCELLED_ALL_SETTLED' };
+      if (ops.every(function (o) { return o.state === FAILED; })) return agrees_('NOT_ISSUED_CONFIRMED') ? { save: 'NOT_ISSUED_CONFIRMED', reason: 'ALL_ISSUES_FAILED' } : no('VERDICT_MISMATCH');
+      return agrees_('REVOKED_CONFIRMED') ? { save: 'REVOKED_CONFIRMED', reason: 'CANCELLED_ALL_SETTLED' } : no('VERDICT_MISMATCH');
     }
     /* 利用終了した確定予約: 現在の改訂の記録があり、全件の失効・不在を確認でき、鍵の有効期限（猶予込み）も終了していること。
        Bookings の endAt の経過だけでは保存しない。 */
     if (!ops.some(function (o) { return o.rev === rec.revision; })) return no('REVISION_NOT_COVERED');
     if (ops.some(function (o) { return GONE.indexOf(o.state) === -1; })) return no('ENDED_NOT_ALL_REVOKED');
     if (ops.some(function (o) { return o.validToSec === null || o.validToSec * 1000 > nowMs; })) return no('KEY_VALIDITY_NOT_ENDED');
-    return { save: 'REVOKED_CONFIRMED', reason: 'ENDED_ALL_REVOKED' };
+    return agrees_('REVOKED_CONFIRMED') ? { save: 'REVOKED_CONFIRMED', reason: 'ENDED_ALL_REVOKED' } : no('VERDICT_MISMATCH');
   }
 
   /* ---------------- 表示（key_status の補助） ---------------- */

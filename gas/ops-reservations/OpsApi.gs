@@ -216,7 +216,11 @@ var OpsApi = (function () {
         /* 予約直後・発行予定前の説明（#971）。Accessが正常にNONEで保存結果もないときだけ、「鍵の履歴なし（判別不可）」に代えて予約状態による説明を主表示にする。 */
         if (!view.savedFinal && view.lifecycle && view.lifecycle.code === 'NO_HISTORY') {
           var sched = OpsKeyFinal.scheduleView(rec, got.data, nowMs);
-          if (sched) view.lifecycle = { code: sched.code, label: sched.label + '：' + sched.note, tone: sched.tone, alert: false };
+          if (sched) {
+            view.lifecycle = { code: sched.code, label: sched.label + '：' + sched.note, tone: sched.tone, alert: false };
+            /* 下段の判定の説明も、予約前の利用者が混乱しないよう「操作履歴がないことの説明」に区別する（判定そのものは変えない）。 */
+            view.reasons = [{ code: 'NO_OPERATION_HISTORY_YET', text: '操作履歴がないことの説明: 鍵管理側にこの予約の操作記録がまだありません（予約状態・発行予定時刻に基づく説明は上の「個別鍵の状態」を参照）。未発行・失効済みの確認結果ではありません。' }];
+          }
         }
       }
     }

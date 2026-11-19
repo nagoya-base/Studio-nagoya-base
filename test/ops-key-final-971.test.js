@@ -585,6 +585,81 @@ test('予約直後(表示): 新しい永続状態・タイマー・予約別プ�
   assert.ok(!/PropertiesService|setProperty|setTimeout|newTrigger|UrlFetchApp|SpreadsheetApp|\.write\(/.test(body));
 });
 
+
+// ================================================================ タケルレビュー対応（P1×2・P2）
+
+test('P1: 指紋に予約IDが入る。同じ改訂・同じ属性の別予約へ保存値が入っても、有効・表示とも拒否する', function () {
+  var a = rec({ bookingId: 'SNB-20261130-AAAA0001' });
+  var b = rec({ bookingId: 'SNB-20261130-BBBB0002', rowNumber: 3 });
+  assert.notStrictEqual(F.fingerprint(a), F.fingerprint(b));
+  var storedA = F.encode('REVOKED_CONFIRMED', a.revision, a);
+  assert.strictEqual(F.validFor(a, F.parse(storedA)), true);
+  assert.strictEqual(F.validFor(b, F.parse(storedA)), false, '別予約の保存値は無効');
+  var swapped = Object.assign({}, b, { keyFinalStatus: { columnPresent: true, raw: storedA } });
+  assert.strictEqual(F.display(swapped, none(), NOW), null, 'Access NONE でも別予約の最終状態を表示しない');
+  assert.ok(F.display(Object.assign({}, a, { keyFinalStatus: { columnPresent: true, raw: storedA } }), none(), NOW));
+  /* 保存処理でも、別予約の値が入った行は「有効な保存済み」と扱わず、現在の検証結果で置き換え対象になる */
+  var sb = load();
+  var normA = sb.OpsNormalizer.normalize([HEADER, ledgerRow({ bookingId: 'SNB-20261130-AAAA0001' })]).records[0];
+  var rawA = sb.OpsKeyFinal.encode('REVOKED_CONFIRMED', 1, normA);
+  var r = runWith({ ledger: mkLedger([{ bookingId: 'SNB-20261130-BBBB0002', accessKeyFinalStatus: rawA }]) });
+  assert.strictEqual(r.result.saved, 1);
+  assert.notStrictEqual(r.log.writes[0].value, rawA);
+});
+
+function opWith(over) { return op(over); }
+
+test('P1: 既存の照合（evaluate）が「要確認」「不一致」とする記録は、保存条件の他の項目を満たしても保存しない（VERDICT_MISMATCH）', function () {
+  /* 取消予約・失効確認済み・案内状態が認識できない記録 → evaluate は NEEDS_REVIEW */
+  var unrecognizedDelivery = data([opWith({ delivery: 'UNRECOGNIZED' })]);
+  assert.strictEqual(sbShared.OpsKeyStatus && plain(sbShared.OpsKeyStatus.evaluate(rec(CANCELLED), unrecognizedDelivery, NOW)).verdict.code, 'NEEDS_REVIEW', '前提: 既存の判定は要確認');
+  assert.deepStrictEqual(decide(rec(CANCELLED), unrecognizedDelivery), { save: null, reason: 'VERDICT_MISMATCH' });
+  assert.deepStrictEqual(decide(rec(), unrecognizedDelivery), { save: null, reason: 'VERDICT_MISMATCH' }, '利用終了した確定予約でも同様');
+  /* 旧改訂の鍵が残る（MISMATCH）・複数候補（NEEDS_REVIEW）は保存しない */
+  assert.strictEqual(decide(rec({ revision: 2 }), data([opWith({ rev: 1, state: 'ISSUED_CONFIRMED' }), opWith({ rev: 2 })])).save, null);
+  /* 同じ改訂で失効→再発行→失効（A→B→A）のようにどちらも失効確認済みなら、全件確認済みとして保存できる。1件でも生きていれば保存しない */
+  assert.strictEqual(decide(rec({ revision: 1 }), data([opWith({ rev: 1 }), opWith({ rev: 1, updatedAtSec: 200 })])).save, 'REVOKED_CONFIRMED');
+  assert.strictEqual(decide(rec({ revision: 1 }), data([opWith({ rev: 1 }), opWith({ rev: 1, state: 'ISSUED_CONFIRMED', updatedAtSec: 200 })])).save, null);
+  /* 通常の確認済みは従来どおり保存できる（判定と保存コードが一致） */
+  assert.strictEqual(decide(rec(CANCELLED), data([opWith({ state: 'FAILED' })])).save, 'NOT_ISSUED_CONFIRMED');
+  assert.strictEqual(decide(rec(CANCELLED), data([opWith()])).save, 'REVOKED_CONFIRMED');
+  assert.strictEqual(decide(rec(), data([opWith()])).save, 'REVOKED_CONFIRMED');
+  /* 保存処理（run）も、要確認の記録を書かない */
+  var r = runWith({ ledger: mkLedger([CANCELLED]), fetchAccess: function () { return { ok: true, data: unrecognizedDelivery }; } });
+  assert.deepStrictEqual(r.log.writes, []); assert.strictEqual(r.result.skipped.VERDICT_MISMATCH, 1);
+});
+
+test('P2: 先頭10件の一部が保存できた後は、offset 0 の再実行で後続の候補へ届く（保存済みは候補から外れる）', function () {
+  var ids = []; for (var i = 0; i < 12; i++) ids.push('SNB-20261130-AAAA' + ('0000' + (300 + i)).slice(-4));
+  var rawById = {};
+  function ledger() { return mkLedger(ids.map(function (id, k) { return { bookingId: id, startAt: jst(2026, 11, 30, 10, 0), endAt: jst(2026, 11, 30, 12, 59 - k), accessKeyFinalStatus: rawById[id] || '' }; })); }
+  var saveable = {}; ids.forEach(function (id, k) { saveable[id] = k % 2 === 0 || k >= 10; }); /* 先頭10件のうち5件は保存可、後続（11・12件目）も保存可 */
+  var seen1 = [], seen2 = [];
+  var store = { write: function (w) { rawById[w.bookingId] = w.value; } };
+  var r1 = runWith({ ledger: ledger, store: store, fetchAccess: function (c, id) { seen1.push(id); return { ok: true, data: saveable[id] ? data([op()]) : none() }; } });
+  assert.strictEqual(seen1.length, 10); assert.strictEqual(r1.result.saved, 5); assert.strictEqual(r1.result.deferred, 2);
+  var r2 = runWith({ ledger: ledger, store: store, fetchAccess: function (c, id) { seen2.push(id); return { ok: true, data: saveable[id] ? data([op()]) : none() }; } });
+  assert.strictEqual(r2.result.candidates, 7, '保存済みの5件は外れ、未保存5＋後続2');
+  assert.ok(seen2.indexOf(ids[10]) !== -1 && seen2.indexOf(ids[11]) !== -1, 'offset 0 の再実行で後続の候補へ届く');
+  assert.strictEqual(r2.result.saved, 2); assert.strictEqual(r2.result.deferred, 0);
+  var doc = fs.readFileSync(path.join(ROOT, 'docs', 'ops-key-final-971.md'), 'utf8');
+  assert.ok(/まず通常の `opsSaveKeyFinalStatuses`（offset 0）を再実行/.test(doc) && /先頭の保存できない候補が固定されて/.test(doc));
+});
+
+test('表示: 予約直後の主表示に合わせ、下段の判定の説明も「操作履歴がないことの説明」に区別する（判定コード自体は変えない）', function () {
+  var sb = load();
+  var row = { date: '2026-12-02', startAt: jst(2026, 12, 2, 10, 0), endAt: jst(2026, 12, 2, 12, 0) };
+  var res = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(row); } }));
+  assert.strictEqual(res.keyStatus.lifecycle.code, 'BEFORE_ISSUE');
+  assert.strictEqual(res.keyStatus.verdict.code, 'NO_HISTORY');
+  assert.deepStrictEqual(res.keyStatus.reasons.map(function (x) { return x.code; }), ['NO_OPERATION_HISTORY_YET']);
+  assert.ok(/操作履歴がないことの説明/.test(res.keyStatus.reasons[0].text) && /確認結果ではありません/.test(res.keyStatus.reasons[0].text));
+  assert.deepStrictEqual(contract.validateKeyStatus(res), []);
+  /* 説明の対象外（過去の予約）は従来の理由コードのまま */
+  var past = api(sb, { op: 'key_status', id: REF }, ctxWith());
+  assert.deepStrictEqual(past.keyStatus.reasons.map(function (x) { return x.code; }), ['NO_RECORD', 'NO_RECORD_NEXT']);
+});
+
 // ================================================================ 書込み先（OpsKeyFinalStore）
 
 function storeWorld(over) {

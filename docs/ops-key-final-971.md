@@ -25,7 +25,7 @@ Access GAS（既存の鍵操作記録） ──既存の認証付きopsStatus（
 | `NOT_ISSUED_CONFIRMED` | 発行されていないことを操作記録で確認済み（取消・失効の予約で、全件が発行失敗のみ） |
 
 - 空欄・履歴なし・読取失敗・不明は**保存しない＝判別不可**。「発行済み」「処理中」「期限切れ」「発行失敗」は最終確定結果に混ぜない。
-- `@r` は保存時点の予約の改訂番号。`@h` は保存時点の台帳（状態・ブランド・利用開始/終了・確定/取消/失効日時）の指紋（32bit FNV-1a×2）。**PIN・passcodeId・deviceId・氏名・メール等は含めない。**
+- `@r` は保存時点の予約の改訂番号。`@h` は保存時点の台帳（予約ID・状態・ブランド・利用開始/終了・確定/取消/失効日時）の指紋（32bit FNV-1a×2）。**予約IDも指紋の入力に含める**（同じ改訂番号・同じ属性の別予約へ値が転記・行ずれで入っても有効としない。予約ID自体は保存しない）。**PIN・passcodeId・deviceId・氏名・メール等は含めない。**
 - **現在の台帳の改訂番号と指紋が両方一致しなければ表示しない。** 改訂番号の増分は失敗してもログのみで予約処理を続ける設計（`bumpRevisionIfKeyRelevant_`）のため、「改訂番号は必ず進む」とは仮定せず、状態・日時が変われば指紋で無効になる。
 - あくまで**保存時点の確認結果**で、SwitchBotの現在の状態を保証しない。
 
@@ -34,7 +34,7 @@ Access GAS（既存の鍵操作記録） ──既存の認証付きopsStatus（
 すべて満たすときだけ保存する。1つでも欠ければ何も書かない。
 
 - 対象ブランドは `snb` / `mens` / `studio_x`（正本 `AccessKeySnapshot.TARGET_BRANDS`。テストで一致を固定）。ブランドは問い合わせ候補の絞込みだけに使い、ブランドから鍵の状態は推定しない。
-- Access が認証成功・`STABLE`・`record=FOUND`・履歴の切捨てなし・`opCount` と件数が一致・認識できない記録なし。
+- Access が認証成功・`STABLE`・`record=FOUND`・履歴の切捨てなし・`opCount` と件数が一致・認識できない記録なし。**既存の照合（`OpsKeyStatus.evaluate`）の判定が保存コードと一致すること**（`MISMATCH` / `NEEDS_REVIEW` / 案内状態が認識できない記録などは保存しない）。
 - **全改訂の発行操作**が `{DELETED_CONFIRMED, ALREADY_ABSENT, ARCHIVED_EXPIRED}`（失効・不在確認済み）か `FAILED`（取消・失効の予約のみ）。発行中・残存鍵・削除未確認・`UNKNOWN`・`ABANDONED`・失効確認前の `EXPIRED` が1件でもあれば不可。
 - **取消・失効（`CANCELLED` / `EXPIRED`）**: 全件が `FAILED` → `NOT_ISSUED_CONFIRMED`。失効・不在確認済みを含み残りも確認済みまたは `FAILED` → `REVOKED_CONFIRMED`。
 - **利用終了した `CONFIRMED`**: 現在の改訂の記録があり、**全件が失効・不在確認済み**で、**鍵の猶予込み有効期限（`validToSec`）も終了している**ときだけ `REVOKED_CONFIRMED`。Bookings の `endAt` の経過だけでは保存しない。全件が発行失敗のみの確定予約は保存しない。
@@ -45,7 +45,7 @@ Access GAS（既存の鍵操作記録） ──既存の認証付きopsStatus（
 ## 4. 管理者の保存処理（Phase 1の運用）
 
 1. 運営GASの Script Properties に固定設定 `OPS_KEY_FINAL_STATUS_WRITE` = `ON`（それ以外はすべて停止。既定は未設定＝OFF）。
-2. 所有者本人が Apps Script エディタから `opsSaveKeyFinalStatuses` を実行（所有者認可は毎回）。1回の実行で問い合わせるのは**最大10件**（利用終了/取消から7日以内の対象ブランドの終端予約を、新しい順）。超過や、保存できない候補が先頭を占める場合は `deferred` 件数として返るので、**`opsSaveKeyFinalStatusesNext10`（11〜20件目）・`opsSaveKeyFinalStatusesNext20`（21〜30件目）**を実行して後続の候補へ進める（状態を持たない offset。0〜100の10の倍数のみ）。**自動では繰り返さない。**
+2. 所有者本人が Apps Script エディタから `opsSaveKeyFinalStatuses` を実行（所有者認可は毎回）。1回の実行で問い合わせるのは**最大10件**（利用終了/取消から7日以内の対象ブランドの終端予約を、新しい順）。超過や、保存できない候補が先頭を占める場合は `deferred` 件数として返るので、次の順で再実行する: **まず通常の `opsSaveKeyFinalStatuses`（offset 0）を再実行**する（保存できた予約は候補から外れるため、後続の候補が前に詰まって届く）。**先頭の保存できない候補が固定されて `saved` が増えない場合にだけ**、`opsSaveKeyFinalStatusesNext10`（候補の11〜20件目）・`opsSaveKeyFinalStatusesNext20`（21〜30件目）へ進める（状態を持たない offset。0〜100の10の倍数のみ。保存が進むと候補が詰まるため、offsetを進めるときは直前の実行から候補が変わっていないことを `candidates` 件数で確認する）。**自動では繰り返さない。**
 3. 戻り値・ログは件数と固定コードだけ（`candidates` / `offset` / `processed` / `saved` / `deferred` / `skipped`（理由別件数） / `stoppedBy`）。予約ID・保存値・行番号・URL・トークンは出さない。
 4. Access の取得または書込みに失敗したら、その時点で停止し、失敗を成功扱いにしない。
 
