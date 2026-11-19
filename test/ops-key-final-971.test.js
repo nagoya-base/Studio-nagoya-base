@@ -347,7 +347,7 @@ test('保存処理: 鍵管理が未接続・設定不正・台帳未接続・列
 
 test('保存処理: 検証済みの結果だけを1件ずつ書く。書込み直前に台帳を再読込し、値は <CODE>@r<改訂>@h<指紋> の形式', function () {
   var t = runWith({});
-  assert.deepStrictEqual(t.result, { ok: true, code: 'DONE', candidates: 1, processed: 1, saved: 1, deferred: 0, skipped: {}, stoppedBy: null });
+  assert.deepStrictEqual(t.result, { ok: true, code: 'DONE', candidates: 1, offset: 0, processed: 1, saved: 1, deferred: 0, skipped: {}, stoppedBy: null });
   assert.strictEqual(t.log.writes.length, 1);
   assert.strictEqual(t.log.writes[0].bookingId, REF);
   assert.strictEqual(t.log.writes[0].rowNumber, 2);
@@ -458,6 +458,131 @@ test('保存処理: GAS入口（OpsApi.runKeyFinalSave）は固定設定OFFな�
   assert.strictEqual(fetched, 0);
   assert.deepStrictEqual(sb._logs, ['ops key_final_save WRITE_DISABLED']);
   assert.strictEqual(typeof sb.opsSaveKeyFinalStatuses, 'function');
+});
+
+
+// ================================================================ 取りこぼし防止（offset。状態を持たない）
+
+test('保存処理: 保存できない候補が先頭10件を占めても、offset を進めて再実行すれば後続の候補へ届く（状態は持たない）', function () {
+  var rows = [];
+  for (var i = 0; i < 11; i++) rows.push({ bookingId: 'SNB-20261130-AAAA' + ('0000' + (200 + i)).slice(-4), startAt: jst(2026, 11, 30, 10, 0), endAt: jst(2026, 11, 30, 12, i) });
+  /* 新しい順（終了が遅い順）で先頭10件は Access NONE（保存できない）、11件目だけ検証済み */
+  var last = rows[0].bookingId; /* endAt が最も早い＝並びの最後 */
+  function fetchFor(log) { return function (cfg, id) { log.push(id); return { ok: true, data: id === last ? data([op()]) : none() }; }; }
+  var l1 = [], l2 = [];
+  var first = runWith({ ledger: mkLedger(rows), fetchAccess: fetchFor(l1) });
+  assert.strictEqual(l1.length, 10); assert.strictEqual(first.result.deferred, 1); assert.strictEqual(first.result.saved, 0); assert.ok(l1.indexOf(last) === -1);
+  var second = runWith({ ledger: mkLedger(rows), fetchAccess: fetchFor(l2), offset: 10 });
+  assert.deepStrictEqual(l2, [last], '2回目は11件目へ届く');
+  assert.strictEqual(second.result.saved, 1); assert.strictEqual(second.result.deferred, 0); assert.strictEqual(second.result.offset, 10);
+  assert.strictEqual(second.log.writes[0].bookingId, last);
+});
+
+test('保存処理: offset は 0〜100 の10の倍数だけ。不正値は何もせず拒否する（読取・通信・書込みなし）', function () {
+  [-10, 5, 15, 110, 1.5, '10', null, NaN].forEach(function (o) {
+    var t = runWith({ offset: o });
+    assert.deepStrictEqual(t.result, { ok: false, code: 'OFFSET_INVALID' }, String(o));
+    assert.strictEqual(t.log.reads, 0); assert.deepStrictEqual(t.log.fetch, []); assert.deepStrictEqual(t.log.writes, []);
+  });
+  assert.strictEqual(runWith({ offset: 0 }).result.ok, true);
+  assert.strictEqual(runWith({ offset: 100 }).result.ok, true);
+  var sb = load({ PropertiesService: { getScriptProperties: function () { return { getProperty: function () { return null; } }; } } });
+  assert.strictEqual(typeof sb.opsSaveKeyFinalStatusesNext10, 'function'); assert.strictEqual(typeof sb.opsSaveKeyFinalStatusesNext20, 'function');
+  var src = fs.readFileSync(path.join(DIR, 'OpsApi.gs'), 'utf8');
+  assert.ok(/runKeyFinalSave\(\{ offset: 10 \}\)/.test(src) && /runKeyFinalSave\(\{ offset: 20 \}\)/.test(src));
+});
+
+// ================================================================ 予約直後の表示（発行開始前など）
+
+/* NOW = 2026-12-01 11:00 JST。Accessの発行開始は利用日の前日12:00 JST。 */
+function sched(over, now) { return F.scheduleView(Object.assign(rec({ date: '2026-12-02', startMs: Date.UTC(2026, 11, 2, 1, 0), endMs: Date.UTC(2026, 11, 2, 3, 0) }), over || {}), none(), now === undefined ? NOW : now); }
+function code(v) { return v ? plain(v).code : null; }
+
+test('予約直後(表示): 仮予約は「発行対象外（予約未確定）」、確定で前日12:00より前は「発行開始前」、開始以降で利用終了前は「発行記録なし（確認待ち）」', function () {
+  assert.strictEqual(code(sched({ status: 'PENDING' })), 'PENDING_NOT_TARGET');
+  assert.strictEqual(code(sched()), 'BEFORE_ISSUE', '利用日12/2の前日12:00 JST = 12/1 12:00。現在12/1 11:00');
+  assert.strictEqual(code(sched({}, Date.UTC(2026, 11, 1, 2, 59, 59))), 'BEFORE_ISSUE', '11:59:59 JST');
+  assert.strictEqual(code(sched({}, Date.UTC(2026, 11, 1, 3, 0, 0))), 'AWAITING_ISSUE', '12:00:00 JST ちょうど');
+  assert.strictEqual(code(sched({}, Date.UTC(2026, 11, 2, 2, 0, 0))), 'AWAITING_ISSUE', '利用中');
+  /* 同日予約（予約直後でも既に発行開始時刻を過ぎている）は確認待ち。発行開始前にしない */
+  assert.strictEqual(code(sched({ date: '2026-12-01', startMs: Date.UTC(2026, 11, 1, 5, 0), endMs: Date.UTC(2026, 11, 1, 7, 0) })), 'AWAITING_ISSUE');
+  /* 日付が無くても開始時刻（JST）から利用日を求める。深夜0時台の開始は前日12:00がさらに前 */
+  assert.strictEqual(code(sched({ date: undefined, startMs: Date.UTC(2026, 11, 1, 15, 30), endMs: Date.UTC(2026, 11, 1, 17, 0) })), 'BEFORE_ISSUE', '12/2 00:30 JST 開始 → 発行開始は12/1 12:00');
+});
+
+test('予約直後(表示): 「発行開始前」は保存対象の未発行確定とは別コード・別表示。実鍵の不在を確認した結果と書かない', function () {
+  ['PENDING_NOT_TARGET', 'BEFORE_ISSUE', 'AWAITING_ISSUE'].forEach(function (c) { assert.ok(F.CODES.indexOf(c) === -1, c); });
+  var v = plain(sched());
+  assert.notStrictEqual(v.code, 'NOT_ISSUED_CONFIRMED'); assert.strictEqual(v.source, 'SCHEDULE');
+  assert.ok(/確認した結果ではありません/.test(v.note) && !/未発行を確認/.test(v.label + v.note));
+  var w = plain(sched({}, Date.UTC(2026, 11, 1, 3, 0, 0)));
+  assert.ok(/未発行とは断定していません/.test(w.note));
+});
+
+test('予約直後(表示): 取消・失効・利用終了後・時刻不正・状態不明は説明を出さない（NONEだけで未発行と断定しない。判別不可のまま）', function () {
+  ['CANCELLED', 'EXPIRED', null].forEach(function (st) { assert.strictEqual(sched({ status: st }), null, String(st)); });
+  assert.strictEqual(sched({}, Date.UTC(2026, 11, 2, 3, 0, 0)), null, '利用終了後');
+  assert.strictEqual(sched({ endMs: null }), null);
+  assert.strictEqual(sched({ endMs: Date.UTC(2026, 11, 2, 1, 0) }), null, '終了が開始と同時刻');
+});
+
+test('予約直後(表示): Accessの実記録・取得失敗相当（読取中の更新・索引不整合・複数候補）がある場合は説明で覆い隠さない', function () {
+  var r = rec({ date: '2026-12-02', startMs: Date.UTC(2026, 11, 2, 1, 0), endMs: Date.UTC(2026, 11, 2, 3, 0) });
+  assert.strictEqual(F.scheduleView(r, data([op({ state: 'ISSUED_CONFIRMED' })]), NOW), null);
+  assert.strictEqual(F.scheduleView(r, Object.assign(none(), { consistency: 'CHANGED_DURING_READ' }), NOW), null);
+  ['AMBIGUOUS', 'INVALID_INDEX'].forEach(function (k) { assert.strictEqual(F.scheduleView(r, data([], { item: { record: k, truncated: false, opCount: 0, ops: [] } }), NOW), null, k); });
+  assert.strictEqual(F.scheduleView(r, null, NOW), null);
+});
+
+function ledgerFor(over) { return { values: ledgerValues([ledgerRow(over)]) }; }
+function lifecycleOf(res) { return res.keyStatus.lifecycle; }
+
+test('API(予約直後): Access NONE・保存結果なしなら、鍵の状態の主表示が予約状態に応じた説明になる。判定(verdict)は「履歴なし」のまま、契約検証を通る', function () {
+  var sb = load();
+  /* NOW=12/1 11:00 JST、利用 12/2 10:00-12:00 */
+  var rowFor = function (o) { return Object.assign({ date: '2026-12-02', startAt: jst(2026, 12, 2, 10, 0), endAt: jst(2026, 12, 2, 12, 0) }, o || {}); };
+  var before = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(rowFor()); } }));
+  assert.strictEqual(lifecycleOf(before).code, 'BEFORE_ISSUE'); assert.strictEqual(lifecycleOf(before).alert, false);
+  assert.strictEqual(before.keyStatus.verdict.code, 'NO_HISTORY'); assert.strictEqual(before.keyStatus.savedFinal, null);
+  assert.deepStrictEqual(contract.validateKeyStatus(before), []);
+  var pending = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(rowFor({ status: 'PENDING' })); } }));
+  assert.strictEqual(lifecycleOf(pending).code, 'PENDING_NOT_TARGET');
+  var sameDay = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor({ date: '2026-12-01', startAt: jst(2026, 12, 1, 14, 0), endAt: jst(2026, 12, 1, 16, 0) }); } }));
+  assert.strictEqual(lifecycleOf(sameDay).code, 'AWAITING_ISSUE'); assert.strictEqual(lifecycleOf(sameDay).tone, 'warn');
+  /* 日程変更（前日12:00の前→後）: 同じ予約でも日付に応じて変わり、永続状態を持たない */
+  var moved = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(rowFor({ date: '2026-12-10', startAt: jst(2026, 12, 10, 10, 0), endAt: jst(2026, 12, 10, 12, 0) })); } }));
+  assert.strictEqual(lifecycleOf(moved).code, 'BEFORE_ISSUE');
+  /* 取消・過去（利用終了後）は説明なし＝従来どおり「鍵の履歴なし（判別不可）」 */
+  var cancelled = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(rowFor({ status: 'CANCELLED' })); } }));
+  assert.strictEqual(lifecycleOf(cancelled).code, 'NO_HISTORY');
+  var past = api(sb, { op: 'key_status', id: REF }, ctxWith());
+  assert.strictEqual(lifecycleOf(past).code, 'NO_HISTORY', '11/30 の予約（利用終了後）');
+});
+
+test('API(予約直後): 優先順位は Accessの実記録 ＞ 保存結果 ＞ 予約状態による説明 ＞ 判別不可。取得失敗・未接続は説明で隠さない', function () {
+  var sb = load();
+  var row = { date: '2026-12-02', startAt: jst(2026, 12, 2, 10, 0), endAt: jst(2026, 12, 2, 12, 0) };
+  var issued = [{ rev: 1, kind: 'ISSUE', state: 'ISSUED_CONFIRMED', validFromSec: Math.floor(Date.UTC(2026, 11, 2, 0, 45) / 1000), validToSec: Math.floor(Date.UTC(2026, 11, 2, 3, 15) / 1000), updatedAtSec: 1, delivery: 'DELIVERED' }];
+  var found = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(row); }, accessConfig: function () { return { url: URL_OK, token: TOKEN, fetch: function () { return fakeRes(200, accessFound(issued)); } }; } }));
+  assert.strictEqual(lifecycleOf(found).code, 'ISSUED', 'Accessの実記録が最優先（予定で上書きしない）');
+  var failed = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(row); }, accessConfig: function () { return { url: URL_OK, token: TOKEN, fetch: function () { throw new Error('x'); } }; } }));
+  assert.strictEqual(failed.keyStatus.verdict.code, 'FETCH_FAILED'); assert.strictEqual(failed.keyStatus.lifecycle, null);
+  var nc = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(row); }, accessConfig: function () { return null; } }));
+  assert.strictEqual(nc.keyStatus.lifecycle, null);
+  var changing = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor(row); }, accessConfig: function () { return { url: URL_OK, token: TOKEN, fetch: function () { return fakeRes(200, Object.assign(accessNone(), { consistency: 'CHANGED_DURING_READ' })); } }; } }));
+  assert.strictEqual(changing.keyStatus.verdict.code, 'NEEDS_REVIEW'); assert.notStrictEqual(lifecycleOf(changing) && lifecycleOf(changing).code, 'BEFORE_ISSUE');
+  /* 保存結果が有効なときは保存結果を表示し、予定の説明は出さない（利用終了後の予約なので説明の対象外でもある） */
+  var norm = sb.OpsNormalizer.normalize([HEADER, ledgerRow()]).records[0];
+  var withSaved = api(sb, { op: 'key_status', id: REF }, ctxWith({ readLedger: function () { return ledgerFor({ accessKeyFinalStatus: sb.OpsKeyFinal.encode('REVOKED_CONFIRMED', 1, norm) }); } }));
+  assert.ok(withSaved.keyStatus.savedFinal); assert.strictEqual(lifecycleOf(withSaved).code, 'NO_HISTORY');
+  /* 書込み・永続状態なし: 閲覧は台帳へ書かない */
+  assert.deepStrictEqual(sb._logs.filter(function (l) { return /final_save/.test(l); }), []);
+});
+
+test('予約直後(表示): 新しい永続状態・タイマー・予約別プロパティを使わない（scheduleView は純粋な計算）', function () {
+  var src = strip(fs.readFileSync(path.join(DIR, 'OpsKeyFinal.gs'), 'utf8'));
+  var body = src.slice(src.indexOf('function scheduleView'), src.indexOf('function terminalMs_'));
+  assert.ok(!/PropertiesService|setProperty|setTimeout|newTrigger|UrlFetchApp|SpreadsheetApp|\.write\(/.test(body));
 });
 
 // ================================================================ 書込み先（OpsKeyFinalStore）

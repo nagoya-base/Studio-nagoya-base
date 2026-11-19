@@ -25,6 +25,7 @@ var OpsKeyFinal = (function () {
   var FLAG_PROPERTY = 'OPS_KEY_FINAL_STATUS_WRITE';
   var COLUMN = 'accessKeyFinalStatus';
   var MAX_PER_RUN = 10;
+  var MAX_OFFSET = 100; /* 再実行で届く範囲（候補は最大110件。超える分は件数として返すだけ） */
   var WINDOW_MS = 7 * 24 * 3600 * 1000; /* 終了/取消からこの期間内の予約だけを問い合わせる（Accessの既定保持3日より長め） */
 
   /* Access の操作の状態（OpsKeyStatus の語彙と同じ）。 */
@@ -138,6 +139,42 @@ var OpsKeyFinal = (function () {
     return { code: stored.code, label: LABELS[stored.code], source: 'BOOKINGS_SAVED' };
   }
 
+  /* ---------------- 予約直後の表示（保存列は使わない・永続状態なし） ---------------- */
+
+  var DAY_MS_ = 24 * 3600 * 1000;
+  var JST_OFFSET_MS_ = 9 * 3600 * 1000;
+  var ISSUE_START_BEFORE_DAY_MS_ = 12 * 3600 * 1000; /* 利用日の前日12:00 JST に発行開始（AccessKeySnapshot の issueWindow と同じ） */
+  var SCHEDULE_VIEWS = {
+    PENDING_NOT_TARGET: { label: '発行対象外（予約未確定）', tone: 'info', note: '予約が未確定のため、鍵の発行対象ではありません。現在の予約状態による説明で、過去の実鍵の不在を保証するものではありません。' },
+    BEFORE_ISSUE: { label: '発行開始前', tone: 'info', note: '利用日の前日12:00（JST）に発行を開始する予定です。発行予定時刻に基づく表示で、SwitchBotの実鍵が無いことを確認した結果ではありません。' },
+    AWAITING_ISSUE: { label: '発行記録なし（確認待ち）', tone: 'warn', note: '発行開始時刻を過ぎていますが、鍵管理側に操作記録がありません。未発行とは断定していません。しばらくして再取得してください。' }
+  };
+
+  function issueStartMs_(rec) {
+    var day0 = typeof rec.date === 'string' ? OpsContract.parseJstDate(rec.date) : null;
+    if (day0 === null) day0 = Math.floor((rec.startMs + JST_OFFSET_MS_) / DAY_MS_) * DAY_MS_ - JST_OFFSET_MS_;
+    return day0 - DAY_MS_ + ISSUE_START_BEFORE_DAY_MS_;
+  }
+
+  /*
+   * 鍵管理(Access)が正常に NONE（接続成功・STABLE・記録なし）で、有効な保存結果もないときだけ、予約の状態・発行予定時刻に基づく説明を返す。
+   * Accessに実記録がある・取得失敗・読取中の更新・矛盾のときは null（予定による表示で覆い隠さない）。
+   * 取消・失効・利用終了後・時刻が不正なものは null（判別不可のまま。NONE だけで未発行と断定しない）。
+   * 戻り値は「発行開始前」等であり、保存対象の NOT_ISSUED_CONFIRMED（実記録で確認済み）とは別のコード・別の表示。
+   */
+  function scheduleView(rec, data, nowMs) {
+    if (!rec || !data || !data.item || data.consistency !== 'STABLE' || data.item.record !== 'NONE') return null;
+    var code = null;
+    if (rec.status === 'PENDING') {
+      code = 'PENDING_NOT_TARGET';
+    } else if (rec.status === 'CONFIRMED' && timeValid_(rec) && nowMs < rec.endMs) {
+      code = nowMs < issueStartMs_(rec) ? 'BEFORE_ISSUE' : 'AWAITING_ISSUE';
+    }
+    if (!code) return null;
+    var v = SCHEDULE_VIEWS[code];
+    return { code: code, label: v.label, tone: v.tone, note: v.note, source: 'SCHEDULE' };
+  }
+
   /* ---------------- 管理者の保存処理 ---------------- */
 
   function terminalMs_(rec, mode) {
@@ -160,7 +197,7 @@ var OpsKeyFinal = (function () {
    * deps: { authenticate, getFlag(), accessConfig(), readLedger(), store, fetchAccess(cfg, id), withLock(fn), nowMs }
    * store: { write({ rowNumber, bookingId, value }) } — 失敗は例外（本文を保持しない固定コード）。
    * 戻り値は件数と固定コードだけ（予約ID・値・行番号を返さない・ログに出さない）。
-   * 1回の実行で問い合わせるのは最大 MAX_PER_RUN 件（新しい終端の予約から順）。自動トリガーはない。
+   * 1回の実行で問い合わせるのは最大 MAX_PER_RUN 件（新しい終端の予約から順。deps.offset で後続の候補へ進める）。自動トリガーはない。
    */
   function run(deps) {
     var auth = deps.authenticate();
@@ -170,11 +207,14 @@ var OpsKeyFinal = (function () {
     try { cfg = deps.accessConfig(); } catch (e0) { cfg = undefined; }
     if (cfg === undefined) return { ok: false, code: 'ACCESS_CONFIG_INVALID' };
     if (!cfg) return { ok: false, code: 'ACCESS_NOT_CONNECTED' };
-    var locked = deps.withLock(function () { return doRun_(deps, cfg); });
+    /* 取りこぼし防止（状態を持たない）: 保存できない候補が先頭を占めても、offset を進めて再実行すれば後続の候補へ届く。 */
+    var offset = deps.offset === undefined ? 0 : deps.offset;
+    if (!(typeof offset === 'number' && Math.floor(offset) === offset && offset >= 0 && offset <= MAX_OFFSET && offset % MAX_PER_RUN === 0)) return { ok: false, code: 'OFFSET_INVALID' };
+    var locked = deps.withLock(function () { return doRun_(deps, cfg, offset); });
     return locked && locked.busy ? { ok: false, code: 'BUSY' } : locked;
   }
 
-  function doRun_(deps, cfg) {
+  function doRun_(deps, cfg, offset) {
     var nowMs = deps.nowMs;
     var first;
     try { first = recordsOf_(deps); } catch (e1) { return { ok: false, code: 'LEDGER_READ_FAILED' }; }
@@ -197,8 +237,8 @@ var OpsKeyFinal = (function () {
       candidates.push({ rec: rec, t: t });
     });
     candidates.sort(function (a, b) { return b.t - a.t; });
-    var batch = candidates.slice(0, MAX_PER_RUN);
-    var summary = { ok: true, code: 'DONE', candidates: candidates.length, processed: 0, saved: 0, deferred: candidates.length - batch.length, skipped: skipped, stoppedBy: null };
+    var batch = candidates.slice(offset, offset + MAX_PER_RUN);
+    var summary = { ok: true, code: 'DONE', candidates: candidates.length, offset: offset, processed: 0, saved: 0, deferred: Math.max(0, candidates.length - offset - batch.length), skipped: skipped, stoppedBy: null };
 
     for (var i = 0; i < batch.length; i++) {
       var rec = batch[i].rec;
@@ -232,6 +272,6 @@ var OpsKeyFinal = (function () {
 
   return {
     TARGET_BRANDS: TARGET_BRANDS, CODES: CODES, COLUMN: COLUMN, FLAG_PROPERTY: FLAG_PROPERTY, MAX_PER_RUN: MAX_PER_RUN, LABELS: LABELS,
-    fingerprint: fingerprint, encode: encode, parse: parse, validFor: validFor, decide: decide, display: display, run: run
+    fingerprint: fingerprint, encode: encode, parse: parse, validFor: validFor, decide: decide, display: display, scheduleView: scheduleView, run: run, MAX_OFFSET: MAX_OFFSET
   };
 })();

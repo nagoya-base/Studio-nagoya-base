@@ -211,7 +211,14 @@ var OpsApi = (function () {
       var got = OpsKeyStatus.fetchAccess(cfg, rec.bookingId);
       view = got.ok ? OpsKeyStatus.evaluate(rec, got.data, nowMs) : OpsKeyStatus.unavailable('FETCH_FAILED', got.reason);
       /* #971: Access が正常に NONE を返し、保存値が現在の台帳と一致する場合だけ、保存済みの過去の最終確認を補助表示する（読み取りのみ）。 */
-      if (got.ok) view.savedFinal = OpsKeyFinal.display(rec, got.data, nowMs);
+      if (got.ok) {
+        view.savedFinal = OpsKeyFinal.display(rec, got.data, nowMs);
+        /* 予約直後・発行予定前の説明（#971）。Accessが正常にNONEで保存結果もないときだけ、「鍵の履歴なし（判別不可）」に代えて予約状態による説明を主表示にする。 */
+        if (!view.savedFinal && view.lifecycle && view.lifecycle.code === 'NO_HISTORY') {
+          var sched = OpsKeyFinal.scheduleView(rec, got.data, nowMs);
+          if (sched) view.lifecycle = { code: sched.code, label: sched.label + '：' + sched.note, tone: sched.tone, alert: false };
+        }
+      }
     }
     if (view.savedFinal === undefined) view.savedFinal = null;
     Logger.log('ops key_status ' + view.verdict.code + (view.failure ? ' ' + view.failure.code : ''));
@@ -265,6 +272,7 @@ var OpsApi = (function () {
         if (!lock.tryLock(15000)) return { busy: true };
         try { return fn(); } finally { lock.releaseLock(); }
       },
+      offset: context.offset,
       nowMs: typeof context.nowMs === 'number' ? context.nowMs : Date.now()
     });
     Logger.log('ops key_final_save ' + result.code + (result.ok ? ' candidates=' + result.candidates + ' processed=' + result.processed + ' saved=' + result.saved + ' deferred=' + result.deferred + (result.stoppedBy ? ' stoppedBy=' + result.stoppedBy : '') : ''));
@@ -291,6 +299,9 @@ function opsGetKeyStatus(bookingId) { return OpsApi.handle({ op: 'key_status', i
 
 /* 個別鍵の最終状態の保存（Issue #971 Phase 1）。管理者が Apps Script エディタから明示実行する（画面からは呼ばない・トリガーなし）。 */
 function opsSaveKeyFinalStatuses() { return OpsApi.runKeyFinalSave(); }
+/* 保存できない候補が先頭を占めるときの再実行用（状態を持たず、候補の11〜20件目・21〜30件目へ進む）。 */
+function opsSaveKeyFinalStatusesNext10() { return OpsApi.runKeyFinalSave({ offset: 10 }); }
+function opsSaveKeyFinalStatusesNext20() { return OpsApi.runKeyFinalSave({ offset: 20 }); }
 
 /* メモ（Issue #941）。毎回、所有者認可を通す。書込み先は専用スプレッドシートのTasks表に固定。 */
 function opsListTasks() { return OpsApi.handle({ op: 'tasks_list' }); }
