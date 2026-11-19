@@ -608,7 +608,7 @@ function buildLoadBookingsTiming_(result, requestedAt, respondedAt, renderedAt) 
   if (serverTiming && typeof serverTiming.totalMs === 'number') {
     timing.serverTotalMs = serverTiming.totalMs;
     timing.outsideServerMs = timing.responseMs - serverTiming.totalMs;
-    ['configMs', 'spreadsheetOpenMs', 'optionOrdersMs', 'bookingsReadMs', 'buildMs'].forEach(function (key) {
+    ['configMs', 'spreadsheetIdMs', 'spreadsheetOpenMs', 'optionOrdersMs', 'bookingsReadMs', 'buildMs', 'tailAssembleMs', 'tailLoggerMs', 'tailTotalMs'].forEach(function (key) {
       if (typeof serverTiming[key] === 'number') timing['server' + key.charAt(0).toUpperCase() + key.slice(1)] = serverTiming[key];
     });
   }
