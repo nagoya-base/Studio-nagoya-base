@@ -245,7 +245,12 @@ test('Issue #864: getAdminBookingsの計測ログとserverTimingにOptionOrders�
   });
   assert.strictEqual(timing.optionOrdersRows, 1);
   assert.strictEqual(timing.optionOrderBookings, 1);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.serverTiming)), timing, 'serverTimingはログと同じ値');
+  var returned = JSON.parse(JSON.stringify(result.serverTiming));
+  assert.deepStrictEqual(Object.keys(returned).filter(function (key) { return !(key in timing); }).sort(), ['tailLoggerMs', 'tailTotalMs'], 'ログ出力後に確定する区間だけが戻り値側にある（Issue #983）');
+  var returnedWithoutTail = Object.assign({}, returned);
+  delete returnedWithoutTail.tailLoggerMs;
+  delete returnedWithoutTail.tailTotalMs;
+  assert.deepStrictEqual(returnedWithoutTail, timing, 'serverTimingはログと同じ値＋ログ後に確定する区間');
   [id, '山田太郎', EMAIL, 'OPT-', 'ss1'].forEach(function (secret) {
     assert.strictEqual(lines[0].indexOf(secret), -1, secret);
   });

@@ -1680,7 +1680,7 @@ test('Issue #864: getAdminBookingsの区間計測ログは所要時間と件数�
   var lines = ctx.globals.Logger._logs.filter(function (line) { return line.indexOf('getAdminBookings timing ') === 0; });
   assert.strictEqual(lines.length, 1);
   var timing = JSON.parse(lines[0].slice('getAdminBookings timing '.length));
-  assert.deepStrictEqual(Object.keys(timing).sort(), ['bookingRows', 'bookingsReadMs', 'bookingsSheetMs', 'bookingsValuesReadMs', 'bookingsConvertMs', 'bookingsColumns', 'buildMs', 'configMs', 'optionOrderBookings', 'optionOrdersMs', 'spreadsheetOpenMs', 'totalMs', 'ttlConfigReads'].sort());
+  assert.deepStrictEqual(Object.keys(timing).sort(), ['bookingRows', 'bookingsReadMs', 'bookingsSheetMs', 'bookingsValuesReadMs', 'bookingsConvertMs', 'bookingsColumns', 'buildMs', 'configMs', 'optionOrderBookings', 'optionOrdersMs', 'spreadsheetOpenMs', 'spreadsheetIdMs', 'tailAssembleMs', 'totalMs', 'ttlConfigReads'].sort());
   assert.strictEqual(timing.bookingRows, 2);
   assert.strictEqual(timing.ttlConfigReads, 1);
   Object.keys(timing).forEach(function (key) { assert.strictEqual(typeof timing[key], 'number', key); });
@@ -1695,6 +1695,63 @@ test('Issue #864: getAdminBookingsはserverTimingとしてログと同じ計測�
   var result = ctx.sandbox.getAdminBookings();
   var line = ctx.globals.Logger._logs.filter(function (l) { return l.indexOf('getAdminBookings timing ') === 0; })[0];
   var serialized = JSON.parse(JSON.stringify(result.serverTiming));
-  assert.deepStrictEqual(serialized, JSON.parse(line.slice('getAdminBookings timing '.length)));
+  var logged = JSON.parse(line.slice('getAdminBookings timing '.length));
+  var withoutTail = Object.assign({}, serialized);
+  delete withoutTail.tailLoggerMs;
+  delete withoutTail.tailTotalMs;
+  assert.deepStrictEqual(withoutTail, logged);
   Object.keys(serialized).forEach(function (key) { assert.strictEqual(typeof serialized[key], 'number', key); });
+});
+
+/* ---------- Issue #983: totalMs確定後の区間計測（GAS内のDate.now()差分のみ） ---------- */
+
+test('Issue #983: totalMs以降の区間（tailAssembleMs/tailLoggerMs/tailTotalMs）とspreadsheetIdMsが非負の数値で付き、totalMsの定義は変わらない', function () {
+  var ctx = setup();
+  createPending(ctx);
+  var result = ctx.sandbox.getAdminBookings();
+  var timing = JSON.parse(JSON.stringify(result.serverTiming));
+  ['spreadsheetIdMs', 'tailAssembleMs', 'tailLoggerMs', 'tailTotalMs'].forEach(function (key) {
+    assert.ok(Number.isFinite(timing[key]) && timing[key] >= 0, key);
+  });
+  assert.ok(timing.tailTotalMs >= timing.tailAssembleMs + timing.tailLoggerMs, 'tailTotalMsは前半2区間を含む');
+  assert.ok(timing.spreadsheetIdMs <= timing.spreadsheetOpenMs, 'spreadsheetIdMsはspreadsheetOpenMsの内数');
+});
+
+test('Issue #983: 時刻を固定して各区間が単調なDate.now()差分になる（totalMs＝冒頭〜構築終了）', function () {
+  var ctx = setup();
+  createPending(ctx);
+  var RealDate = Date;
+  var tick = 0;
+  ctx.sandbox.Date = class extends RealDate {
+    static now() { tick += 10; return 1700000000000 + tick; }
+  };
+  var timing;
+  try {
+    timing = JSON.parse(JSON.stringify(ctx.sandbox.getAdminBookings().serverTiming));
+  } finally {
+    ctx.sandbox.Date = RealDate;
+  }
+  assert.strictEqual(timing.tailAssembleMs, 10, 'totalMs確定直後からLogger.log直前まで');
+  assert.strictEqual(timing.tailLoggerMs, 10, 'Logger.logの前後');
+  assert.strictEqual(timing.tailTotalMs, 30, 'totalMs確定後からコピー作成直後まで');
+  assert.ok(timing.totalMs > 0);
+});
+
+test('Issue #983: Logger.logが失敗しても一覧は返り、tail区間も数値で付く', function () {
+  var ctx = setup();
+  var id = createPending(ctx);
+  ctx.globals.Logger.log = function () { throw new Error('logger down'); };
+  var result = ctx.sandbox.getAdminBookings();
+  assert.ok(result.bookings.some(function (b) { return b.bookingId === id; }));
+  assert.ok(Number.isFinite(result.serverTiming.tailLoggerMs) && result.serverTiming.tailLoggerMs >= 0);
+});
+
+test('Issue #983: 追加の計測値は数値のみで、戻り値の既存項目（todayJst/nowJst/bookings）は変わらない', function () {
+  var ctx = setup();
+  createPending(ctx);
+  var result = ctx.sandbox.getAdminBookings();
+  assert.deepStrictEqual(Object.keys(result).sort(), ['bookings', 'nowJst', 'serverTiming', 'todayJst']);
+  var serialized = JSON.stringify(result.serverTiming);
+  assert.ok(!/@|SNB-|SX-|090-/.test(serialized));
+  Object.keys(result.serverTiming).forEach(function (key) { assert.strictEqual(typeof result.serverTiming[key], 'number', key); });
 });

@@ -3161,6 +3161,20 @@ test('Issue #864: buildLoadBookingsTiming_はserverTimingから同じ呼び出�
   });
 });
 
+test('Issue #983: 新しい区間（spreadsheetIdMs/tail*）もserver接頭辞付きで記録し、outsideServerMsの定義は変えない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.bookings = [];
+  var timing = JSON.parse(JSON.stringify(sandbox.buildLoadBookingsTiming_(
+    { serverTiming: { totalMs: 1400, spreadsheetIdMs: 5, tailAssembleMs: 1, tailLoggerMs: 2, tailTotalMs: 4 } },
+    1000, 4500, 4510
+  )));
+  assert.strictEqual(timing.outsideServerMs, 2100);
+  assert.strictEqual(timing.serverSpreadsheetIdMs, 5);
+  assert.strictEqual(timing.serverTailAssembleMs, 1);
+  assert.strictEqual(timing.serverTailLoggerMs, 2);
+  assert.strictEqual(timing.serverTailTotalMs, 4);
+});
+
 test('Issue #864: serverTimingが無い・不正な応答ではサーバー側の項目を付けない', function () {
   var sandbox = loadClientSandbox();
   sandbox.state.bookings = [];

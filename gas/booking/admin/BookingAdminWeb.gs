@@ -222,7 +222,11 @@ function getAdminBookings() {
   /* Issue #864: Bookings台帳とOptionOrders台帳は同じスプレッドシート（SPREADSHEET_ID）にあるため、
      この一覧取得の中だけで1回開いて両方に渡す（以前は各Repositoryが別々にopenByIdしていた）。
      リクエストをまたいで保持はせず、書き込み・他の経路は従来どおり各Repositoryが自分で開く。 */
-  var spreadsheet = SpreadsheetApp.openById(BookingConfig.getSpreadsheetId());
+  /* Issue #983: spreadsheetOpenMsはgetSpreadsheetId()の評価＋openByIdの合計（従来どおり）。
+     getSpreadsheetId()側だけをspreadsheetIdMsとして別に残し、openByIdだけの時間と取り違えない。 */
+  var spreadsheetId = BookingConfig.getSpreadsheetId();
+  timing.spreadsheetIdMs = Date.now() - mark;
+  var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
   lap('spreadsheetOpenMs');
   var optionStats = {};
   var optionOrdersByBooking = loadAdminListOptionOrders_(optionStats, spreadsheet);
@@ -307,7 +311,9 @@ function getAdminBookings() {
     return listItem;
   });
   lap('buildMs');
-  timing.totalMs = Date.now() - startedAt;
+  /* Issue #983: totalMsの定義（関数冒頭〜一覧構築終了）は変えず、同じDate.now()の値を以降の区間の起点にする。 */
+  var totalEndedAt = Date.now();
+  timing.totalMs = totalEndedAt - startedAt;
   timing.bookingRows = bookingRows.length;
   timing.optionOrderBookings = optionOrdersByBooking && optionOrdersByBooking.byBooking ? Object.keys(optionOrdersByBooking.byBooking).length : 0;
   timing.ttlConfigReads = ttlConfigReads;
@@ -318,11 +324,22 @@ function getAdminBookings() {
   ['bookingsSheetMs', 'bookingsValuesReadMs', 'bookingsConvertMs', 'bookingsColumns'].forEach(function (key) {
     if (typeof bookingStats[key] === 'number' && isFinite(bookingStats[key])) timing[key] = bookingStats[key];
   });
+  /* Issue #983: totalMs確定後〜Logger.log直前（上のtiming集計）の所要。 */
+  var beforeLogAt = Date.now();
+  timing.tailAssembleMs = beforeLogAt - totalEndedAt;
   logAdminBookingsTiming_(timing);
+  var afterLogAt = Date.now();
   /* Issue #864: 同じ呼び出しのサーバー側計測値をクライアントへ返し、ブラウザ側の応答時間との差
      （GAS呼び出しの外側＝起動・キュー待ち・転送等）を1回ごとに対応づけて記録できるようにする。
      中身はミリ秒と件数だけ（ログと同じ値）。一覧の表示・判定には使わない。 */
-  return { todayJst: todayJst, nowJst: nowJst, bookings: bookings, serverTiming: Object.assign({}, timing) };
+  /* Issue #983: ログ行そのものには載せられない（ログ出力の後に確定する）区間は戻り値のserverTimingにだけ付ける。
+     tailLoggerMs＝logAdminBookingsTiming_（JSON.stringify＋Logger.log）、tailTotalMs＝totalMs確定後〜この
+     コピー作成直後までの合計。関数冒頭より前（起動等）と、return後のシリアライズ・転送は含まない。
+     すべてGAS内の単調なDate.now()差分で、ブラウザ側の時刻とは比較しない。 */
+  var serverTiming = Object.assign({}, timing);
+  serverTiming.tailLoggerMs = afterLogAt - beforeLogAt;
+  serverTiming.tailTotalMs = Date.now() - totalEndedAt;
+  return { todayJst: todayJst, nowJst: nowJst, bookings: bookings, serverTiming: serverTiming };
 }
 
 /*
