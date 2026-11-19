@@ -124,11 +124,15 @@ var BookingConfig = (function () {
     };
   }
 
+  function getTimezone() {
+    return readProperty_('TIMEZONE');
+  }
+
   /* getAvailability（Issue #266）が使う空き判定の固定条件一式。
      brandはここに含めない（空き判定ロジックをbrandで分岐させないため）。 */
   function getAvailabilityConfig(now) {
     return {
-      timezone: readProperty_('TIMEZONE'),
+      timezone: getTimezone(),
       openTime: readProperty_('OPEN_TIME'),
       closeTime: readProperty_('CLOSE_TIME'),
       minBookingMinutes: readIntegerProperty_('MIN_BOOKING_MINUTES'),
@@ -500,6 +504,7 @@ var BookingConfig = (function () {
     getPermanentMemberEmails: getPermanentMemberEmails,
     getBookingAdminEmails: getBookingAdminEmails,
     getCalendarId: getCalendarId,
+    getTimezone: getTimezone,
     getAvailabilityConfig: getAvailabilityConfig,
     isBookingRulesEffective: isBookingRulesEffective,
     getBookingRulesStatus: getBookingRulesStatus,

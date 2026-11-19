@@ -334,3 +334,79 @@ test('Issue #864: スプレッドシートを開けないときは従来どお�
   ctx.globals.SpreadsheetApp.openById = function () { throw new Error('open failed'); };
   assert.throws(function () { ctx.sandbox.getAdminBookings(); }, /open failed/);
 });
+
+test('Issue #979: 一覧専用のTIMEZONE取得は未設定・正常値・空値・不正値で従来と同値', function () {
+  var ctx = setup();
+  var properties = ctx.globals.PropertiesService.getScriptProperties();
+  var config = ctx.sandbox.BookingConfig;
+  assert.strictEqual(config.getTimezone(), config.DEFAULTS.TIMEZONE);
+  assert.strictEqual(config.getTimezone(), config.getAvailabilityConfig().timezone);
+  ['America/New_York', '', 'Invalid/Timezone'].forEach(function (value) {
+    properties.setProperty('TIMEZONE', value);
+    assert.strictEqual(config.getTimezone(), value || config.DEFAULTS.TIMEZONE);
+    assert.strictEqual(config.getTimezone(), config.getAvailabilityConfig().timezone);
+  });
+});
+
+test('Issue #979: 77件の一覧とサマリを維持し、一覧の設定読取をTIMEZONEだけにする', function () {
+  var ctx = setup();
+  var sandbox = ctx.sandbox;
+  var bookingId = createRoom(ctx, { paymentMethod: 'オンラインクレジットカード' });
+  addOrder(ctx, bookingId);
+  var record = sandbox.SpreadsheetRepository.findRowByBookingId(bookingId).record;
+  for (var index = 1; index < 77; index += 1) {
+    sandbox.SpreadsheetRepository.appendBooking(Object.assign({}, record, {
+      bookingId: 'TEST-979-' + index,
+      paymentMethod: '現金'
+    }));
+  }
+
+  var timezone = sandbox.BookingConfig.getTimezone;
+  var properties = ctx.globals.PropertiesService.getScriptProperties();
+  var getProperty = properties.getProperty;
+  var reads = [];
+  sandbox.PropertiesService.getScriptProperties = function () {
+    return {
+      getProperty: function (key) {
+        reads.push(key);
+        return getProperty.call(properties, key);
+      }
+    };
+  };
+  // Script Propertiesの読取1回を1msとする仮想時計で、実環境の揺れに依存せず区間の差を検証する。
+  var fixedNow = Date.now();
+  sandbox.Date = class extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [fixedNow]));
+    }
+
+    static now() {
+      return fixedNow + reads.length;
+    }
+  };
+
+  var actual = JSON.parse(JSON.stringify(sandbox.getAdminBookings()));
+  assert.strictEqual(actual.serverTiming.configMs, 1);
+  assert.strictEqual(reads[0], 'TIMEZONE');
+
+  sandbox.BookingConfig.getTimezone = function () {
+    return sandbox.BookingConfig.getAvailabilityConfig().timezone;
+  };
+  reads.length = 0;
+  var previous = JSON.parse(JSON.stringify(sandbox.getAdminBookings()));
+  sandbox.BookingConfig.getTimezone = timezone;
+  assert.ok(previous.serverTiming.configMs > actual.serverTiming.configMs);
+
+  assert.strictEqual(actual.serverTiming.bookingRows, 77);
+  assert.strictEqual(actual.serverTiming.ttlConfigReads, 1);
+  assert.strictEqual(actual.bookings.length, 77);
+  var cardBooking = actual.bookings.find(function (booking) { return booking.bookingId === bookingId; });
+  assert.ok(cardBooking.cardPaymentDueAt);
+  assert.strictEqual(cardBooking.isCardPayment, true);
+  assert.ok(cardBooking.effectivePriceAmount > 0);
+  assert.strictEqual(cardBooking.optionSummary.state, 'PENDING_APPROVAL');
+  assert.deepStrictEqual(
+    { ...actual, serverTiming: undefined },
+    { ...previous, serverTiming: undefined }
+  );
+});
