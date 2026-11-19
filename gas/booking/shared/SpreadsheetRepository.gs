@@ -71,15 +71,29 @@ var SpreadsheetRepository = (function () {
      「全行取得してから絞り込む」方針をそのまま踏襲する（専用の検索APIは作らない）。 */
   /* options.spreadsheet（省略可。Issue #864）: Booking Admin一覧が同じリクエスト内で既に開いた
      スプレッドシートを使い回すためのもの（openByIdの重複を避ける）。読み取り範囲・戻り値は省略時と同じ。 */
+  /* getDataRange().getValues()の結果が「空シートの形」（行なし、または1行1列の空文字）か。
+     空シートはA1だけの[['']]が返る。この形のときだけ従来のensure（getLastRow確認・ヘッダー追記）へ戻る。 */
+  function looksLikeEmptySheetValues_(values) {
+    return !values || values.length === 0 ||
+      (values.length === 1 && values[0].length === 1 && values[0][0] === '');
+  }
+
+  /*
+   * options.deferLastRowCheck（省略可。Issue #981 案A）: true かつ options.spreadsheet 指定時のみ、
+   * 正常なシート（内容あり）で ensureBookingsSheet_ の getLastRow() を呼ばずに読む（Booking Admin一覧専用）。
+   * シート未存在・空シートの形のときは従来の ensureBookingsSheet_ へ戻して再読取するため、
+   * シート自動生成・ヘッダー追記の副作用と戻り値は従来と同じ（この場合は getSheetByName・読取が追加で生じ得る）。
+   * 省略・false は従来どおり。他の呼出し元（返金・招待等）へは伝播させない。
+   */
   function getAllBookings(options) {
     // #981: 管理一覧が明示的に要求したときだけ、既存の読み取りを区間計測する。
     var stats = options && options.stats;
     var mark;
-    function lap(key) {
+    function lap(key, accumulate) {
       if (!stats) return;
       try {
         var current = Date.now();
-        if (key) stats[key] = current - mark;
+        if (key) stats[key] = (accumulate && stats[key] ? stats[key] : 0) + (current - mark);
         mark = current;
       } catch (ignored) {
         stats = null;
@@ -87,10 +101,23 @@ var SpreadsheetRepository = (function () {
     }
 
     lap();
-    var sheet = ensureBookingsSheet_(options && options.spreadsheet);
-    lap('bookingsSheetMs');
-    var values = sheet.getDataRange().getValues();
-    lap('bookingsValuesReadMs');
+    var values = null;
+    var deferLastRowCheck = !!(options && options.deferLastRowCheck === true && options.spreadsheet);
+    if (deferLastRowCheck) {
+      var found = options.spreadsheet.getSheetByName(SHEET_NAME_);
+      lap('bookingsSheetMs');
+      if (found) {
+        var firstRead = found.getDataRange().getValues();
+        lap('bookingsValuesReadMs');
+        if (!looksLikeEmptySheetValues_(firstRead)) values = firstRead;
+      }
+    }
+    if (values === null) {
+      var sheet = ensureBookingsSheet_(options && options.spreadsheet);
+      lap('bookingsSheetMs', deferLastRowCheck);
+      values = sheet.getDataRange().getValues();
+      lap('bookingsValuesReadMs', deferLastRowCheck);
+    }
     var result = [];
     for (var i = 1; i < values.length; i++) {
       result.push({ rowNumber: i + 1, record: rowToRecord_(values[i]) });

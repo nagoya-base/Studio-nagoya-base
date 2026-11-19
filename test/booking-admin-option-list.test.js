@@ -457,3 +457,304 @@ test('Issue #981: 計測ログに失敗しても一覧と集計値を返す', fu
   assert.strictEqual(result.bookings[0].bookingId, id);
   assert.ok(result.serverTiming.bookingsColumns > 0);
 });
+
+/* ---------- Issue #981 案A: 一覧専用のgetLastRow削減（opt-in） ---------- */
+
+/* Sheets呼出しを記録する疑似シート。rowsが空のときgetDataRange().getValues()はA1だけの[['']]を返す（実Sheetsと同じ形）。 */
+function createSpySheet_(initialRows, options) {
+  var opts = options || {};
+  var sheet = {
+    rows: initialRows.map(function (row) { return row.slice(); }),
+    calls: [],
+    getLastRow: function () {
+      sheet.calls.push('getLastRow');
+      if (opts.lastRowThrows) throw new Error('lastRow failed');
+      return opts.lastRowOverride !== undefined ? opts.lastRowOverride : sheet.rows.length;
+    },
+    appendRow: function (row) { sheet.calls.push('appendRow'); sheet.rows.push(row.slice()); },
+    getDataRange: function () {
+      sheet.calls.push('getDataRange');
+      return {
+        getValues: function () {
+          sheet.calls.push('getValues');
+          if (opts.valuesThrows) throw new Error('values failed');
+          return sheet.rows.length ? sheet.rows.map(function (row) { return row.slice(); }) : [['']];
+        }
+      };
+    }
+  };
+  return sheet;
+}
+
+function createSpySpreadsheet_(sheetsByName) {
+  var spreadsheet = {
+    calls: [],
+    getSheetByName: function (name) {
+      spreadsheet.calls.push('getSheetByName');
+      return Object.prototype.hasOwnProperty.call(sheetsByName, name) ? sheetsByName[name] : null;
+    },
+    insertSheet: function (name) {
+      spreadsheet.calls.push('insertSheet');
+      sheetsByName[name] = createSpySheet_([]);
+      return sheetsByName[name];
+    }
+  };
+  return spreadsheet;
+}
+
+function bookingsHeaders_(ctx) { return JSON.parse(JSON.stringify(ctx.sandbox.BookingsSchema.HEADERS)); }
+
+var SPY_CASES = [
+  { name: 'シート未存在', make: function () { return null; } },
+  { name: '空シート', make: function () { return []; } },
+  { name: 'ヘッダーのみ', make: function (headers) { return [headers]; } },
+  { name: 'データあり', make: function (headers) { return [headers, headers.map(function (h, i) { return i === 0 ? 'row-1' : ''; })]; } }
+];
+
+function runBookingsCase_(ctx, spyCase, useFlag) {
+  var headers = bookingsHeaders_(ctx);
+  var rows = spyCase.make(headers);
+  var sheets = {};
+  var sheet = null;
+  if (rows) { sheet = createSpySheet_(rows); sheets.Bookings = sheet; }
+  var spreadsheet = createSpySpreadsheet_(sheets);
+  var options = { spreadsheet: spreadsheet };
+  if (useFlag) options.deferLastRowCheck = true;
+  var result = ctx.sandbox.SpreadsheetRepository.getAllBookings(options);
+  var finalSheet = sheets.Bookings;
+  return {
+    result: JSON.parse(JSON.stringify(result)),
+    sheetCalls: finalSheet ? finalSheet.calls.slice() : [],
+    spreadsheetCalls: spreadsheet.calls.slice(),
+    finalRows: finalSheet ? JSON.parse(JSON.stringify(finalSheet.rows)) : null
+  };
+}
+
+test('Issue #981 案A: Bookingsは正常シートでgetLastRowを呼ばず、結果・読取回数が従来と同じ', function () {
+  var ctx = setup();
+  var base = runBookingsCase_(ctx, SPY_CASES[3], false);
+  var fast = runBookingsCase_(ctx, SPY_CASES[3], true);
+  assert.deepStrictEqual(base.sheetCalls, ['getLastRow', 'getDataRange', 'getValues']);
+  assert.deepStrictEqual(fast.sheetCalls, ['getDataRange', 'getValues']);
+  assert.deepStrictEqual(fast.spreadsheetCalls, ['getSheetByName']);
+  assert.deepStrictEqual(fast.result, base.result);
+  assert.strictEqual(fast.result.length, 1);
+  assert.strictEqual(fast.result[0].rowNumber, 2);
+});
+
+test('Issue #981 案A: Bookingsのシート未存在・空・ヘッダーのみは従来と同じ結果・副作用（追加アクセスはあり得る）', function () {
+  var ctx = setup();
+  SPY_CASES.slice(0, 3).forEach(function (spyCase) {
+    var base = runBookingsCase_(ctx, spyCase, false);
+    var fast = runBookingsCase_(ctx, spyCase, true);
+    assert.deepStrictEqual(fast.result, base.result, spyCase.name);
+    assert.deepStrictEqual(fast.finalRows, base.finalRows, spyCase.name + '：作成・ヘッダー追記の最終状態');
+    var count = function (calls, name) { return calls.filter(function (c) { return c === name; }).length; };
+    assert.strictEqual(count(fast.sheetCalls, 'appendRow'), count(base.sheetCalls, 'appendRow'), spyCase.name + ': appendRow回数');
+    assert.strictEqual(count(fast.spreadsheetCalls, 'insertSheet'), count(base.spreadsheetCalls, 'insertSheet'), spyCase.name + ': insertSheet回数');
+    assert.deepStrictEqual(fast.result, [], spyCase.name);
+  });
+  /* 空シート・シート未存在ではヘッダーが追記される（従来と同じ副作用）。 */
+  assert.strictEqual(runBookingsCase_(ctx, SPY_CASES[0], true).finalRows.length, 1);
+  assert.strictEqual(runBookingsCase_(ctx, SPY_CASES[1], true).finalRows.length, 1);
+  assert.strictEqual(runBookingsCase_(ctx, SPY_CASES[2], true).finalRows.length, 1);
+});
+
+test('Issue #981 案A: BookingsのA1が空文字を返すがgetLastRow>=1のシートは書込みなし・空配列（従来と同じ）', function () {
+  var ctx = setup();
+  [false, true].forEach(function (useFlag) {
+    var sheet = createSpySheet_([]);
+    sheet.getLastRow = function () { sheet.calls.push('getLastRow'); return 1; };
+    var spreadsheet = createSpySpreadsheet_({ Bookings: sheet });
+    var options = { spreadsheet: spreadsheet };
+    if (useFlag) options.deferLastRowCheck = true;
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.sandbox.SpreadsheetRepository.getAllBookings(options))), []);
+    assert.strictEqual(sheet.calls.indexOf('appendRow'), -1);
+  });
+});
+
+test('Issue #981 案A: Bookingsのopt-inは明示指定とspreadsheet指定が必要で、省略・false・引数なしは従来どおりgetLastRowを呼ぶ', function () {
+  var ctx = setup();
+  var headers = bookingsHeaders_(ctx);
+  [
+    { spreadsheet: true, flag: undefined },
+    { spreadsheet: true, flag: false },
+    { spreadsheet: true, flag: 'yes' },
+    { spreadsheet: false, flag: true }
+  ].forEach(function (c) {
+    var sheet = createSpySheet_([headers]);
+    var spreadsheet = createSpySpreadsheet_({ Bookings: sheet });
+    ctx.globals.SpreadsheetApp.openById = function () { return spreadsheet; };
+    var options = {};
+    if (c.spreadsheet) options.spreadsheet = spreadsheet;
+    if (c.flag !== undefined) options.deferLastRowCheck = c.flag;
+    ctx.sandbox.SpreadsheetRepository.getAllBookings(options);
+    assert.ok(sheet.calls.indexOf('getLastRow') >= 0, JSON.stringify(c));
+  });
+});
+
+test('Issue #981 案A: Bookingsは読取例外をそのまま投げる／getLastRowだけが例外のときの差は仕様差として固定する', function () {
+  var ctx = setup();
+  var headers = bookingsHeaders_(ctx);
+  var valuesFails = createSpySpreadsheet_({ Bookings: createSpySheet_([headers], { valuesThrows: true }) });
+  assert.throws(function () { ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: valuesFails }); }, /values failed/);
+  assert.throws(function () { ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: valuesFails, deferLastRowCheck: true }); }, /values failed/);
+  /* 既知の差：getLastRowだけが失敗する異常系では、従来は例外、案Aの通常経路ではgetLastRowを呼ばないため読取が成功する。 */
+  var lastRowFails = createSpySpreadsheet_({ Bookings: createSpySheet_([headers], { lastRowThrows: true }) });
+  assert.throws(function () { ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: lastRowFails }); }, /lastRow failed/);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: lastRowFails, deferLastRowCheck: true }))), []);
+});
+
+test('Issue #981 案A: Bookingsの計測statsはopt-in時もキー互換で、未存在シートのフォールバック時も値が数値のまま', function () {
+  var ctx = setup();
+  var headers = bookingsHeaders_(ctx);
+  var normalStats = {};
+  ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: createSpySpreadsheet_({ Bookings: createSpySheet_([headers]) }), stats: normalStats, deferLastRowCheck: true });
+  var fallbackStats = {};
+  ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: createSpySpreadsheet_({}), stats: fallbackStats, deferLastRowCheck: true });
+  var baseStats = {};
+  ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: createSpySpreadsheet_({ Bookings: createSpySheet_([headers]) }), stats: baseStats });
+  [normalStats, fallbackStats].forEach(function (stats) {
+    assert.deepStrictEqual(Object.keys(stats).sort(), Object.keys(baseStats).sort());
+    Object.keys(stats).forEach(function (key) { assert.strictEqual(typeof stats[key], 'number', key); assert.ok(isFinite(stats[key]), key); });
+  });
+});
+
+test('Issue #981 案A: OptionOrdersは正常シートでgetLastRowを呼ばず、結果が従来と同じ。spreadsheet指定だけでは高速化しない', function () {
+  var ctx = setup();
+  /* OptionOrdersのHEADERS_は非公開のため、1行目＝ヘッダー行・2行目＝データ行の最小形で比較する。 */
+  var sheetRows = [['optionOrderId', 'bookingId'], ['OPT-1', 'b-1']];
+  function run(callArgs) {
+    var sheet = createSpySheet_(sheetRows);
+    var spreadsheet = createSpySpreadsheet_({ OptionOrders: sheet });
+    var result = callArgs(spreadsheet);
+    return { result: JSON.parse(JSON.stringify(result)), calls: sheet.calls.slice(), spreadsheetCalls: spreadsheet.calls.slice() };
+  }
+  var base = run(function (ss) { return ctx.sandbox.OptionOrderRepository.listAll(undefined, ss); });
+  var spreadsheetOnly = run(function (ss) { return ctx.sandbox.OptionOrderRepository.listAll(undefined, ss, undefined); });
+  var fast = run(function (ss) { return ctx.sandbox.OptionOrderRepository.listAll(undefined, ss, { deferLastRowCheck: true }); });
+  assert.deepStrictEqual(base.calls, ['getLastRow', 'getDataRange', 'getValues']);
+  assert.deepStrictEqual(spreadsheetOnly.calls, base.calls);
+  assert.deepStrictEqual(fast.calls, ['getDataRange', 'getValues']);
+  assert.deepStrictEqual(fast.spreadsheetCalls, ['getSheetByName']);
+  assert.deepStrictEqual(fast.result, base.result);
+  assert.strictEqual(fast.result[0].rowNumber, 2);
+  /* openedSpreadsheetなしでflagだけ渡しても高速化しない（引数なしの既存利用者は不変）。 */
+  var sheet = createSpySheet_(sheetRows);
+  ctx.globals.SpreadsheetApp.openById = function () { return createSpySpreadsheet_({ OptionOrders: sheet }); };
+  ctx.sandbox.OptionOrderRepository.listAll(undefined, undefined, { deferLastRowCheck: true });
+  assert.ok(sheet.calls.indexOf('getLastRow') >= 0);
+});
+
+test('Issue #981 案A: OptionOrdersのシート未存在・空・ヘッダーのみは従来と同じ結果・副作用', function () {
+  var ctx = setup();
+  var cases = [
+    function () { return null; },
+    function () { return []; },
+    function () { return [['optionOrderId']]; }
+  ];
+  cases.forEach(function (make, index) {
+    function run(withFlag) {
+      var rows = make();
+      var sheets = {};
+      if (rows) sheets.OptionOrders = createSpySheet_(rows);
+      var spreadsheet = createSpySpreadsheet_(sheets);
+      var result = withFlag
+        ? ctx.sandbox.OptionOrderRepository.listAll(undefined, spreadsheet, { deferLastRowCheck: true })
+        : ctx.sandbox.OptionOrderRepository.listAll(undefined, spreadsheet);
+      var s = sheets.OptionOrders;
+      var calls = s ? s.calls : [];
+      return {
+        result: JSON.parse(JSON.stringify(result)),
+        finalRows: JSON.parse(JSON.stringify(s.rows)),
+        appends: calls.filter(function (c) { return c === 'appendRow'; }).length,
+        inserts: spreadsheet.calls.filter(function (c) { return c === 'insertSheet'; }).length
+      };
+    }
+    var base = run(false);
+    var fast = run(true);
+    assert.deepStrictEqual(fast, base, 'ケース' + index);
+    assert.deepStrictEqual(fast.result, []);
+  });
+});
+
+test('Issue #981 案A: OptionOrdersのA1空文字・getLastRow>=1は書込みなし（従来と同じ）', function () {
+  var ctx = setup();
+  [false, true].forEach(function (useFlag) {
+    var sheet = createSpySheet_([]);
+    sheet.getLastRow = function () { sheet.calls.push('getLastRow'); return 1; };
+    var spreadsheet = createSpySpreadsheet_({ OptionOrders: sheet });
+    var result = useFlag
+      ? ctx.sandbox.OptionOrderRepository.listAll(undefined, spreadsheet, { deferLastRowCheck: true })
+      : ctx.sandbox.OptionOrderRepository.listAll(undefined, spreadsheet);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(result)), []);
+    assert.strictEqual(sheet.calls.indexOf('appendRow'), -1);
+  });
+});
+
+test('Issue #981 案A: getAdminBookingsは両台帳でgetLastRowを呼ばず、結果は従来経路と同一。他の呼出し元は従来どおり', function () {
+  var ctx = setup();
+  var withOption = createRoom(ctx);
+  addOrder(ctx, withOption);
+  createRoom(ctx, { brand: 'snb', paymentMethod: 'オンラインクレジットカード' });
+
+  var original = ctx.globals.SpreadsheetApp.openById;
+  var lastRowCalls = 0;
+  ctx.globals.SpreadsheetApp.openById = function () {
+    var spreadsheet = original.apply(this, arguments);
+    var getSheetByName = spreadsheet.getSheetByName;
+    spreadsheet.getSheetByName = function (name) {
+      var sheet = getSheetByName.apply(this, arguments);
+      if (!sheet || sheet.__spied) return sheet;
+      var getLastRow = sheet.getLastRow;
+      sheet.getLastRow = function () { lastRowCalls += 1; return getLastRow.apply(this, arguments); };
+      sheet.__spied = true;
+      return sheet;
+    };
+    return spreadsheet;
+  };
+
+  var fast = ctx.sandbox.getAdminBookings();
+  assert.strictEqual(lastRowCalls, 0, '一覧の通常経路ではgetLastRowを呼ばない');
+
+  /* 従来経路（opt-inを外した呼出し）と比較して、予約・オプション状態・件数が同一であること。 */
+  var originalListAll = ctx.sandbox.OptionOrderRepository.listAll;
+  var originalGetAll = ctx.sandbox.SpreadsheetRepository.getAllBookings;
+  ctx.sandbox.OptionOrderRepository.listAll = function (stats, spreadsheet) { return originalListAll(stats, spreadsheet); };
+  ctx.sandbox.SpreadsheetRepository.getAllBookings = function (options) { return originalGetAll({ spreadsheet: options && options.spreadsheet, stats: options && options.stats }); };
+  lastRowCalls = 0;
+  var baseline = ctx.sandbox.getAdminBookings();
+  assert.strictEqual(lastRowCalls, 2, '従来経路は台帳ごとにgetLastRowを1回呼ぶ（前提確認）');
+  assert.deepStrictEqual(stripTiming_(fast), stripTiming_(baseline));
+  assert.strictEqual(fast.bookings.length, 2);
+
+  /* 引数なしのgetAllBookings/listAll（返金・招待等の呼出し元）はgetLastRowを呼ぶ従来動作のまま。 */
+  ctx.sandbox.OptionOrderRepository.listAll = originalListAll;
+  ctx.sandbox.SpreadsheetRepository.getAllBookings = originalGetAll;
+  lastRowCalls = 0;
+  ctx.sandbox.SpreadsheetRepository.getAllBookings();
+  ctx.sandbox.OptionOrderRepository.listAll();
+  assert.strictEqual(lastRowCalls, 2);
+});
+
+test('Issue #981 案A: OptionOrdersの読取に失敗しても一覧は返り、Studio Xはstate UNKNOWN（従来と同じ）', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  addOrder(ctx, id);
+  var original = ctx.globals.SpreadsheetApp.openById;
+  ctx.globals.SpreadsheetApp.openById = function () {
+    var spreadsheet = original.apply(this, arguments);
+    var getSheetByName = spreadsheet.getSheetByName;
+    spreadsheet.getSheetByName = function (name) {
+      var sheet = getSheetByName.apply(this, arguments);
+      if (sheet && name === 'OptionOrders') {
+        return Object.assign({}, sheet, { getDataRange: function () { throw new Error('options read failed'); } });
+      }
+      return sheet;
+    };
+    return spreadsheet;
+  };
+  var item = listItem(ctx, id);
+  assert.strictEqual(item.optionSummary.state, 'UNKNOWN');
+  assert.strictEqual(item.optionSummary.available, false);
+});

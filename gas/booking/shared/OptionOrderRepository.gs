@@ -114,21 +114,47 @@ var OptionOrderRepository = (function () {
    * openedSpreadsheet（省略可）: Booking Admin一覧が同じリクエスト内で既に開いたスプレッドシート
    * （openByIdの重複を避ける。Issue #864）。渡されたときopenMsは0に近い値になる。
    */
-  function listAll(stats, openedSpreadsheet) {
+  /* getDataRange().getValues()の結果が「空シートの形」（行なし、または1行1列の空文字）か。 */
+  function looksLikeEmptySheetValues_(values) {
+    return !values || values.length === 0 ||
+      (values.length === 1 && values[0].length === 1 && values[0][0] === '');
+  }
+
+  /*
+   * options.deferLastRowCheck（省略可。Issue #981 案A）: true かつ openedSpreadsheet 指定時のみ、
+   * 正常なシート（内容あり）で ensureSheet_ の getLastRow() を呼ばずに読む（Booking Admin一覧専用。
+   * openedSpreadsheetが渡されたこと自体は高速化の指定とみなさない）。シート未存在・空シートの形のときは
+   * 従来の ensureSheet_ へ戻して再読取するため、シート自動生成・ヘッダー追記と戻り値は従来と同じ
+   * （この場合は getSheetByName・読取が追加で生じ得る）。省略・false・引数なしは従来どおり。
+   */
+  function listAll(stats, openedSpreadsheet, options) {
     var measure = stats && typeof stats === 'object';
     var mark = Date.now();
-    function lap(key) {
+    function lap(key, accumulate) {
       if (!measure) return;
       var current = Date.now();
-      stats[key] = current - mark;
+      stats[key] = (accumulate && stats[key] ? stats[key] : 0) + (current - mark);
       mark = current;
     }
     var spreadsheet = openedSpreadsheet || getSpreadsheet_();
     lap('openMs');
-    var sheet = ensureSheet_(ORDERS_SHEET_, HEADERS_, spreadsheet);
-    lap('sheetMs');
-    var values = sheet.getDataRange().getValues();
-    lap('readMs');
+    var values = null;
+    var deferLastRowCheck = !!(openedSpreadsheet && options && options.deferLastRowCheck === true);
+    if (deferLastRowCheck) {
+      var found = spreadsheet.getSheetByName(ORDERS_SHEET_);
+      lap('sheetMs');
+      if (found) {
+        var firstRead = found.getDataRange().getValues();
+        lap('readMs');
+        if (!looksLikeEmptySheetValues_(firstRead)) values = firstRead;
+      }
+    }
+    if (values === null) {
+      var sheet = ensureSheet_(ORDERS_SHEET_, HEADERS_, spreadsheet);
+      lap('sheetMs', deferLastRowCheck);
+      values = sheet.getDataRange().getValues();
+      lap('readMs', deferLastRowCheck);
+    }
     var result = [];
     for (var i = 1; i < values.length; i++) {
       result.push({ rowNumber: i + 1, record: rowToRecord_(values[i]) });

@@ -228,7 +228,7 @@ function getAdminBookings() {
   var optionOrdersByBooking = loadAdminListOptionOrders_(optionStats, spreadsheet);
   lap('optionOrdersMs');
   var bookingStats = {};
-  var bookingRows = SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet, stats: bookingStats });
+  var bookingRows = SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet, stats: bookingStats, deferLastRowCheck: true });
   lap('bookingsReadMs');
   /* Issue #864: カード予約の支払期限計算に使うTTL設定は、一覧1回につき最初に必要になった
      時点で1回だけ読む（カード予約が0件なら読まない）。 */
@@ -348,7 +348,7 @@ function loadAdminListOptionOrders_(stats, spreadsheet) {
   if (typeof OptionOrderRepository === 'undefined' || typeof BookingOptions === 'undefined') return null;
   try {
     var byBooking = {};
-    OptionOrderRepository.listAll(stats, spreadsheet).forEach(function (row) {
+    OptionOrderRepository.listAll(stats, spreadsheet, { deferLastRowCheck: true }).forEach(function (row) {
       var id = row.record.bookingId;
       (byBooking[id] = byBooking[id] || []).push(row.record);
     });
