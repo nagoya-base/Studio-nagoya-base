@@ -211,7 +211,7 @@ function getAdminBookings() {
     timing[key] = current - mark;
     mark = current;
   }
-  var timezone = BookingConfig.getAvailabilityConfig().timezone;
+  var timezone = BookingConfig.getTimezone();
   var now = new Date();
   var todayJst = BookingAvailability.formatDateInTimezone(now, timezone);
   /* Issue #449: 終了済み予約を通常一覧から外す判定用（予約タイムゾーン基準の'YYYY-MM-DD HH:mm'）。 */
