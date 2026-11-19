@@ -39,5 +39,17 @@ var OpsAuth = (function () {
     });
   }
 
-  return { createOwnerAuthenticator: createOwnerAuthenticator, createGasSessionAuthenticator: createGasSessionAuthenticator };
+  /*
+   * 時間主導トリガー専用（#971 Phase 2）。トリガー実行では getActiveUser() が空になり得るため、
+   * 実行主体（トリガーを登録した所有者）を表す getEffectiveUser() を OPS_OWNER_EMAIL と照合する。
+   * 保存用の自動実行入口（opsSaveKeyFinalStatusesScheduled）だけが使う。画面・手動実行の認証器は変更しない。
+   */
+  function createGasTriggerAuthenticator() {
+    return createOwnerAuthenticator({
+      getOwnerEmail: function () { return PropertiesService.getScriptProperties().getProperty('OPS_OWNER_EMAIL'); },
+      getActiveEmail: function () { return Session.getEffectiveUser().getEmail(); }
+    });
+  }
+
+  return { createOwnerAuthenticator: createOwnerAuthenticator, createGasSessionAuthenticator: createGasSessionAuthenticator, createGasTriggerAuthenticator: createGasTriggerAuthenticator };
 })();

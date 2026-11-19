@@ -279,7 +279,7 @@ var OpsApi = (function () {
       offset: context.offset,
       nowMs: typeof context.nowMs === 'number' ? context.nowMs : Date.now()
     });
-    Logger.log('ops key_final_save ' + result.code + (result.ok ? ' candidates=' + result.candidates + ' processed=' + result.processed + ' saved=' + result.saved + ' deferred=' + result.deferred + skippedLog_(result.skipped) + (result.stoppedBy ? ' stoppedBy=' + result.stoppedBy : '') : ''));
+    Logger.log('ops key_final_save ' + result.code + (result.ok ? ' candidates=' + result.candidates + ' processed=' + result.processed + ' saved=' + result.saved + ' deferred=' + result.deferred + skippedLog_(result.skipped) + (result.stoppedBy ? ' stoppedBy=' + fixedCode_(result.stoppedBy) : '') : ''));
     return result;
   }
 
@@ -294,7 +294,40 @@ var OpsApi = (function () {
     return parts.length ? ' skipped=' + parts.join(',') : '';
   }
 
-  return { handle: handle, runKeyFinalSave: runKeyFinalSave };
+  /*
+   * 自動保存の入口（#971 Phase 2）。オーナーが Apps Script の「トリガー」画面で登録した15分間隔の時間主導トリガーから呼ぶ。
+   * 保存処理は runKeyFinalSave（= OpsKeyFinal.run、offset 0・1回最大10件・保存条件は手動実行と同一）をそのまま使う。
+   * - 設定 OPS_KEY_FINAL_STATUS_WRITE が ON 以外: 認可・台帳・Access に触れず即スキップ（例外にしない）。
+   * - BUSY（手動実行と重複）: 次回再試行でよいので正常スキップ。
+   * - それ以外の ok:false、および ok:true でも stoppedBy がある場合: 固定コードだけの例外を投げる
+   *   （Apps Script 標準のトリガー失敗通知は、トリガー関数が例外で終わったときだけ送られるため）。
+   * 例外文・ログに予約ID・氏名・保存値・行番号・URL・トークン・API生応答は含めない。
+   * ctx は検証用の差し替え（runKeyFinalSave の ctx と同じ。authenticate 未指定ならトリガー用の認証器）。
+   */
+  var SCHEDULED_ERROR_PREFIX = 'OPS_KEY_FINAL_SCHEDULED_FAILED:';
+  function fixedCode_(code) {
+    return typeof code === 'string' && /^[A-Z_\/0-9]{1,60}$/.test(code) ? code : 'UNKNOWN';
+  }
+  function runKeyFinalSaveScheduled(ctx) {
+    var context = Object.assign({}, ctx || {});
+    context.offset = 0;
+    context.authenticate = context.authenticate || OpsAuth.createGasTriggerAuthenticator();
+    context.getFlag = context.getFlag || function () { return PropertiesService.getScriptProperties().getProperty(OpsKeyFinal.FLAG_PROPERTY); };
+    if (context.getFlag() !== 'ON') {
+      Logger.log('ops key_final_save SCHEDULED SKIPPED WRITE_DISABLED');
+      return { ok: true, skipped: true, code: 'WRITE_DISABLED' };
+    }
+    var result = runKeyFinalSave(context);
+    if (!result || result.ok !== true) {
+      var code = fixedCode_(result && result.code);
+      if (code === 'BUSY') return { ok: true, skipped: true, code: 'BUSY' };
+      throw new Error(SCHEDULED_ERROR_PREFIX + code);
+    }
+    if (result.stoppedBy) throw new Error(SCHEDULED_ERROR_PREFIX + fixedCode_(result.stoppedBy));
+    return result;
+  }
+
+  return { handle: handle, runKeyFinalSave: runKeyFinalSave, runKeyFinalSaveScheduled: runKeyFinalSaveScheduled };
 })();
 
 /* ---- 以下はGAS専用の薄いアダプター（業務ロジックなし） ---- */
@@ -317,6 +350,8 @@ function opsSaveKeyFinalStatuses() { return OpsApi.runKeyFinalSave(); }
 /* 保存できない候補が先頭を占めるときの再実行用（状態を持たず、候補の11〜20件目・21〜30件目へ進む）。 */
 function opsSaveKeyFinalStatusesNext10() { return OpsApi.runKeyFinalSave({ offset: 10 }); }
 function opsSaveKeyFinalStatusesNext20() { return OpsApi.runKeyFinalSave({ offset: 20 }); }
+/* 自動保存の入口（#971 Phase 2）。オーナーが Apps Script の「トリガー」画面で15分間隔の時間主導トリガーを1本だけ登録して呼ぶ。コードからはトリガーを作成・削除しない。 */
+function opsSaveKeyFinalStatusesScheduled() { return OpsApi.runKeyFinalSaveScheduled(); }
 
 /* メモ（Issue #941）。毎回、所有者認可を通す。書込み先は専用スプレッドシートのTasks表に固定。 */
 function opsListTasks() { return OpsApi.handle({ op: 'tasks_list' }); }
