@@ -461,6 +461,32 @@ test('保存処理: GAS入口（OpsApi.runKeyFinalSave）は固定設定OFFな�
 });
 
 
+test('保存処理ログ: 保存しなかった理由を「固定コード:件数」だけでコード昇順に出す。予約ID・保存値・URL・トークンは出さず、種類数に上限がある', function () {
+  function logWith(skipped, extra) {
+    var sb = load({ UrlFetchApp: { fetch: function () { throw new Error('no fetch'); } }, PropertiesService: { getScriptProperties: function () { return { getProperty: function () { return null; } }; } },
+      LockService: { getScriptLock: function () { return { tryLock: function () { return true; }, releaseLock: function () {} }; } } });
+    sb.OpsKeyFinal.run = function () { return Object.assign({ ok: true, code: 'DONE', candidates: 11, offset: 0, processed: 10, saved: 0, deferred: 1, skipped: skipped, stoppedBy: null }, extra || {}); };
+    sb.OpsApi.runKeyFinalSave({});
+    return sb._logs;
+  }
+  assert.deepStrictEqual(logWith({ NO_RECORD: 8, VERDICT_MISMATCH: 1, KEY_VALIDITY_NOT_ENDED: 1 }),
+    ['ops key_final_save DONE candidates=11 processed=10 saved=0 deferred=1 skipped=KEY_VALIDITY_NOT_ENDED:1,NO_RECORD:8,VERDICT_MISMATCH:1']);
+  assert.deepStrictEqual(logWith({}), ['ops key_final_save DONE candidates=11 processed=10 saved=0 deferred=1']);
+  /* 想定外のキー・値（予約ID・保存値・URL・負数・小数・文字列）は捨てる */
+  var hostile = {}; hostile[REF] = 1; hostile['REVOKED_CONFIRMED@r1@h0123456789abcdef'] = 1; hostile[URL_OK] = 1; hostile.TOKEN_X = TOKEN; hostile.NEG = -1; hostile.FRAC = 1.5; hostile.OK_CODE = 2;
+  var out = logWith(hostile).join('\n');
+  assert.ok(/skipped=OK_CODE:2$/m.test(out), out);
+  [REF, '@r1', URL_OK, TOKEN, 'NEG', 'FRAC'].forEach(function (v) { assert.ok(out.indexOf(v) === -1, v); });
+  /* 種類数の上限（20） */
+  var many = {}; for (var i = 0; i < 40; i++) many['CODE_' + ('0' + i).slice(-2)] = 1;
+  var line = logWith(many)[0];
+  assert.strictEqual(line.split('skipped=')[1].split(',').length, 20);
+  /* 失敗時（ok:false）は従来どおり固定コードだけ */
+  var failed = load({ PropertiesService: { getScriptProperties: function () { return { getProperty: function () { return null; } }; } } });
+  failed.OpsApi.runKeyFinalSave({ authenticate: function () { return { ok: true }; } });
+  assert.deepStrictEqual(failed._logs, ['ops key_final_save WRITE_DISABLED']);
+});
+
 // ================================================================ 取りこぼし防止（offset。状態を持たない）
 
 test('保存処理: 保存できない候補が先頭10件を占めても、offset を進めて再実行すれば後続の候補へ届く（状態は持たない）', function () {

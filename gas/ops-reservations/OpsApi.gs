@@ -279,8 +279,19 @@ var OpsApi = (function () {
       offset: context.offset,
       nowMs: typeof context.nowMs === 'number' ? context.nowMs : Date.now()
     });
-    Logger.log('ops key_final_save ' + result.code + (result.ok ? ' candidates=' + result.candidates + ' processed=' + result.processed + ' saved=' + result.saved + ' deferred=' + result.deferred + (result.stoppedBy ? ' stoppedBy=' + result.stoppedBy : '') : ''));
+    Logger.log('ops key_final_save ' + result.code + (result.ok ? ' candidates=' + result.candidates + ' processed=' + result.processed + ' saved=' + result.saved + ' deferred=' + result.deferred + skippedLog_(result.skipped) + (result.stoppedBy ? ' stoppedBy=' + result.stoppedBy : '') : ''));
     return result;
+  }
+
+  /* 保存しなかった理由の「固定コード→件数」だけをログ用に整形する（#971）。コードの昇順・最大 SKIPPED_LOG_MAX 種類。
+     固定コード（大文字英字・数字・アンダースコア）と整数の件数以外は出さない（予約ID・保存値・行番号等の混入を構造的に防ぐ）。 */
+  var SKIPPED_LOG_MAX = 20;
+  function skippedLog_(skipped) {
+    if (!skipped || typeof skipped !== 'object') return '';
+    var parts = Object.keys(skipped).filter(function (k) {
+      return /^[A-Z][A-Z0-9_]{0,39}$/.test(k) && typeof skipped[k] === 'number' && Math.floor(skipped[k]) === skipped[k] && skipped[k] > 0 && skipped[k] <= 9999;
+    }).sort().slice(0, SKIPPED_LOG_MAX).map(function (k) { return k + ':' + skipped[k]; });
+    return parts.length ? ' skipped=' + parts.join(',') : '';
   }
 
   return { handle: handle, runKeyFinalSave: runKeyFinalSave };
