@@ -199,7 +199,9 @@ function computeAdminCardPaymentDueAt_(record, timezone, getTtlConfig) {
  * 予約ID・氏名・連絡先・決済情報・スプレッドシートID等は一切含めない。
  */
 function logAdminBookingsTiming_(timing) {
-  Logger.log('getAdminBookings timing ' + JSON.stringify(timing));
+  try {
+    Logger.log('getAdminBookings timing ' + JSON.stringify(timing));
+  } catch (ignored) { /* 計測ログの失敗で一覧表示を止めない。 */ }
 }
 
 function getAdminBookings() {
@@ -225,7 +227,8 @@ function getAdminBookings() {
   var optionStats = {};
   var optionOrdersByBooking = loadAdminListOptionOrders_(optionStats, spreadsheet);
   lap('optionOrdersMs');
-  var bookingRows = SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet });
+  var bookingStats = {};
+  var bookingRows = SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet, stats: bookingStats });
   lap('bookingsReadMs');
   /* Issue #864: カード予約の支払期限計算に使うTTL設定は、一覧1回につき最初に必要になった
      時点で1回だけ読む（カード予約が0件なら読まない）。 */
@@ -311,6 +314,9 @@ function getAdminBookings() {
   /* Issue #864: OptionOrders台帳の読み取り内訳（未計測の区間はキー自体を付けない）。 */
   ['openMs', 'sheetMs', 'readMs', 'convertMs', 'rows', 'columns'].forEach(function (key) {
     if (typeof optionStats[key] === 'number') timing['optionOrders' + key.charAt(0).toUpperCase() + key.slice(1)] = optionStats[key];
+  });
+  ['bookingsSheetMs', 'bookingsValuesReadMs', 'bookingsConvertMs', 'bookingsColumns'].forEach(function (key) {
+    if (typeof bookingStats[key] === 'number' && isFinite(bookingStats[key])) timing[key] = bookingStats[key];
   });
   logAdminBookingsTiming_(timing);
   /* Issue #864: 同じ呼び出しのサーバー側計測値をクライアントへ返し、ブラウザ側の応答時間との差
