@@ -95,7 +95,7 @@
     function keyView(code, label, tone, reasons, ops, lc) {
       return {
         verdict: { code: code, label: label, tone: tone }, reasons: reasons.map(function (t) { return { code: 'MOCK', text: t + '（モック）' }; }),
-        connection: 'CONNECTED', failure: null, lifecycle: lc || null, consistency: 'STABLE', opCount: ops.length, truncated: false, ops: ops,
+        connection: 'CONNECTED', failure: null, lifecycle: lc || null, savedFinal: null, consistency: 'STABLE', opCount: ops.length, truncated: false, ops: ops,
         jobs: [{ job: 'SYNC', label: '予約と鍵の同期', ageMinutes: 3 }, { job: 'DELIVER', label: '案内メールの送信', ageMinutes: null }], notes: []
       };
     }
@@ -130,7 +130,11 @@
             v = keyView('NOT_CONNECTED', '未接続（鍵状態は取得していません）', 'info', [], []); v.connection = 'NOT_CONNECTED'; v.lifecycle = null; v.consistency = null; v.jobs = [];
           } else if (keyScenario === 'failed') {
             v = keyView('FETCH_FAILED', '未取得（取得に失敗しました）', 'ng', ['通信に失敗しました'], []); v.connection = 'FETCH_FAILED'; v.failure = { code: 'NETWORK' }; v.consistency = null; v.jobs = [];
-          } else if (MOCK_KEYS[id]) v = MOCK_KEYS[id]();
+          } else if (MOCK_KEYS[id]) {
+            v = MOCK_KEYS[id]();
+            /* ?key=saved: 履歴が回収済み（NONE）の予約に、Bookings保存の過去の最終確認を補助表示する（#971）。 */
+            if (keyScenario === 'saved' && id === 'MOCK-002') v.savedFinal = { code: 'REVOKED_CONFIRMED', label: '失効・不在を確認済み', source: 'BOOKINGS_SAVED' };
+          }
           else return ok(err('NOT_FOUND', '該当する予約が見つかりません。（モック）'));
           ok({ ok: true, contractVersion: 1, source: 'mock', fetchedAt: isoNow(nowMs), bookingId: id, keyStatus: v });
         });

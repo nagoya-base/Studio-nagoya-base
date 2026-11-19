@@ -441,7 +441,16 @@ var BookingsSchema = (function () {
      * 直後（書き込み後）に+1する。参照・再配信・人数のみの変更では増えない。
      * 旧コードは末尾の余分な列を無視するため、新旧混在でも壊れない。
      */
-    'revision'
+    'revision',
+    /*
+     * Issue #971 で追加。個別鍵の「確認済みの最終状態」の保存先（末尾追記のみ。#673: admin-only → migrateBookingsSchema → full。
+     * 手動でシートへ列を挿入しない）。形式は `<CODE>@r<改訂番号>@h<16桁16進>`（CODE は REVOKED_CONFIRMED / NOT_ISSUED_CONFIRMED の2種類だけ）。
+     * 空欄＝記録なし（判別不可）。PIN・passcodeId・deviceId・氏名等は保存しない。
+     * 書き手は運営アプリGAS（gas/ops-reservations）の管理者が明示実行する保存処理だけ。予約・決済・鍵連携のコードはこの列を読み書きしない。
+     * 値は予約の改訂番号と台帳内容の指紋に結び付き、現在の台帳と一致しなければ運営アプリは表示しない（保存時点の確認結果であり、現在の鍵の状態の保証ではない）。
+     * 旧コードは末尾の余分な列を無視するため、新旧混在でも壊れない。
+     */
+    'accessKeyFinalStatus'
   ];
 
   return {

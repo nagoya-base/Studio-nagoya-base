@@ -33,7 +33,7 @@ function load(globals) {
   var sb = { Date: FixedDate, Logger: { log: function () { sb._logs.push([].slice.call(arguments).join(' ')); } }, _logs: [] };
   Object.keys(globals || {}).forEach(function (k) { sb[k] = globals[k]; });
   vm.createContext(sb);
-  ['OpsContract.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsSource.gs', 'OpsAuth.gs', 'OpsKeyStatus.gs', 'OpsApi.gs'].forEach(function (f) {
+  ['OpsContract.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsSource.gs', 'OpsAuth.gs', 'OpsKeyStatus.gs', 'OpsKeyFinal.gs', 'OpsKeyFinalStore.gs', 'OpsApi.gs'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), sb, { filename: f });
   });
   return sb;

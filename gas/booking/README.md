@@ -205,6 +205,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 `test/feedback-token-core.test.js`（形式・改ざん・ブランド・期限・URL）、`test/feedback-invites.test.js`（初期OFF・DRY_RUN・2時間後・延長／変更／取消／未決済・遡及なし・3ブランド文面・1予約1回・並列・送信失敗・結果不明・手動復旧・180日削除の境界／起算点／dry-run／ロック／行ずれ／削除後に再送しない）、`test/feedback-invite-e2e.test.js`（Booking Admin のリンク → 回答用GAS の保存・1予約1回答・別予約・期限切れ・ブランド不一致・保存失敗・同時送信・`?test=1`）。
 
+## Issue #971: 個別鍵の確認済み最終状態（`accessKeyFinalStatus`列。Phase 1）
+
+- `Bookings` 末尾に1列 `accessKeyFinalStatus` を追加（schema変更あり。手順は上の「Bookings schema変更時」: admin-only → `migrateBookingsSchema` → full。手動でシートへ列を挿入しない）。空欄＝記録なし（判別不可）。
+- この列を書くのは運営アプリ専用のGAS（予約管理とは別プロジェクト）の管理者が明示実行する保存処理だけで、**予約・決済・Webhook・鍵連携（Access GAS）のコードは読み書きしない**。個人情報消去（#680）の対象列にも含めない。詳細・条件・停止手順は [`docs/ops-key-final-971.md`](../../docs/ops-key-final-971.md)。
+
 ## Issue #753: 鍵連携 PR-A（`revision`列とスナップショット。フラグOFF）
 
 SwitchBot鍵連携の接続層。**鍵API・独立GAS・配送・本番migrationは含まない**（設計と範囲は [`docs/switchbot-access-key-748.md`](../../docs/switchbot-access-key-748.md) の「予約システム接続（PR-A）」）。

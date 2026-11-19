@@ -101,6 +101,18 @@ test('exactly matching header -> no-op success with a fixed log line', () => {
   assert.equal(book.released, true);
 });
 
+test('Issue #971: a sheet that ends at revision gets exactly one trailing column, accessKeyFinalStatus; rows are untouched', () => {
+  assert.equal(H[H.length - 1], 'accessKeyFinalStatus');
+  assert.equal(H[H.length - 2], 'revision');
+  const rows = dataRows();
+  const book = fakeBook({ Bookings: bookingsSheet(H.slice(0, -1), rows) });
+  const result = run(book);
+  assert.equal(result.added, 1);
+  assert.deepEqual(book.writes, [{ sheet: 'Bookings', kind: 'cells', row: 1, col: H.length, values: ['accessKeyFinalStatus'] }]);
+  assert.deepEqual(book.sheets.Bookings.rows.slice(1), rows, '既存の予約行は1セルも書き換えない（空欄＝記録なし）');
+  assert.equal(H.filter((h) => h === 'accessKeyFinalStatus').length, 1);
+});
+
 test('one missing trailing column -> exactly that column is appended', () => {
   const book = fakeBook({ Bookings: bookingsSheet(H.slice(0, -1), dataRows()) });
   const result = run(book);
@@ -110,33 +122,34 @@ test('one missing trailing column -> exactly that column is appended', () => {
   assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=1']);
 });
 
-test('planCode-era header migrates the 15 trailing columns in canonical order (#669 / #670 / #679 / #753)', () => {
+test('planCode-era header migrates the 16 trailing columns in canonical order (#669 / #670 / #679 / #753 / #971)', () => {
   const planIndex = H.indexOf('planCode');
   const book = fakeBook({ Bookings: bookingsSheet(H.slice(0, planIndex + 1), dataRows()) });
   const result = run(book);
-  assert.equal(result.added, 15);
+  assert.equal(result.added, 16);
   assert.deepEqual(book.sheets.Bookings.rows[0], H);
   assert.deepEqual(H.slice(planIndex + 1), [
     'supportServices', 'supportRoomAmount', 'supportStaffAmount', 'supportApprovedAt', 'supportPaymentDueAt',
     'supportApprovalMailSentAt', 'supportEquipment', 'supportEquipmentAmount', 'largeParty', 'partySurcharge',
-    'largePartyApprovalStatus', 'largePartyApprovedAt', 'largePartyPaymentDueAt', 'supportBackdrop', 'revision'
+    'largePartyApprovalStatus', 'largePartyApprovedAt', 'largePartyPaymentDueAt', 'supportBackdrop', 'revision',
+    'accessKeyFinalStatus'
   ]);
   assert.equal(book.writes.length, 1);
   assert.equal(book.writes[0].col, planIndex + 2);
-  assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=15']);
+  assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=16']);
 });
 
-test('Issue #753: sheets that end at supportBackdrop get exactly one trailing column, revision, and existing rows are untouched', () => {
-  assert.equal(H[H.length - 1], 'revision');
-  assert.equal(H[H.length - 2], 'supportBackdrop');
-  const before = H.slice(0, -1);
+test('Issue #753: sheets that end at supportBackdrop get the trailing revision column; existing rows are untouched', () => {
+  assert.equal(H[H.length - 2], 'revision');
+  assert.equal(H[H.length - 3], 'supportBackdrop');
+  const before = H.slice(0, -2);
   const rows = dataRows();
   const book = fakeBook({ Bookings: bookingsSheet(before, rows) });
   const result = run(book);
-  assert.equal(result.added, 1);
-  assert.deepEqual(book.writes, [{ sheet: 'Bookings', kind: 'cells', row: 1, col: H.length, values: ['revision'] }]);
+  assert.equal(result.added, 2);
+  assert.deepEqual(book.writes, [{ sheet: 'Bookings', kind: 'cells', row: 1, col: H.length - 1, values: ['revision', 'accessKeyFinalStatus'] }]);
   assert.deepEqual(book.sheets.Bookings.rows.slice(1), rows, '既存の予約行は1セルも書き換えない（revisionは空欄=0扱い）');
-  assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=1']);
+  assert.deepEqual(book.logs, ['BOOKINGS_SCHEMA_MIGRATION_OK: added=2']);
   const again = run(book);
   assert.equal(again.added, 0);
   assert.equal(book.writes.length, 1, '2回目は何も書かない（冪等）');

@@ -1,6 +1,7 @@
 /*
  * OpsApi.gs — バックエンドの要求処理（Issue #936 / #941）。通信方式に依存しない。
- * 予約台帳はコード上、読み取りのみ（#936。#941で権限は spreadsheets になり、OAuthレベルの読み取り専用ではない）。書込みはメモ（#941）の専用保存先だけで、予約台帳には書かない。
+ * 予約台帳はコード上、読み取りのみ（#936。#941で権限は spreadsheets になり、OAuthレベルの読み取り専用ではない）。書込みはメモ（#941）の専用保存先と、
+ * 管理者が明示実行する個別鍵の最終状態の保存（#971。runKeyFinalSave。予約台帳の accessKeyFinalStatus 列の1セルだけ）に限る。handle（画面・一覧・詳細・鍵状態）からは書かない。
  *
  * handle(request, ctx) が共通の接続契約の入口:
  *   request: { op: 'list', params } | { op: 'detail', id } | { op: 'tasks_list' | 'task_save' | 'task_delete', ... }（OpsTasks.gs）
@@ -209,7 +210,10 @@ var OpsApi = (function () {
     } else {
       var got = OpsKeyStatus.fetchAccess(cfg, rec.bookingId);
       view = got.ok ? OpsKeyStatus.evaluate(rec, got.data, nowMs) : OpsKeyStatus.unavailable('FETCH_FAILED', got.reason);
+      /* #971: Access が正常に NONE を返し、保存値が現在の台帳と一致する場合だけ、保存済みの過去の最終確認を補助表示する（読み取りのみ）。 */
+      if (got.ok) view.savedFinal = OpsKeyFinal.display(rec, got.data, nowMs);
     }
+    if (view.savedFinal === undefined) view.savedFinal = null;
     Logger.log('ops key_status ' + view.verdict.code + (view.failure ? ' ' + view.failure.code : ''));
     return { ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), bookingId: rec.bookingId, keyStatus: view };
   }
@@ -236,7 +240,38 @@ var OpsApi = (function () {
     return error_('INVALID_PARAMS', '要求の種類が不正です。');
   }
 
-  return { handle: handle };
+  /*
+   * 個別鍵の最終状態の保存（Issue #971 Phase 1）。管理者が Apps Script エディタから明示実行する。handle からは到達できない。
+   * 固定設定 OPS_KEY_FINAL_STATUS_WRITE が ON のときだけ動く。戻り値・ログは件数と固定コードだけ（予約ID・値を出さない）。
+   * ctx は検証用の差し替え（authenticate / readLedger / accessConfig / fetchAccess / store / getFlag / withLock / nowMs）。
+   */
+  function runKeyFinalSave(ctx) {
+    var context = ctx || {};
+    var props = null;
+    function prop_(name) { props = props || PropertiesService.getScriptProperties(); return props.getProperty(name); }
+    var result = OpsKeyFinal.run({
+      authenticate: context.authenticate || OpsAuth.createGasSessionAuthenticator(),
+      getFlag: context.getFlag || function () { return prop_(OpsKeyFinal.FLAG_PROPERTY); },
+      accessConfig: context.accessConfig || accessConfigGas_,
+      readLedger: context.readLedger || readLedgerGas_,
+      fetchAccess: context.fetchAccess || OpsKeyStatus.fetchAccess,
+      store: context.store || OpsKeyFinalStore.create({
+        spreadsheetId: prop_('OPS_SPREADSHEET_ID'),
+        fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
+        getToken: function () { return ScriptApp.getOAuthToken(); }
+      }),
+      withLock: context.withLock || function (fn) {
+        var lock = LockService.getScriptLock();
+        if (!lock.tryLock(15000)) return { busy: true };
+        try { return fn(); } finally { lock.releaseLock(); }
+      },
+      nowMs: typeof context.nowMs === 'number' ? context.nowMs : Date.now()
+    });
+    Logger.log('ops key_final_save ' + result.code + (result.ok ? ' candidates=' + result.candidates + ' processed=' + result.processed + ' saved=' + result.saved + ' deferred=' + result.deferred + (result.stoppedBy ? ' stoppedBy=' + result.stoppedBy : '') : ''));
+    return result;
+  }
+
+  return { handle: handle, runKeyFinalSave: runKeyFinalSave };
 })();
 
 /* ---- 以下はGAS専用の薄いアダプター（業務ロジックなし） ---- */
@@ -253,6 +288,9 @@ function opsListReservations(params) { return OpsApi.handle({ op: 'list', params
 function opsGetReservation(bookingId) { return OpsApi.handle({ op: 'detail', id: bookingId }); }
 /* 鍵・案内の状況（Issue #942）。読み取り専用。接続先・トークンは画面へ渡さない。 */
 function opsGetKeyStatus(bookingId) { return OpsApi.handle({ op: 'key_status', id: bookingId }); }
+
+/* 個別鍵の最終状態の保存（Issue #971 Phase 1）。管理者が Apps Script エディタから明示実行する（画面からは呼ばない・トリガーなし）。 */
+function opsSaveKeyFinalStatuses() { return OpsApi.runKeyFinalSave(); }
 
 /* メモ（Issue #941）。毎回、所有者認可を通す。書込み先は専用スプレッドシートのTasks表に固定。 */
 function opsListTasks() { return OpsApi.handle({ op: 'tasks_list' }); }
