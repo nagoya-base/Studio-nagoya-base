@@ -36,8 +36,10 @@ function resolveBookingFilePath(file) {
 /*
  * files: 読み込む.gsファイル名の配列（この順にvm実行される。依存順に並べること）
  * globals: サンドボックスへ事前に注入するグローバル（CalendarApp等のスタブ）
+ * sourceTransforms: 省略可。{ 'Availability.gs': function (source) { return source; } } の形で、
+ *   指定ファイルの読み込み直前にソース文字列を加工する（変更前後の同値比較用。既定は無加工）。
  */
-function loadBookingSandbox(files, globals) {
+function loadBookingSandbox(files, globals, sourceTransforms) {
   var sandbox = {};
   Object.keys(globals || {}).forEach(function (key) {
     sandbox[key] = globals[key];
@@ -65,7 +67,9 @@ function loadBookingSandbox(files, globals) {
   }
   files.forEach(function (file) {
     var filePath = resolveBookingFilePath(file);
-    vm.runInContext(fs.readFileSync(filePath, 'utf8'), sandbox, { filename: filePath });
+    var source = fs.readFileSync(filePath, 'utf8');
+    if (sourceTransforms && typeof sourceTransforms[file] === 'function') source = sourceTransforms[file](source);
+    vm.runInContext(source, sandbox, { filename: filePath });
   });
   return sandbox;
 }

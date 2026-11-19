@@ -85,6 +85,50 @@ var BookingAvailability = (function () {
   }
 
   /*
+   * Issue #987: Intl.DateTimeFormatインスタンスの遅延生成・再利用（同一実行内のみ）。
+   * 再利用するのはFormatterインスタンスだけで、日付・時刻・オフセット・予約/顧客情報は一切保持しない
+   * （timezoneOffsetMillisAt_の数値オフセットもキャッシュしない。DST・時刻依存のため）。
+   * キー＝書式パターン名＋元のtimeZone文字列。Mapで__proto__等の衝突を避け、総数をFORMATTER_CACHE_LIMIT_で
+   * 制限する（超過時は全破棄して正しいFormatterを再生成する）。
+   * timezoneが空でない文字列以外（未指定・null・非文字列）はキャッシュせず従来どおり毎回コンストラクタへ通す。
+   * コンストラクタが例外を投げた場合（不正TZ）は何も保存せず、例外をそのまま呼び出し側のtry/catchへ伝える。
+   */
+  var FORMATTER_CACHE_LIMIT = 12;
+  var formatterCache_ = new Map();
+
+  var FORMATTER_PATTERNS_ = {
+    date: function (timezone) {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'
+      });
+    },
+    time: function (timezone) {
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+      });
+    },
+    dateTimeSeconds: function (timezone) {
+      return new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone, hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+    }
+  };
+
+  function getFormatter_(patternName, timezone) {
+    var create = FORMATTER_PATTERNS_[patternName];
+    if (typeof timezone !== 'string' || timezone === '') return create(timezone);
+    var key = patternName + '\u0000' + timezone;
+    var cached = formatterCache_.get(key);
+    if (cached) return cached;
+    var formatter = create(timezone);
+    if (formatterCache_.size >= FORMATTER_CACHE_LIMIT) formatterCache_.clear();
+    formatterCache_.set(key, formatter);
+    return formatter;
+  }
+
+  /*
    * dateを指定timezoneの暦日として'YYYY-MM-DD'へ変換する（Issue #270）。
    * 当日判定はブラウザのローカルtimezone・GAS実行環境timezoneに依存させず、
    * 必ずこの関数でconfig.timezone（既定Asia/Tokyo）基準に統一する。
@@ -95,9 +139,7 @@ var BookingAvailability = (function () {
   function formatDateInTimezone(date, timezone) {
     if (!isDateLike_(date)) return null;
     try {
-      var parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit'
-      }).formatToParts(date);
+      var parts = getFormatter_('date', timezone).formatToParts(date);
       var result = {};
       parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
       if (!result.year || !result.month || !result.day) return null;
@@ -118,9 +160,7 @@ var BookingAvailability = (function () {
   function getCurrentMinutesInTimezone(date, timezone) {
     if (!isDateLike_(date)) return null;
     try {
-      var parts = new Intl.DateTimeFormat('en-GB', {
-        timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-      }).formatToParts(date);
+      var parts = getFormatter_('time', timezone).formatToParts(date);
       var hour = null;
       var minute = null;
       parts.forEach(function (part) {
@@ -158,9 +198,7 @@ var BookingAvailability = (function () {
   function formatTimeInTimezone(date, timezone) {
     if (!isDateLike_(date)) return null;
     try {
-      var parts = new Intl.DateTimeFormat('en-GB', {
-        timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-      }).formatToParts(date);
+      var parts = getFormatter_('time', timezone).formatToParts(date);
       var hour = null;
       var minute = null;
       parts.forEach(function (part) {
@@ -232,11 +270,7 @@ var BookingAvailability = (function () {
    */
   function timezoneOffsetMillisAt_(instantMillis, timezone) {
     try {
-      var parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone, hourCycle: 'h23',
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
-      }).formatToParts(new Date(instantMillis));
+      var parts = getFormatter_('dateTimeSeconds', timezone).formatToParts(new Date(instantMillis));
       var result = {};
       parts.forEach(function (part) { if (part.type !== 'literal') result[part.type] = part.value; });
       if (!result.year || !result.month || !result.day || !result.hour || !result.minute || !result.second) return null;
