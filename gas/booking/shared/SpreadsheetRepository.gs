@@ -72,11 +72,34 @@ var SpreadsheetRepository = (function () {
   /* options.spreadsheet（省略可。Issue #864）: Booking Admin一覧が同じリクエスト内で既に開いた
      スプレッドシートを使い回すためのもの（openByIdの重複を避ける）。読み取り範囲・戻り値は省略時と同じ。 */
   function getAllBookings(options) {
+    // #981: 管理一覧が明示的に要求したときだけ、既存の読み取りを区間計測する。
+    var stats = options && options.stats;
+    var mark;
+    function lap(key) {
+      if (!stats) return;
+      try {
+        var current = Date.now();
+        if (key) stats[key] = current - mark;
+        mark = current;
+      } catch (ignored) {
+        stats = null;
+      }
+    }
+
+    lap();
     var sheet = ensureBookingsSheet_(options && options.spreadsheet);
+    lap('bookingsSheetMs');
     var values = sheet.getDataRange().getValues();
+    lap('bookingsValuesReadMs');
     var result = [];
     for (var i = 1; i < values.length; i++) {
       result.push({ rowNumber: i + 1, record: rowToRecord_(values[i]) });
+    }
+    lap('bookingsConvertMs');
+    if (stats) {
+      try {
+        stats.bookingsColumns = values.length ? values[0].length : 0;
+      } catch (ignored) { /* 列数の記録に失敗しても結果を返す。 */ }
     }
     return result;
   }

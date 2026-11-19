@@ -398,6 +398,10 @@ test('Issue #979: 77件の一覧とサマリを維持し、一覧の設定読取
   assert.ok(previous.serverTiming.configMs > actual.serverTiming.configMs);
 
   assert.strictEqual(actual.serverTiming.bookingRows, 77);
+  assert.strictEqual(actual.serverTiming.bookingsColumns, sandbox.BookingsSchema.HEADERS.length);
+  ['bookingsSheetMs', 'bookingsValuesReadMs', 'bookingsConvertMs'].forEach(function (key) {
+    assert.ok(Number.isFinite(actual.serverTiming[key]), key);
+  });
   assert.strictEqual(actual.serverTiming.ttlConfigReads, 1);
   assert.strictEqual(actual.bookings.length, 77);
   var cardBooking = actual.bookings.find(function (booking) { return booking.bookingId === bookingId; });
@@ -409,4 +413,47 @@ test('Issue #979: 77件の一覧とサマリを維持し、一覧の設定読取
     { ...actual, serverTiming: undefined },
     { ...previous, serverTiming: undefined }
   );
+});
+
+test('Issue #981: 計測ありでも行順・Date値・欠損列を維持し、台帳を1回だけ読む', function () {
+  var ctx = setup();
+  var date = new Date('2026-11-19T10:00:00+09:00');
+  var values = [['bookingId', 'createdAt'], ['first', date], ['', ''], ['last', date]];
+  var reads = 0;
+  var spreadsheet = {
+    getSheetByName: function () {
+      return {
+        getLastRow: function () { return values.length; },
+        getDataRange: function () {
+          return { getValues: function () { reads += 1; return values; } };
+        }
+      };
+    }
+  };
+  var repository = ctx.sandbox.SpreadsheetRepository;
+  var withoutStats = repository.getAllBookings({ spreadsheet: spreadsheet });
+  var stats = {};
+  var rows = repository.getAllBookings({ spreadsheet: spreadsheet, stats: stats });
+  assert.strictEqual(reads, 2);
+  assert.deepStrictEqual(rows, withoutStats);
+  assert.strictEqual(rows.length, 3);
+  assert.strictEqual(rows[0].record.createdAt, date);
+  assert.strictEqual(rows[1].record.bookingId, '');
+  assert.strictEqual(rows[2].rowNumber, 4);
+  assert.strictEqual(rows[2].record.status, undefined);
+  assert.strictEqual(stats.bookingsColumns, 2);
+
+  values = [values[0]];
+  assert.strictEqual(repository.getAllBookings({ spreadsheet: spreadsheet, stats: {} }).length, 0);
+  spreadsheet.getSheetByName = function () { throw new Error('sheet read failed'); };
+  assert.throws(function () { repository.getAllBookings({ spreadsheet: spreadsheet, stats: {} }); }, /sheet read failed/);
+});
+
+test('Issue #981: 計測ログに失敗しても一覧と集計値を返す', function () {
+  var ctx = setup();
+  var id = createRoom(ctx);
+  ctx.globals.Logger.log = function () { throw new Error('logger unavailable'); };
+  var result = ctx.sandbox.getAdminBookings();
+  assert.strictEqual(result.bookings[0].bookingId, id);
+  assert.ok(result.serverTiming.bookingsColumns > 0);
 });
