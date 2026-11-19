@@ -196,10 +196,11 @@ test('正本: 見本画像は実在する既存画像（鶴・麻の葉・グラ
 
 test('スキーマ: supportBackdrop は Bookings の末尾列。途中挿入なし・supportEquipment とは別の列', function () {
   var h = loadBookingSandbox(['BookingsSchema.gs'], {}).BookingsSchema.HEADERS;
-  assert.strictEqual(h[h.length - 2], 'supportBackdrop', '#753で末尾にrevisionが追加された。supportBackdropはその直前');
-  assert.strictEqual(h[h.length - 1], 'revision');
+  var i = h.indexOf('supportBackdrop');
+  assert.strictEqual(h[i + 1], 'revision', '#753で末尾にrevisionが追加された。supportBackdropはその直前');
+  assert.strictEqual(h[h.length - 1], 'accessKeyFinalStatus', '#971で末尾に追加。既存列の順序は変えない');
   assert.strictEqual(h.filter(function (x) { return x === 'supportBackdrop'; }).length, 1);
-  assert.strictEqual(h[h.length - 3], 'largePartyPaymentDueAt', '直前の列は#668の末尾列のまま（既存列は移動しない）');
+  assert.strictEqual(h[i - 1], 'largePartyPaymentDueAt', '直前の列は#668の末尾列のまま（既存列は移動しない）');
   assert.ok(h.indexOf('supportEquipment') < h.indexOf('supportBackdrop') && h.indexOf('supportEquipment') !== h.indexOf('supportBackdrop'));
 });
 

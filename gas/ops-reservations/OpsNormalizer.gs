@@ -20,7 +20,9 @@ var OpsNormalizer = (function () {
     'customerType', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt',
     'planCode', 'largeParty', 'revision',
     /* メール送信記録（Issue #967）。読み取り専用。来場案内メール・確定メールの「送信記録」であり、SwitchBot個別鍵の発行を意味しない。 */
-    'accessGuideSentAt', 'confirmedMailSentAt'
+    'accessGuideSentAt', 'confirmedMailSentAt',
+    /* 個別鍵の確認済み最終状態の保存値（Issue #971）。内部用（OpsKeyFinal が検証する）。画面へは検証済みの射影だけを返し、生の値は返さない。 */
+    'accessKeyFinalStatus'
   ];
   /* 一覧に必要で、無いと意味のある取得ができない列。 */
   var REQUIRED_COLUMNS = ['bookingId', 'date', 'startAt', 'brand', 'status'];
@@ -179,6 +181,7 @@ var OpsNormalizer = (function () {
       confirmedAt: stampText_(get('confirmedAt')),
       cancelledAt: stampText_(get('cancelledAt')),
       expiredAt: stampText_(get('expiredAt')),
+      keyFinalStatus: { columnPresent: has('accessKeyFinalStatus'), raw: text_(get('accessKeyFinalStatus'), 80) },
       accessGuideMail: mailRecord_(has('accessGuideSentAt'), get('accessGuideSentAt')),
       confirmedMail: mailRecord_(has('confirmedMailSentAt'), get('confirmedMailSentAt'))
     };

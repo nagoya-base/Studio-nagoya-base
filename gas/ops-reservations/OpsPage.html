@@ -372,6 +372,8 @@
     var html = head;
     /* 主表示は個別鍵の実状態（#969）。メール送信記録・予約時刻では代用しない。下の照合結果は鍵の記録と予約台帳の突合。 */
     if (d.lifecycle) html += '<div class="banner ' + (TONE_CLASS[d.lifecycle.tone] || '') + '" data-lifecycle="' + esc(d.lifecycle.code) + '"><strong>個別鍵の状態: ' + esc(d.lifecycle.label) + '</strong>' + (d.lifecycle.alert ? '<div class="banner err" data-lifecycle-alert="1">⚠ 予約・案内との照合に警告があります。下の照合結果を必ず確認してください。</div>' : '') + '</div><p class="note">照合結果（鍵の記録と予約台帳の突合）:</p>';
+    /* Bookings保存の過去の最終確認（#971）。Accessが正常にNONEで、保存値が現在の台帳と一致するときだけサーバーが返す。保存時点の確認結果で、現在の鍵の状態の保証ではない。 */
+    if (d.savedFinal) html += '<div class="banner" data-saved-final="' + esc(d.savedFinal.code) + '"><strong>Bookings保存：過去の最終確認 — ' + esc(d.savedFinal.label) + '</strong><p class="note">保存時点の確認結果です。鍵の現在の状態を保証するものではありません。Accessの履歴は回収済みで、現行の記録はありません。</p></div>';
     html += '<div class="banner ' + (TONE_CLASS[d.verdict.tone] || '') + '" data-verdict="' + esc(d.verdict.code) + '"><strong>' + esc(d.verdict.label) + '</strong>';
     if (d.reasons && d.reasons.length) html += '<ul>' + d.reasons.map(function (x) { return '<li>' + esc(x.text) + '</li>'; }).join('') + '</ul>';
     html += '</div>';

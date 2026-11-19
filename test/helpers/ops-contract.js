@@ -89,7 +89,7 @@ function validateDetail(res) {
 /* 鍵・案内の状況（#942）の応答の形。実バックエンドとモックの両方を同じ関数で検証する。 */
 var VERDICT_CODES = ['NOT_CONNECTED', 'FETCH_FAILED', 'UNVERIFIABLE', 'NO_HISTORY', 'NOT_ISSUED_CONFIRMED', 'NEEDS_REVIEW', 'MISMATCH', 'ISSUE_PENDING', 'ISSUE_UNCONFIRMED', 'GUIDE_NOT_SENT',
   'ISSUED_GUIDED', 'ISSUED_GUIDE_UNKNOWN', 'REVOKE_UNCONFIRMED', 'REVOKED_CONFIRMED'];
-var KEY_VIEW_KEYS = ['connection', 'consistency', 'failure', 'jobs', 'lifecycle', 'notes', 'opCount', 'ops', 'reasons', 'truncated', 'verdict'];
+var KEY_VIEW_KEYS = ['connection', 'consistency', 'failure', 'jobs', 'lifecycle', 'notes', 'opCount', 'ops', 'reasons', 'savedFinal', 'truncated', 'verdict'];
 var KEY_OP_KEYS = ['current', 'deliveryLabel', 'kindLabel', 'rev', 'stateLabel', 'updatedAt', 'validFrom', 'validTo'];
 
 function validateKeyStatus(res) {
@@ -99,9 +99,10 @@ function validateKeyStatus(res) {
   var v = (res && res.keyStatus) || {};
   var keys = Object.keys(v).sort();
   var allowed = KEY_VIEW_KEYS.slice();
-  check(keys.every(function (k) { return allowed.indexOf(k) !== -1; }) && KEY_VIEW_KEYS.every(function (k) { return keys.indexOf(k) !== -1; }), 'keyStatus のキーが許可リスト: ' + keys.join(), problems);
+  check(keys.every(function (k) { return allowed.indexOf(k) !== -1; }) && KEY_VIEW_KEYS.every(function (k) { return k === 'savedFinal' || keys.indexOf(k) !== -1; }), 'keyStatus のキーが許可リスト: ' + keys.join(), problems);
   check(v.verdict && VERDICT_CODES.indexOf(v.verdict.code) !== -1 && /^(ok|info|warn|ng)$/.test(v.verdict.tone) && typeof v.verdict.label === 'string', 'verdict', problems);
   check(v.lifecycle === null || (v.lifecycle && /^(ok|info|warn|ng)$/.test(v.lifecycle.tone) && typeof v.lifecycle.label === 'string' && typeof v.lifecycle.code === 'string' && typeof v.lifecycle.alert === 'boolean' && Object.keys(v.lifecycle).sort().join() === 'alert,code,label,tone'), 'lifecycle', problems);
+  check(v.savedFinal === undefined || v.savedFinal === null || (v.savedFinal && Object.keys(v.savedFinal).sort().join() === 'code,label,source' && /^(REVOKED_CONFIRMED|NOT_ISSUED_CONFIRMED)$/.test(v.savedFinal.code) && v.savedFinal.source === 'BOOKINGS_SAVED' && typeof v.savedFinal.label === 'string'), 'savedFinal（Bookings保存の過去の最終確認。検証済みの射影だけ）', problems);
   check(Array.isArray(v.reasons) && v.reasons.every(function (r) { return typeof r.code === 'string' && typeof r.text === 'string'; }), 'reasons', problems);
   check(/^(CONNECTED|NOT_CONNECTED|FETCH_FAILED|UNSUPPORTED)$/.test(v.connection), 'connection', problems);
   check(Array.isArray(v.ops) && v.ops.every(function (o) {

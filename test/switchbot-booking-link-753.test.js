@@ -51,9 +51,10 @@ function record(over) {
 
 test('スキーマ: revision は Bookings の末尾列（途中挿入なし・重複なし）', function () {
   var h = loadBookingSandbox(['BookingsSchema.gs'], {}).BookingsSchema.HEADERS;
-  assert.strictEqual(h[h.length - 1], 'revision');
+  assert.strictEqual(h[h.length - 2], 'revision', '#971で末尾にaccessKeyFinalStatusが追加された。revisionはその直前');
+  assert.strictEqual(h[h.length - 1], 'accessKeyFinalStatus');
   assert.strictEqual(h.filter(function (x) { return x === 'revision'; }).length, 1);
-  assert.strictEqual(h[h.length - 2], 'supportBackdrop', '既存の末尾列は移動しない');
+  assert.strictEqual(h[h.length - 3], 'supportBackdrop', '既存の末尾列は移動しない');
 });
 
 // ---------------------------------------------------------------- JST変換
@@ -220,28 +221,28 @@ test('revision: 空欄は0、数値文字列は加算、不正値は予約処理
 });
 
 test('revision: 未migration(列なし)・列がグリッド外・書込み失敗でも予約更新は成功し巻き戻さない', function () {
-  /* 旧ヘッダー(revision列なし)のシート。 */
+  /* 旧ヘッダー(revision・accessKeyFinalStatus列なし)のシート。 */
   var sandbox = load();
   var H = sandbox.SpreadsheetRepository.HEADERS;
   var spreadsheetsById = {}; spreadsheetsById[SPREADSHEET_ID] = {};
   var sheet = stubs.createSpreadsheetAppStub(spreadsheetsById).openById(SPREADSHEET_ID).insertSheet('Bookings');
-  sheet.appendRow(H.slice(0, -1));
+  sheet.appendRow(H.slice(0, -2));
   var sb = loadBookingSandbox(FILES, {
     PropertiesService: stubs.createPropertiesServiceStub({ SPREADSHEET_ID: SPREADSHEET_ID }),
     SpreadsheetApp: stubs.createSpreadsheetAppStub({ [SPREADSHEET_ID]: { Bookings: sheet } }),
     console: { error: function (m) { sb._logged.push(m); } }
   });
   sb._logged = [];
-  var old = H.slice(0, -1).map(function (h) { var r = record(); return r[h] === undefined ? '' : r[h]; });
+  var old = H.slice(0, -2).map(function (h) { var r = record(); return r[h] === undefined ? '' : r[h]; });
   sheet.appendRow(old);
   sb.SpreadsheetRepository.updateBookingFields('SNB-20301111-AAAAAAAA', { status: 'CANCELLED' });
   assert.strictEqual(sb.SpreadsheetRepository.findRowByBookingId('SNB-20301111-AAAAAAAA').record.status, 'CANCELLED');
-  assert.strictEqual(sheet._rows[1].length, H.length - 1, 'revisionセルを書かない');
+  assert.strictEqual(sheet._rows[1].length, H.length - 2, 'revisionセルを書かない');
   assert.deepStrictEqual(sb._logged, ['ACCESS_KEY_REVISION_BUMP_FAILED: REVISION_COLUMN_MISSING']);
 
   /* 実GASでグリッド外へのgetRangeは例外になる。 */
   var realGetRange = sheet.getRange;
-  sheet.getRange = function (row, col) { if (col > H.length - 1) throw new Error('out of grid'); return realGetRange.apply(sheet, arguments); };
+  sheet.getRange = function (row, col) { if (col > H.length - 2) throw new Error('out of grid'); return realGetRange.apply(sheet, arguments); };
   sb.SpreadsheetRepository.updateBookingFields('SNB-20301111-AAAAAAAA', { status: 'CONFIRMED' });
   assert.strictEqual(sb.SpreadsheetRepository.findRowByBookingId('SNB-20301111-AAAAAAAA').record.status, 'CONFIRMED');
 
