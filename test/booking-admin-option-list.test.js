@@ -457,3 +457,176 @@ test('Issue #981: 計測ログに失敗しても一覧と集計値を返す', fu
   assert.strictEqual(result.bookings[0].bookingId, id);
   assert.ok(result.serverTiming.bookingsColumns > 0);
 });
+
+/* ---- #981 案A: 一覧専用opt-in（skipLastRowCheck）で通常経路のgetLastRowを省く ---- */
+
+function createLedgerSpreadsheet(state) {
+  /* state: { sheet: null|{values, lastRow}, calls: [], readError } */
+  var spreadsheet = {
+    getSheetByName: function () {
+      state.calls.push('getSheetByName');
+      if (!state.sheet) return null;
+      return {
+        getLastRow: function () { state.calls.push('getLastRow'); return state.sheet.lastRow; },
+        appendRow: function (row) { state.calls.push('appendRow'); state.appended = row; },
+        getDataRange: function () {
+          state.calls.push('getDataRange');
+          return {
+            getValues: function () {
+              state.calls.push('getValues');
+              if (state.readError) throw new Error(state.readError);
+              return state.sheet.values;
+            }
+          };
+        }
+      };
+    },
+    insertSheet: function () {
+      state.calls.push('insertSheet');
+      state.sheet = { values: [['']], lastRow: 0 };
+      return spreadsheet.getSheetByName();
+    }
+  };
+  return spreadsheet;
+}
+
+function plain(value) { return JSON.parse(JSON.stringify(value)); }
+
+function ledgerCases(ctx) {
+  var bookingHeaders = ctx.sandbox.BookingsSchema.HEADERS;
+  var orderHeaders = ['optionOrderId', 'bookingId', 'brand'];
+  return [
+    { name: 'Bookings', headers: bookingHeaders, read: function (ss, extra) {
+      return ctx.sandbox.SpreadsheetRepository.getAllBookings(Object.assign({ spreadsheet: ss }, extra));
+    }, optIn: { skipLastRowCheck: true } },
+    { name: 'OptionOrders', headers: orderHeaders, read: function (ss, extra) {
+      return ctx.sandbox.OptionOrderRepository.listAll(undefined, ss, extra);
+    }, optIn: { skipLastRowCheck: true } }
+  ];
+}
+
+test('Issue #981 案A: 内容のある既存シートではgetLastRowを呼ばず、結果は従来と同一', function () {
+  var ctx = setup();
+  var date = new Date('2026-11-19T10:00:00+09:00');
+  ledgerCases(ctx).forEach(function (ledger) {
+    var values = [['h1', 'h2'], ['first', date], ['', ''], ['last', date]];
+    var baseline = { calls: [], sheet: { values: values, lastRow: values.length } };
+    var expected = ledger.read(createLedgerSpreadsheet(baseline), undefined);
+    assert.ok(baseline.calls.indexOf('getLastRow') !== -1, ledger.name + ' 既定はgetLastRowを呼ぶ');
+
+    var state = { calls: [], sheet: { values: values, lastRow: values.length } };
+    var actual = ledger.read(createLedgerSpreadsheet(state), ledger.optIn);
+    assert.deepStrictEqual(state.calls, ['getSheetByName', 'getDataRange', 'getValues'], ledger.name);
+    assert.deepStrictEqual(plain(actual), plain(expected), ledger.name);
+    assert.strictEqual(actual.length, 3);
+    assert.strictEqual(actual[2].rowNumber, 4);
+    assert.strictEqual(actual[0].record.h2, undefined);
+  });
+});
+
+test('Issue #981 案A: spreadsheetを渡しただけ／opt-in=falseではOptionOrdersもgetLastRowを呼ぶ', function () {
+  var ctx = setup();
+  [undefined, {}, { skipLastRowCheck: false }, { skipLastRowCheck: 'true' }].forEach(function (extra) {
+    var state = { calls: [], sheet: { values: [['h'], ['x']], lastRow: 2 } };
+    ctx.sandbox.OptionOrderRepository.listAll(undefined, createLedgerSpreadsheet(state), extra);
+    assert.deepStrictEqual(state.calls, ['getSheetByName', 'getLastRow', 'getDataRange', 'getValues']);
+  });
+});
+
+test('Issue #981 案A: ヘッダーのみは書込みなしで空配列（getLastRowは呼ばない）', function () {
+  var ctx = setup();
+  ledgerCases(ctx).forEach(function (ledger) {
+    var state = { calls: [], sheet: { values: [['a', 'b']], lastRow: 1 } };
+    assert.deepStrictEqual(plain(ledger.read(createLedgerSpreadsheet(state), ledger.optIn)), [], ledger.name);
+    assert.deepStrictEqual(state.calls, ['getSheetByName', 'getDataRange', 'getValues']);
+  });
+});
+
+test('Issue #981 案A: シート未存在は従来どおり作成してヘッダー追記し空配列', function () {
+  var ctx = setup();
+  ledgerCases(ctx).forEach(function (ledger) {
+    var optInState = { calls: [], sheet: null };
+    var baselineState = { calls: [], sheet: null };
+    assert.deepStrictEqual(plain(ledger.read(createLedgerSpreadsheet(optInState), ledger.optIn)), []);
+    assert.deepStrictEqual(plain(ledger.read(createLedgerSpreadsheet(baselineState), undefined)), []);
+    assert.strictEqual(optInState.calls.filter(function (c) { return c === 'insertSheet'; }).length, 1, ledger.name);
+    assert.strictEqual(optInState.calls.filter(function (c) { return c === 'appendRow'; }).length, 1, ledger.name);
+    assert.deepStrictEqual(plain(optInState.appended), plain(baselineState.appended), ledger.name);
+    assert.ok(optInState.appended.length > 0);
+  });
+});
+
+test('Issue #981 案A: 空シート（[[""]]）はgetLastRow=0でヘッダー追記、従来と同じ副作用', function () {
+  var ctx = setup();
+  ledgerCases(ctx).forEach(function (ledger) {
+    var optInState = { calls: [], sheet: { values: [['']], lastRow: 0 } };
+    var baselineState = { calls: [], sheet: { values: [['']], lastRow: 0 } };
+    assert.deepStrictEqual(plain(ledger.read(createLedgerSpreadsheet(optInState), ledger.optIn)), []);
+    ledger.read(createLedgerSpreadsheet(baselineState), undefined);
+    assert.deepStrictEqual(plain(optInState.appended), plain(baselineState.appended), ledger.name);
+    assert.strictEqual(optInState.calls.filter(function (c) { return c === 'appendRow'; }).length, 1, ledger.name);
+    assert.ok(optInState.calls.indexOf('getLastRow') !== -1, ledger.name);
+  });
+});
+
+test('Issue #981 案A: A1が空文字を返す数式のみ（getLastRow=1）は追記せず従来と同一結果', function () {
+  var ctx = setup();
+  ledgerCases(ctx).forEach(function (ledger) {
+    var optInState = { calls: [], sheet: { values: [['']], lastRow: 1 } };
+    var baselineState = { calls: [], sheet: { values: [['']], lastRow: 1 } };
+    var actual = ledger.read(createLedgerSpreadsheet(optInState), ledger.optIn);
+    var expected = ledger.read(createLedgerSpreadsheet(baselineState), undefined);
+    assert.deepStrictEqual(plain(actual), plain(expected), ledger.name);
+    assert.strictEqual(optInState.calls.indexOf('appendRow'), -1, ledger.name);
+    assert.strictEqual(baselineState.calls.indexOf('appendRow'), -1, ledger.name);
+  });
+});
+
+test('Issue #981 案A: 読取例外は従来と同じメッセージで伝播する（getValues失敗）', function () {
+  var ctx = setup();
+  ledgerCases(ctx).forEach(function (ledger) {
+    var state = { calls: [], sheet: { values: [['h'], ['x']], lastRow: 2 }, readError: 'sheet read failed' };
+    assert.throws(function () { ledger.read(createLedgerSpreadsheet(state), ledger.optIn); }, /sheet read failed/, ledger.name);
+    state = { calls: [], sheet: { values: [['h'], ['x']], lastRow: 2 }, readError: 'sheet read failed' };
+    assert.throws(function () { ledger.read(createLedgerSpreadsheet(state), undefined); }, /sheet read failed/, ledger.name);
+  });
+});
+
+test('Issue #981 案A: getLastRow自体が例外のときの差（opt-in経路は読取成功なら例外にならない）を明示', function () {
+  var ctx = setup();
+  var values = [['h'], ['x']];
+  var spreadsheet = createLedgerSpreadsheet({ calls: [], sheet: { values: values, lastRow: 2 } });
+  var original = spreadsheet.getSheetByName;
+  spreadsheet.getSheetByName = function () {
+    var sheet = original();
+    sheet.getLastRow = function () { throw new Error('lastRow failed'); };
+    return sheet;
+  };
+  /* 従来経路: getLastRowの例外が先に出る。opt-in経路: getValuesが成功すれば例外にならない（唯一の異常系差）。 */
+  assert.throws(function () { ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet }); }, /lastRow failed/);
+  assert.strictEqual(
+    ctx.sandbox.SpreadsheetRepository.getAllBookings({ spreadsheet: spreadsheet, skipLastRowCheck: true }).length, 1
+  );
+});
+
+test('Issue #981 案A: getAdminBookingsだけがopt-inを指定し、他の呼出しは既定のまま', function () {
+  var ctx = setup();
+  createRoom(ctx);
+  var seen = { bookings: [], options: [] };
+  var bookingsRepo = ctx.sandbox.SpreadsheetRepository;
+  var optionsRepo = ctx.sandbox.OptionOrderRepository;
+  var originalGetAll = bookingsRepo.getAllBookings;
+  var originalListAll = optionsRepo.listAll;
+  bookingsRepo.getAllBookings = function (options) { seen.bookings.push(options); return originalGetAll(options); };
+  optionsRepo.listAll = function (stats, spreadsheet, listOptions) {
+    seen.options.push(listOptions);
+    return originalListAll(stats, spreadsheet, listOptions);
+  };
+  var result = ctx.sandbox.getAdminBookings();
+  assert.strictEqual(result.bookings.length, 1);
+  assert.strictEqual(seen.bookings[0].skipLastRowCheck, true);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(seen.options[0])), { skipLastRowCheck: true });
+  bookingsRepo.getAllBookings = originalGetAll;
+  optionsRepo.listAll = originalListAll;
+  assert.strictEqual(optionsRepo.listByBookingId('none').length, 0);
+});

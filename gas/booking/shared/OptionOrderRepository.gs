@@ -114,7 +114,12 @@ var OptionOrderRepository = (function () {
    * openedSpreadsheet（省略可）: Booking Admin一覧が同じリクエスト内で既に開いたスプレッドシート
    * （openByIdの重複を避ける。Issue #864）。渡されたときopenMsは0に近い値になる。
    */
-  function listAll(stats, openedSpreadsheet) {
+  /*
+   * listOptions.skipLastRowCheck === true（#981 案A。Booking Admin一覧のみ明示指定）: 既存シートを先に読み、
+   * 内容があれば空シート判定のgetLastRow()を省く。シート未存在・空シートの形のときは従来のensureSheet_へ
+   * フォールバックする（作成・ヘッダー追記・戻り値は従来と同じ）。spreadsheetが渡されただけでは有効にならない。
+   */
+  function listAll(stats, openedSpreadsheet, listOptions) {
     var measure = stats && typeof stats === 'object';
     var mark = Date.now();
     function lap(key) {
@@ -125,9 +130,26 @@ var OptionOrderRepository = (function () {
     }
     var spreadsheet = openedSpreadsheet || getSpreadsheet_();
     lap('openMs');
-    var sheet = ensureSheet_(ORDERS_SHEET_, HEADERS_, spreadsheet);
-    lap('sheetMs');
-    var values = sheet.getDataRange().getValues();
+    var sheet;
+    var values = null;
+    if (listOptions && listOptions.skipLastRowCheck === true) {
+      var existing = spreadsheet.getSheetByName(ORDERS_SHEET_);
+      if (existing) {
+        lap('sheetMs');
+        var firstValues = existing.getDataRange().getValues();
+        var blank = !firstValues || firstValues.length === 0 ||
+          (firstValues.length === 1 && firstValues[0].length === 1 && firstValues[0][0] === '');
+        if (!blank) {
+          sheet = existing;
+          values = firstValues;
+        }
+      }
+    }
+    if (!values) {
+      sheet = ensureSheet_(ORDERS_SHEET_, HEADERS_, spreadsheet);
+      lap('sheetMs');
+      values = sheet.getDataRange().getValues();
+    }
     lap('readMs');
     var result = [];
     for (var i = 1; i < values.length; i++) {

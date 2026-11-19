@@ -33,6 +33,13 @@ var SpreadsheetRepository = (function () {
     return sheet;
   }
 
+  /* 空シートのgetDataRange().getValues()は[['']]（1行×1列の空文字）になる。この形のときだけ
+     getLastRow()での確認（従来経路）へ戻す。A1が空文字を返す数式のみの稀なケースも同じ経路で扱う。 */
+  function isBlankSheetValues_(values) {
+    return !values || values.length === 0 ||
+      (values.length === 1 && values[0].length === 1 && values[0][0] === '');
+  }
+
   function rowToRecord_(row) {
     var record = {};
     HEADERS_.forEach(function (header, index) {
@@ -87,9 +94,28 @@ var SpreadsheetRepository = (function () {
     }
 
     lap();
-    var sheet = ensureBookingsSheet_(options && options.spreadsheet);
-    lap('bookingsSheetMs');
-    var values = sheet.getDataRange().getValues();
+    var openedSpreadsheet = options && options.spreadsheet;
+    var sheet;
+    var values = null;
+    /* #981 案A: options.skipLastRowCheck === true（Booking Admin一覧のみ指定）のとき、既存シートを
+       先に読み、内容があれば空シート判定のgetLastRow()を省く。シート未存在・空シートの形のときは
+       従来のensureBookingsSheet_へフォールバックする（作成・ヘッダー追記・戻り値は従来と同じ）。 */
+    if (options && options.skipLastRowCheck === true) {
+      var existing = (openedSpreadsheet || getSpreadsheet_()).getSheetByName(SHEET_NAME_);
+      if (existing) {
+        lap('bookingsSheetMs');
+        var firstValues = existing.getDataRange().getValues();
+        if (!isBlankSheetValues_(firstValues)) {
+          sheet = existing;
+          values = firstValues;
+        }
+      }
+    }
+    if (!values) {
+      sheet = ensureBookingsSheet_(openedSpreadsheet);
+      lap('bookingsSheetMs');
+      values = sheet.getDataRange().getValues();
+    }
     lap('bookingsValuesReadMs');
     var result = [];
     for (var i = 1; i < values.length; i++) {
