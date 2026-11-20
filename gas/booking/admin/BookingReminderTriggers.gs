@@ -133,6 +133,14 @@ function runNextDayReminderBatch_(now, label) {
     BookingAdminAlerts.notifyAccessGuideBlockedForTomorrow(tomorrowDateString, blockedBookingIds);
   }
 
+  /* Issue #999: 翌日の運営枠（運営者宛のみ・鍵なし）を同じ18時台／21時台の実行で通知する。送信済みの枠は再送しない。
+     顧客向けの送信結果（summary）には影響させない（失敗しても予約リマインドは止めない）。 */
+  try {
+    InternalSlots.sendReminders(tomorrowDateString, now);
+  } catch (internalSlotError) {
+    Logger.log(label + ': 運営枠の通知に失敗しました。');
+  }
+
   return summary;
 }
 

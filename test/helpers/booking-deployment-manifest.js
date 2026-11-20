@@ -84,6 +84,8 @@ var BOOKING_ADMIN_FILES = [
   'BookingTriggers.gs',
   'BookingReminderTriggers.gs',
   'BookingReminderDiagnostics.gs',
+  /* Issue #999: 運営専用予約枠（Calendarのタグ付きイベント。台帳・鍵・決済に触れない）。Booking Admin専用。 */
+  'InternalSlots.gs',
   /*
    * Issue #344追記（料金差額の自動計算。PR #345レビュー対応）で追加。JapaneseHolidays.gs・
    * BookingPricing.gs（いずれもIssue #342/#346でBooking Web App専用として追加された既存

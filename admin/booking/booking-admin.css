@@ -975,3 +975,10 @@ button.action.option-review { background: #a14a00; border-color: #a14a00; color:
 }
 
 .filter-result-note:empty { padding: 0; }
+
+/* 運営専用予約枠（Issue #999）。既存の配色・余白に合わせた最小スタイル。 */
+.internal-slot-panel { margin: 8px 0; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+.internal-slot-form select, .internal-slot-form input, .internal-slot-form textarea { margin: 2px 0; max-width: 100%; }
+.internal-slot-form textarea { display: block; width: 100%; box-sizing: border-box; }
+.internal-slot-note, .internal-slot-empty { font-size: 12px; color: #666; margin-top: 4px; }
+.internal-slot-card { margin-top: 8px; padding: 6px; border-top: 1px dashed #ccc; font-size: 14px; }

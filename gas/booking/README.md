@@ -3830,6 +3830,7 @@ BookingMailTemplates.gs/BookingMailer.gs/BookingRepository.gs等、Bookings/Cale
 | `BookingAdminWeb.gs`（Issue #305） | – | ✓ | – | `gas/booking/admin/BookingAdminWeb.gs` |
 | `BookingReminderTriggers.gs`（Issue #271） | – | ✓ | – | `gas/booking/admin/BookingReminderTriggers.gs` |
 | `BookingReminderDiagnostics.gs`（Issue #330） | – | ✓ | – | `gas/booking/admin/BookingReminderDiagnostics.gs` |
+| `InternalSlots.gs`（Issue #999。運営専用予約枠。Calendarのタグ付きイベントで保持。仕様は`docs/internal-slots-999.md`） | – | ✓ | – | `gas/booking/admin/InternalSlots.gs` |
 | `FeeCalculator.gs`（Issue #344追記） | – | ✓ | – | `gas/booking/shared/FeeCalculator.gs` |
 | `FeeSettlementRepository.gs`（Issue #344追記） | – | ✓ | – | `gas/booking/shared/FeeSettlementRepository.gs` |
 | `BookingReschedule.gs`（Issue #344） | – | ✓ | – | `gas/booking/admin/BookingReschedule.gs` |

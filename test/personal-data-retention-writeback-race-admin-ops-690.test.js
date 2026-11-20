@@ -280,7 +280,12 @@ var EXCLUDED = {
   getFeedbackInviteStateFromProperty: 'アンケート案内の状態確認（読み取りのみ）',
   purgeExpiredFeedbackInvites: 'FeedbackInvitesの180日経過行の削除（予約系シートへ書かない）',
   dryRunFeedbackInvitePurge: 'FeedbackInvites削除のdry-run（何も書かない）',
-  createFeedbackInvitePurgeTrigger: 'トリガーの設定（シートへ書かない）'
+  createFeedbackInvitePurgeTrigger: 'トリガーの設定（シートへ書かない）',
+  /* Issue #999: 運営枠はCalendarのタグ付きイベントだけを読み書きし、Bookings等の台帳・個人情報へは触れない */
+  adminInternalSlotList: '運営枠の一覧（Calendarの読み取りのみ）',
+  adminInternalSlotCreate: '運営枠の作成（Calendarのみ。台帳へ書かない）',
+  adminInternalSlotUpdate: '運営枠の変更（Calendarのみ。台帳へ書かない）',
+  adminInternalSlotCancel: '運営枠の取消（Calendarのみ。台帳へ書かない）'
 };
 
 test('構造: Booking Admin の公開関数は、すべて操作の表か除外の表（理由つき）のどちらかに分類されている。増えたらここで落ちる', function () {
