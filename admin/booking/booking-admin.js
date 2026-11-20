@@ -611,8 +611,25 @@ function buildLoadBookingsTiming_(result, requestedAt, respondedAt, renderedAt) 
     ['configMs', 'spreadsheetIdMs', 'spreadsheetOpenMs', 'optionOrdersMs', 'bookingsReadMs', 'buildMs', 'tailAssembleMs', 'tailLoggerMs', 'tailTotalMs'].forEach(function (key) {
       if (typeof serverTiming[key] === 'number') timing['server' + key.charAt(0).toUpperCase() + key.slice(1)] = serverTiming[key];
     });
+    /* Issue #993 Phase 1: サーバーが既に返しているSheet I/O内訳を転記する（新しい計測・通信は無い）。
+       許可リストのキーだけを、非負の有限数値（件数・列数は整数）の場合に限り転記する。 */
+    LOAD_BOOKINGS_IO_TIMING_MS_KEYS_.forEach(function (key) {
+      var value = serverTiming[key];
+      if (typeof value === 'number' && isFinite(value) && value >= 0) timing[serverTimingLogKey_(key)] = value;
+    });
+    LOAD_BOOKINGS_IO_TIMING_COUNT_KEYS_.forEach(function (key) {
+      var value = serverTiming[key];
+      if (typeof value === 'number' && isFinite(value) && value >= 0 && Math.floor(value) === value) timing[serverTimingLogKey_(key)] = value;
+    });
   }
   return timing;
+}
+
+var LOAD_BOOKINGS_IO_TIMING_MS_KEYS_ = ['bookingsSheetMs', 'bookingsValuesReadMs', 'bookingsConvertMs', 'optionOrdersOpenMs', 'optionOrdersSheetMs', 'optionOrdersReadMs', 'optionOrdersConvertMs'];
+var LOAD_BOOKINGS_IO_TIMING_COUNT_KEYS_ = ['bookingsColumns', 'bookingRows', 'optionOrdersRows', 'optionOrdersColumns', 'optionOrderBookings', 'ttlConfigReads'];
+
+function serverTimingLogKey_(key) {
+  return 'server' + key.charAt(0).toUpperCase() + key.slice(1);
 }
 
 function loadBookings(onDone) {
