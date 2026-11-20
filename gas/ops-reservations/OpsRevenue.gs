@@ -19,7 +19,14 @@
  *   同じ支払い（sourceType+sourceId）は1回だけ数える。
  * - 有料オプション = OptionOrders の PAID を、紐づく予約の利用日で実績/予定に分ける。部屋代（priceAmount）とは別金額で重複しない。
  *   紐づく予約が見つからない注文は「未確認」（実績に入れない）。
- * - SNBCイベント収益・経費・利益は正本が未実装のため「未接続」。0円として扱わない。
+ * - SNBCイベント収益（#995 PR-C）: 開催済み SNBCEvents の「受領額－返金済額」を**開催月（eventDate・JST）**に1行1回だけ計上する。直接経費は別表示で年商から引かない。
+ *   スタジオ利用料の内部付替え・架空の会場売上は作らない。保存先未設定は「未接続」、読取失敗・ヘッダー不一致は「取得失敗」で、0円として扱わない。
+ *   対象年に登録行が無ければ「未入力・要確認」。登録行があっても「記録済み分」の部分計（旧イベントは手入力の補完待ち）。
+ * - 現地払い（#995 PR-C）: オーナーが手入力した受領確認（OnsiteReceipts。累計受領－累計返金済）を、台帳に受領記録（paid／feePaidAmount）が
+ *   **無い**現地払いの予約に限り代替採用する（利用終了後に利用月へ）。台帳に受領記録がある・カード決済の予約は台帳を優先し、手入力は加算しない
+ *   （両方ある場合は「受領記録重複」として要確認）。予約行が無い／重複IDの記録は「突合不可」。取消済みは、取消確定日時より後に更新された記録だけを
+ *   取消確定月の残額として計上し、それ以前の記録は確定しない。見積り料金（priceAmount）は受領額とみなさない。
+ * - 経費・利益は未接続（年商から差し引かない）。
  * 金額が読めない行（null）は金額に含めず、件数で別表示する。個人情報は集計に持ち込まない（氏名・予約IDを返さない）。
  */
 'use strict';
@@ -45,8 +52,8 @@ var OpsRevenue = (function () {
   }
   function emptyMonth_() {
     var studio = {};
-    STUDIO_SERVICES.forEach(function (s) { studio[s] = { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, actualCount: 0, retained: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, settlementPendingCount: 0, receiptUnresolvedCount: 0 }; });
-    return { studio: studio, options: { actual: 0, scheduled: 0 }, members: { actual: 0 } };
+    STUDIO_SERVICES.forEach(function (s) { studio[s] = { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, actualCount: 0, retained: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, settlementPendingCount: 0, receiptUnresolvedCount: 0, onsiteRecorded: 0, onsiteRecordedCount: 0 }; });
+    return { studio: studio, options: { actual: 0, scheduled: 0 }, members: { actual: 0 }, snbc: { actual: 0, count: 0, directCost: 0 } };
   }
 
   /* 予約フォームのカード決済の支払方法（Booking.PAYMENT_METHOD_CARD と同じ値）。これ以外は現地払い。 */
@@ -116,7 +123,10 @@ var OpsRevenue = (function () {
     var months = [];
     for (var i = 0; i < 12; i++) months.push(emptyMonth_());
     var usage = {}; /* bookingId → { passed, ym }（オプションの紐づけ用） */
-    var notes = { pendingCount: 0, bookingsOutOfYear: 0, optionUnmatchedCount: 0, cancelMonthUnknownCount: 0, optionInactiveCount: 0 };
+    var notes = { pendingCount: 0, bookingsOutOfYear: 0, optionUnmatchedCount: 0, cancelMonthUnknownCount: 0, optionInactiveCount: 0, onsiteDuplicateCount: 0, onsiteUnmatchedCount: 0, snbcFutureCount: 0 };
+    /* #995: 現地払いの手入力受領（bookingId → 記録）。ready 以外は使わない。 */
+    var onsiteById = {}, onsiteSeen = {};
+    if (input.onsite && input.onsite.state === 'ready') (input.onsite.rows || []).forEach(function (o) { onsiteById[o.bookingId] = o; });
 
     var excluded = {}; /* #996: テスト・アタルの bookingId。売上（予約・キャンセル料・オプション）から除外する。 */
     (input.bookings || []).forEach(function (r) {
@@ -132,11 +142,34 @@ var OpsRevenue = (function () {
       var isCard = String(r.paymentMethod || '').trim() === CARD_METHOD;
       var basis = receiptBasis_(r, price);
       /*
+       * 現地払いの手入力受領（#995）。台帳に受領記録がある・カード決済の予約は台帳が正本で、手入力を足さない（両方あれば重複として要確認）。
+       */
+      var onsiteRec = onsiteById[r.bookingId] || null;
+      var useOnsite = null;
+      if (onsiteRec) {
+        onsiteSeen[r.bookingId] = true;
+        if (isCard || kind === 'paid' || kind === 'refund' || basis.hasRecord) notes.onsiteDuplicateCount++;
+        else useOnsite = onsiteRec;
+      }
+      /*
        * 取消・返金に関わる予約（キャンセル料）は、オーナー確定（2026-11-20）により**取消確定月（cancelledAt・JST）**に計上する。
        * 元の利用予定月ではない。利用日による年フィルタより前に分岐し、年をまたぐ取消（翌年の予約を今年取り消す等）も取りこぼさない。
        * 取消確定日時が空・不正・未来のときは、利用予定月へフォールバックせず「取消計上月不明」として集計から除外する（金額に含めない）。
        */
       if (r.status === 'CANCELLED' || kind === 'refund') {
+        if (useOnsite && r.status === 'CANCELLED') {
+          /* 現地払いの取消: 取消確定日時より後に確認・更新された受領記録だけで残額を確定する（古い記録・返金処理中の記録から断定しない）。 */
+          var oMs = toMs_(r.cancelledAt);
+          if (oMs === null || oMs > nowMs) { notes.cancelMonthUnknownCount++; return; }
+          var oym = jstYearMonth_(oMs);
+          if (oym.y !== year) return;
+          var ocell = months[oym.m - 1].studio[svc];
+          var uMs = toMs_(useOnsite.updatedAt);
+          if (uMs === null || uMs < oMs) { ocell.refundUnsettledCount++; return; }
+          var onet = useOnsite.receivedJpy - useOnsite.refundedJpy;
+          if (onet > 0) { ocell.actual += onet; ocell.retained += onet; ocell.actualCount++; ocell.onsiteRecorded += onet; ocell.onsiteRecordedCount++; }
+          return;
+        }
         if (kind !== 'paid' && kind !== 'refund' && !basis.hasRecord) return; /* 受領の記録がない取消は売上にしない */
         var cMs = toMs_(r.cancelledAt);
         if (cMs === null || cMs > nowMs) { notes.cancelMonthUnknownCount++; return; }
@@ -163,7 +196,7 @@ var OpsRevenue = (function () {
       var cell = months[ym.m - 1].studio[svc];
       if (r.status === 'PENDING') { notes.pendingCount++; return; }
       if (r.status !== 'CONFIRMED') return; /* 失効・不明は売上にしない */
-      if (price === null) { cell.unknownAmountCount++; return; }
+      if (price === null && !(useOnsite && passed)) { cell.unknownAmountCount++; return; }
       /* 明示的に記録された入金（feePaidAmount。現地払いの受領確認も含む）は、決済状態（旧来の paymentStatus）に関わらず受領額として扱う。 */
       if (passed && (kind === 'paid' || basis.hasRecord)) {
         /* 実績は「記録された受領額」。精算が未了（追加請求・返金待ち）で差額が未確定の分は実績に入れず、件数で示す。 */
@@ -171,12 +204,38 @@ var OpsRevenue = (function () {
         if (basis.unresolved) cell.receiptUnresolvedCount++; /* 受領済みの可能性があるが集計不可 */
         else if (basis.pending || basis.amount === null) cell.settlementPendingCount++;
       }
+      else if (passed && useOnsite) {
+        /* 手入力の受領確認（累計受領－累計返金済）を、利用終了後に1回だけ実績へ。見積り料金は使わない。 */
+        var onsiteNet = useOnsite.receivedJpy - useOnsite.refundedJpy;
+        cell.actual += onsiteNet; cell.actualCount++; cell.onsiteRecorded += onsiteNet; cell.onsiteRecordedCount++;
+      }
       else if (passed && !isCard) { cell.onsiteUnconfirmed += price; cell.onsiteUnconfirmedCount++; } /* 現地払い・受領記録なし（実績に入れない） */
       else if (passed) cell.unconfirmed += price; /* カード決済で利用済み・未入金（実績に入れない） */
       else cell.scheduled += price;
     });
 
-    var sources = { studio: { state: 'ready' }, options: { state: 'not_connected' }, members: { state: 'not_connected' }, snbc: { state: 'not_connected' }, expenses: { state: 'not_connected' } };
+    var sources = { studio: { state: 'ready' }, options: { state: 'not_connected' }, members: { state: 'not_connected' }, snbc: { state: 'not_connected' }, expenses: { state: 'not_connected' }, onsite: { state: 'not_connected' } };
+
+    /* 現地払い記録の突合: 台帳に該当予約（有効な1行）が無い記録は「突合不可」（金額に含めない）。除外予約（テスト・アタル）は警告にも出さない。 */
+    if (input.onsite && input.onsite.state === 'ready') {
+      sources.onsite = { state: 'ready', skipped: input.onsite.skipped || 0 };
+      Object.keys(onsiteById).forEach(function (id) { if (!onsiteSeen[id] && !excluded[id]) notes.onsiteUnmatchedCount++; });
+    } else if (input.onsite) sources.onsite = { state: input.onsite.state || 'not_connected' };
+
+    /* SNBCイベント（#995）。開催済みだけを開催月に1回計上。未来日の行は無視して警告（保存時にも拒否している）。 */
+    if (input.snbc && input.snbc.state === 'ready') {
+      sources.snbc = { state: 'ready', skipped: input.snbc.skipped || 0 };
+      var todayText = new Date(nowMs + JST_MS).toISOString().slice(0, 10);
+      (input.snbc.rows || []).forEach(function (e) {
+        var eym = ymOfDate_(e.eventDate);
+        if (!eym) return;
+        if (e.eventDate > todayText) { notes.snbcFutureCount++; return; }
+        if (eym.y !== year) return;
+        var sc = months[eym.m - 1].snbc;
+        sc.actual += e.receivedJpy - e.refundedJpy; sc.count++;
+        if (typeof e.directCostJpy === 'number') sc.directCost += e.directCostJpy; /* 別表示のみ。年商から引かない */
+      });
+    } else if (input.snbc) sources.snbc = { state: input.snbc.state || 'not_connected' };
 
     if (input.options && input.options.state === 'ready') {
       sources.options = { state: 'ready' };
@@ -214,19 +273,24 @@ var OpsRevenue = (function () {
     } else if (input.members) sources.members = { state: input.members.state || 'not_connected' };
 
     var out = months.map(function (mo, idx) {
+      var onsiteRec = 0, onsiteRecCount = 0;
       var studioActual = 0, studioSched = 0, studioUnconf = 0, refundedCount = 0, unknownAmount = 0, onsite = 0, onsiteCount = 0, unsettled = 0, retained = 0, settlePending = 0, unresolvedReceipt = 0;
       STUDIO_SERVICES.forEach(function (s) {
         var c = mo.studio[s]; studioActual += c.actual; studioSched += c.scheduled; studioUnconf += c.unconfirmed; refundedCount += c.refundedCount; unknownAmount += c.unknownAmountCount;
         onsite += c.onsiteUnconfirmed; onsiteCount += c.onsiteUnconfirmedCount; unsettled += c.refundUnsettledCount; retained += c.retained; settlePending += c.settlementPendingCount; unresolvedReceipt += c.receiptUnresolvedCount;
+        onsiteRec += c.onsiteRecorded; onsiteRecCount += c.onsiteRecordedCount;
       });
       var optActual = sources.options.state === 'ready' ? mo.options.actual : 0;
       var memActual = sources.members.state === 'ready' ? mo.members.actual : 0;
+      var snbcActual = sources.snbc.state === 'ready' ? mo.snbc.actual : 0;
       return {
         month: idx + 1,
         studio: mo.studio,
         options: { actual: mo.options.actual, scheduled: mo.options.scheduled },
         members: { actual: mo.members.actual },
-        actual: studioActual + optActual + memActual,
+        snbc: sources.snbc.state === 'ready' ? { actual: mo.snbc.actual, count: mo.snbc.count, directCost: mo.snbc.directCost } : { actual: 0, count: 0, directCost: 0 },
+        onsiteRecorded: onsiteRec, onsiteRecordedCount: onsiteRecCount,
+        actual: studioActual + optActual + memActual + snbcActual,
         scheduled: studioSched + (sources.options.state === 'ready' ? mo.options.scheduled : 0),
         unconfirmed: studioUnconf,
         refundedCount: refundedCount,
@@ -236,12 +300,24 @@ var OpsRevenue = (function () {
     });
     var totals = out.reduce(function (t, m) {
       t.actual += m.actual; t.scheduled += m.scheduled; t.unconfirmed += m.unconfirmed; t.refundedCount += m.refundedCount; t.unknownAmountCount += m.unknownAmountCount;
+      t.snbc += m.snbc.actual; t.snbcCount += m.snbc.count; t.snbcDirectCost += m.snbc.directCost; t.onsiteRecorded += m.onsiteRecorded; t.onsiteRecordedCount += m.onsiteRecordedCount;
       t.onsiteUnconfirmed += m.onsiteUnconfirmed; t.onsiteUnconfirmedCount += m.onsiteUnconfirmedCount; t.refundUnsettledCount += m.refundUnsettledCount; t.retained += m.retained; t.settlementPendingCount += m.settlementPendingCount; t.receiptUnresolvedCount += m.receiptUnresolvedCount;
       return t;
-    }, { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, retained: 0, settlementPendingCount: 0, receiptUnresolvedCount: 0 });
+    }, { snbc: 0, snbcCount: 0, snbcDirectCost: 0, onsiteRecorded: 0, onsiteRecordedCount: 0, actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, retained: 0, settlementPendingCount: 0, receiptUnresolvedCount: 0 });
     /* 実績は「接続済み・確認済み額の部分計」。全体年商として確定できない理由を固定コードで返す（SNBC未接続は現状常に該当）。 */
     var partialReasons = [];
-    if (sources.snbc.state !== 'ready') partialReasons.push('SNBC_NOT_CONNECTED');
+    if (sources.snbc.state === 'not_connected') partialReasons.push('SNBC_NOT_CONNECTED');
+    else if (sources.snbc.state !== 'ready') partialReasons.push('SNBC_UNAVAILABLE');
+    else {
+      /* 登録行があっても「記録済み分」。旧イベントの補完状況はこの表から判別できないため、全体年商とは断定しない。 */
+      partialReasons.push(totals.snbcCount === 0 ? 'SNBC_NO_RECORDS' : 'SNBC_RECORDED_ONLY');
+      if (sources.snbc.skipped > 0) partialReasons.push('SNBC_ROWS_SKIPPED');
+      if (notes.snbcFutureCount > 0) partialReasons.push('SNBC_FUTURE_ROWS');
+    }
+    if (sources.onsite.state === 'error') partialReasons.push('ONSITE_RECORDS_UNAVAILABLE');
+    if (sources.onsite.state === 'ready' && sources.onsite.skipped > 0) partialReasons.push('ONSITE_ROWS_SKIPPED');
+    if (notes.onsiteDuplicateCount > 0) partialReasons.push('ONSITE_RECEIPT_DUPLICATE');
+    if (notes.onsiteUnmatchedCount > 0) partialReasons.push('ONSITE_RECEIPT_UNMATCHED');
     if (totals.onsiteUnconfirmedCount > 0) partialReasons.push('ONSITE_PAYMENT_UNCONFIRMED');
     if (totals.refundUnsettledCount > 0) partialReasons.push('REFUND_UNSETTLED');
     if (totals.settlementPendingCount > 0) partialReasons.push('SETTLEMENT_PENDING');
@@ -275,18 +351,27 @@ var OpsRevenue = (function () {
     return {
       year: year,
       currentMonth: isCurrentYear ? cur.m : null,
-      basis: '実績売上＝利用日が過ぎ、かつ支払い済み（paid）のカード決済、取消後の残額（返金完了・差引額確定）、会員費（入金日）、有料オプション（紐づく予約の利用日）。現地払いは受領記録が無いため実績に含めず別枠。',
+      basis: '実績売上＝利用日が過ぎ、かつ支払い済み（paid）のカード決済、取消後の残額（返金完了・差引額確定）、会員費（入金日）、有料オプション（紐づく予約の利用日）。現地払いは、台帳に受領記録があるもの＋オーナーが手入力で受領確認したもの（利用終了後）だけを実績に含め、記録が無いものは別枠。SNBCイベントは記録済みの開催済み分を開催月に計上（経費は引かない）。',
       sources: sources,
       partial: { isPartial: partialReasons.length > 0, reasons: partialReasons },
       months: out,
       totals: { actual: totals.actual, scheduled: totals.scheduled, unconfirmed: totals.unconfirmed, refundedCount: totals.refundedCount, unknownAmountCount: totals.unknownAmountCount,
         onsiteUnconfirmed: totals.onsiteUnconfirmed, onsiteUnconfirmedCount: totals.onsiteUnconfirmedCount, refundUnsettledCount: totals.refundUnsettledCount, retained: totals.retained, settlementPendingCount: totals.settlementPendingCount, receiptUnresolvedCount: totals.receiptUnresolvedCount, cancelMonthUnknownCount: notes.cancelMonthUnknownCount,
-        studioByService: byService, options: optionsTotal, members: membersTotal },
+        studioByService: byService, options: optionsTotal, members: membersTotal,
+        snbc: sources.snbc.state === 'ready' ? totals.snbc : 0, snbcCount: sources.snbc.state === 'ready' ? totals.snbcCount : 0, snbcDirectCost: sources.snbc.state === 'ready' ? totals.snbcDirectCost : 0,
+        onsiteRecorded: totals.onsiteRecorded, onsiteRecordedCount: totals.onsiteRecordedCount, onsiteDuplicateCount: notes.onsiteDuplicateCount, onsiteUnmatchedCount: notes.onsiteUnmatchedCount },
       goals: goals,
       forecast: forecast,
-      notes: { pendingCount: notes.pendingCount, optionUnmatchedCount: notes.optionUnmatchedCount, optionInactiveCount: notes.optionInactiveCount }
+      notes: { pendingCount: notes.pendingCount, optionUnmatchedCount: notes.optionUnmatchedCount, optionInactiveCount: notes.optionInactiveCount, snbcFutureCount: notes.snbcFutureCount }
     };
   }
 
-  return { compute: compute, paymentKind: paymentKind_, GOALS: GOALS };
+  /* 台帳に受領記録がある（paid／返金系／feePaidAmount>0）か。現地払いの手入力受領を重ねてよいかの判定に使う（#995）。 */
+  function hasLedgerReceipt(r) {
+    var kind = paymentKind_(r.paymentStatus);
+    var paid = num_(r.feePaidAmount);
+    return kind === 'paid' || kind === 'refund' || (paid !== null && paid > 0);
+  }
+
+  return { compute: compute, paymentKind: paymentKind_, hasLedgerReceipt: hasLedgerReceipt, CARD_METHOD: CARD_METHOD, GOALS: GOALS };
 })();

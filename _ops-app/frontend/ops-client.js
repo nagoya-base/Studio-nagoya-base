@@ -215,8 +215,13 @@
       ['受付経路', show(r.source)], ['作成', show(jstText(r.createdAt, true))], ['更新', show(jstText(r.updatedAt, true))],
       ['確定', show(jstText(r.confirmedAt, true))], ['キャンセル', show(jstText(r.cancelledAt, true))], ['失効', show(jstText(r.expiredAt, true))]
     ];
-    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderMailRecords(r) + renderKeyStatus(state) +
+    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderMailRecords(r) + renderKeyStatus(state) + renderOnsiteSlot(r) +
       '<p><button type="button" id="detail-to-tasks">メモ・期限を開く</button></p>';
+  }
+
+  /* 現地払い（カード決済でない）の予約にだけ、受領記録欄（#995。records-client.js が中身を描画）の差し込み先を置く。 */
+  function renderOnsiteSlot(r) {
+    return String(r.paymentMethod || '').trim() === 'オンラインクレジットカード' ? '' : '<div id="onsite-box"></div>';
   }
 
   /* 予約台帳のメール送信記録（#967。読み取り専用）。Bookingsの既存列を直接読んだ「送信記録」で、

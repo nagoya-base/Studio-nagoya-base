@@ -202,6 +202,7 @@
       <div id="home-view"></div>
       <div class="revhead"><label>売上の対象年<select id="rev-year"></select></label></div>
       <div id="revenue-view"></div>
+      <div id="snbc-view"></div>
     </section>
     <div id="res-panel" hidden>
       <div id="banner"></div>
@@ -231,16 +232,19 @@
   <script src="tasks-client.js"></script>
   <script src="home-client.js"></script>
   <script src="revenue-client.js"></script>
+  <script src="records-client.js"></script>
   <script src="mock-adapter.js"></script>
   <script>
     (function () {
       var q = new URLSearchParams(location.search);
       var range = OpsHomeClient.monthRange(OpsHomeClient.jstMonth(Date.now()));
       var home = null;
+      var rec = null, revCtl = null;
       var resCtl = OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }),
-        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });
+        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function (s) { if (home) home.render(); if (rec) rec.syncOnsite(s); } });
       var tasksCtl = OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }), { onChange: function () { if (home) home.render(); } });
-      var revCtl = OpsRevenueClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }), { onDrill: function (d) { home.drill(d.month); } });
+      rec = OpsRecordsClient.mount(document, OpsMockAdapter.createMockRecordsApi(), { onSaved: function () { if (revCtl) revCtl.load(); } });
+      revCtl = OpsRevenueClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }), { onDrill: function (d) { home.drill(d.month); }, onSnbc: function () { rec.toggleSnbc(); } });
       home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl, revenue: revCtl });
     })();
   </script>

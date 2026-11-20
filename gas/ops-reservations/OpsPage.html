@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   OpsPage.html — 自動生成（scripts/build-ops-gas-page.js）。手で編集しない。
-  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / home-client.js / revenue-client.js / gas-adapter.js）。Issue #936 / #941 / #990。
+  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / home-client.js / revenue-client.js / records-client.js / gas-adapter.js）。Issue #936 / #941 / #990 / #995。
   予約は読み取り専用、メモは専用保存先のみ。google.script.run は gas-adapter.js のみ。応答はエスケープして描画する。
 -->
 <html lang="ja">
@@ -197,6 +197,7 @@
       <div id="home-view"></div>
       <div class="revhead"><label>売上の対象年<select id="rev-year"></select></label></div>
       <div id="revenue-view"></div>
+      <div id="snbc-view"></div>
     </section>
     <div id="res-panel" hidden>
       <div id="banner"></div>
@@ -439,8 +440,13 @@
       ['受付経路', show(r.source)], ['作成', show(jstText(r.createdAt, true))], ['更新', show(jstText(r.updatedAt, true))],
       ['確定', show(jstText(r.confirmedAt, true))], ['キャンセル', show(jstText(r.cancelledAt, true))], ['失効', show(jstText(r.expiredAt, true))]
     ];
-    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderMailRecords(r) + renderKeyStatus(state) +
+    return html + '<dl>' + rows.map(function (x) { return '<dt>' + esc(x[0]) + '</dt><dd>' + x[1] + '</dd>'; }).join('') + '</dl>' + renderMailRecords(r) + renderKeyStatus(state) + renderOnsiteSlot(r) +
       '<p><button type="button" id="detail-to-tasks">メモ・期限を開く</button></p>';
+  }
+
+  /* 現地払い（カード決済でない）の予約にだけ、受領記録欄（#995。records-client.js が中身を描画）の差し込み先を置く。 */
+  function renderOnsiteSlot(r) {
+    return String(r.paymentMethod || '').trim() === 'オンラインクレジットカード' ? '' : '<div id="onsite-box"></div>';
   }
 
   /* 予約台帳のメール送信記録（#967。読み取り専用）。Bookingsの既存列を直接読んだ「送信記録」で、
@@ -1337,7 +1343,16 @@
   }
 
   var PARTIAL_TEXT = {
-    SNBC_NOT_CONNECTED: 'SNBCイベント収益が未接続（正本が未実装）',
+    SNBC_NOT_CONNECTED: 'SNBCイベント収益が未接続（保存先が未設定）',
+    SNBC_UNAVAILABLE: 'SNBCイベント記録を取得できていない（金額に含めていません）',
+    SNBC_NO_RECORDS: 'SNBC未入力・要確認（この年のSNBC記録がありません。0円とは限りません）',
+    SNBC_RECORDED_ONLY: 'SNBCは記録済みのイベントだけの合計（未入力の旧イベントが残っている可能性があります）',
+    SNBC_ROWS_SKIPPED: 'SNBC記録に読み込めない行がある',
+    SNBC_FUTURE_ROWS: 'SNBC記録に未来の開催日の行がある（金額に含めていません）',
+    ONSITE_RECORDS_UNAVAILABLE: '現地払いの受領記録を取得できていない（金額に含めていません）',
+    ONSITE_ROWS_SKIPPED: '現地払いの受領記録に読み込めない行がある',
+    ONSITE_RECEIPT_DUPLICATE: '台帳に受領記録がある（またはカード決済の）予約に、手入力の受領記録も重複している（台帳を優先し、手入力は加算していません）',
+    ONSITE_RECEIPT_UNMATCHED: '台帳の予約と一意に突合できない手入力の受領記録がある（金額に含めていません）',
     ONSITE_PAYMENT_UNCONFIRMED: '現地払い（現金・PayPay）の受領記録が台帳にない予約がある',
     REFUND_UNSETTLED: '返金処理中または返金方法が不明な取消がある',
     CANCEL_MONTH_UNKNOWN: '取消確定日時が不明で、キャンセル料の計上月を判断できない取消がある（利用予定月へは振り替えず除外）',
@@ -1412,7 +1427,12 @@
     if (t.studioByService.unclassified > 0) html += '<li><span>' + esc(SERVICE_LABELS.unclassified) + '</span><b>' + esc(yen(t.studioByService.unclassified)) + '</b></li>';
     html += '<li><span>会員費（入金日基準）</span>' + (rev.sources.members.state === 'ready' ? '<b>' + esc(yen(t.members)) + '</b>' : '<b class="dim">' + (rev.sources.members.state === 'error' ? '取得失敗' : '未接続') + '</b>') + '</li>';
     html += '<li><span>有料オプション</span>' + (rev.sources.options.state === 'ready' ? '<b>' + esc(yen(t.options)) + '</b>' : '<b class="dim">' + (rev.sources.options.state === 'error' ? '取得失敗' : '未接続') + '</b>') + '</li>';
-    html += '<li><span>SNBC イベント収益</span><b class="dim">未接続（正本が未実装）</b></li></ul>';
+    var sn = rev.sources.snbc || { state: 'not_connected' };
+    html += '<li><span>SNBC イベント収益</span>' + (sn.state === 'ready'
+      ? '<b>' + esc(yen(t.snbc || 0)) + '（開催月基準・記録済み ' + esc(t.snbcCount || 0) + '件）</b>'
+      : '<b class="dim">' + (sn.state === 'error' ? '取得失敗' : '未接続（保存先が未設定）') + '</b>') + '</li>';
+    html += '<li><span>うち現地払い（手入力の受領確認・台帳に記録がない分）</span><b>' + esc(yen(t.onsiteRecorded || 0)) + '（' + esc(t.onsiteRecordedCount || 0) + '件）</b></li></ul>';
+    html += '<p><button type="button" class="inline btn-primary" data-rev="snbc">SNBC売上を記録</button></p>';
 
     html += '<h3 class="sub3">実績に含めない項目（別枠）</h3><ul class="rbreak">' +
       '<li><span>予定（確定済み・利用がこれから）</span><b>' + esc(yen(t.scheduled)) + '</b></li>' +
@@ -1423,6 +1443,7 @@
       '<li><span>取消計上月不明（取消確定日時が不明・集計から除外）</span><b>' + esc(t.cancelMonthUnknownCount || 0) + '件</b></li>' +
       '<li><span>返金処理中・結果不明（差引額を確定できず金額に含めていません）</span><b>' + esc(t.refundUnsettledCount || 0) + '件</b></li>' +
       '<li><span>返金（件数のみ）</span><b>' + esc(t.refundedCount) + '件</b></li>' +
+      '<li><span>SNBC直接経費（参考・入力分。年商から引きません）</span><b>' + (sn.state === 'ready' ? esc(yen(t.snbcDirectCost || 0)) : '<span class="dim">—</span>') + '</b></li>' +
       '<li><span>経費・利益</span><b class="dim">未接続（売上達成率から差し引きません）</b></li></ul>';
     html += '<h3 class="sub3">月別の実績</h3>' + renderMonths(rev, goal.amount, rev.year);
     html += '<p class="note">計上基準: ' + esc(rev.basis) + ' 最終取得 ' + esc((d.fetchedAt || '').slice(0, 16).replace('T', ' ')) + '</p>';
@@ -1448,6 +1469,7 @@
         var act = node.getAttribute && node.getAttribute('data-rev');
         if (act === 'goal') { ctl.setGoal(node.getAttribute('data-goal')); return; }
         if (act === 'retry') { ctl.load(); return; }
+        if (act === 'snbc') { if (opts.onSnbc) opts.onSnbc(); return; }
         if (act === 'month') { if (opts.onDrill) opts.onDrill({ month: node.getAttribute('data-month') }); return; }
         node = node.parentNode;
       }
@@ -1457,6 +1479,322 @@
   }
 
   return { esc: esc, yen: yen, pct: pct, createController: createController, renderRevenue: renderRevenue, mount: mount };
+});
+
+</script>
+  <script>
+/*
+ * records-client.js — SNBC売上の記録／現地払いの受領記録の画面ロジック（Issue #995 PR-C）。
+ *
+ * - 通信方式に依存しない。バックエンドとは gas-adapter.js の createGasRecordsApi と同じ形のアダプター
+ *   { snbcList, snbcSave, snbcDelete, onsiteGet, onsiteSave, onsiteDelete }（それぞれ (引数, ok, ng)）だけで話す。保存先ID・タブ名は扱わない。
+ * - 入力検証・版・競合・二重計上の判断はサーバーが正本。ここは入力の整形と応答の描画だけ（年商の金額は計算しない）。
+ * - 保存の成否は、サーバーが ok:true を返したときだけ成功と表示する。通信失敗は「保存できたか確認できていない」とし、成功にしない。入力は消さない。
+ * - 二重送信: 保存中は再送しない。新規のイベントIDは入力フォームを開くたびに1つ採番し、失敗後の再送でも使い回す（サーバー側は上書きで冪等）。
+ * - 氏名・電話・メール・DM本文は入力欄を設けない。描画は文字列をすべてエスケープする。
+ */
+(function (root, factory) {
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.OpsRecordsClient = api;
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  var DENIED_CODES = ['UNAUTHENTICATED', 'FORBIDDEN'];
+  var CARD_METHOD = 'オンラインクレジットカード';
+  var METHOD_OPTIONS = [['cash', '現金'], ['paypay', 'PayPay'], ['other', 'その他・混在']];
+  var UNCONFIRMED = '保存できたか確認できていません。再読み込みして内容を確認してください（入力は残しています）。';
+
+  function esc(value) {
+    return String(value === null || value === undefined ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function yen(n) { return '¥' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function withHint(err) {
+    var m = (err && err.message) || '';
+    if (err && typeof err.hint === 'string' && err.hint) m += ' ' + err.hint;
+    if (err && typeof err.reason === 'string' && /^[A-Z0-9_\/]{1,48}$/.test(err.reason)) m += '（診断コード: ' + err.reason + '）';
+    return m;
+  }
+  function newId(prefix) {
+    var chars = '0123456789abcdefghijklmnopqrstuvwxyz', s = '';
+    for (var i = 0; i < 12; i++) s += chars.charAt(Math.floor(Math.random() * chars.length));
+    return prefix + '-' + s;
+  }
+  /* 入力欄の文字列 → 整数円。空欄は ''（任意項目）。整数でなければ NaN。全角数字・カンマは受け付けない（誤入力を防ぐ）。 */
+  function toInt(text) {
+    var t = String(text === undefined || text === null ? '' : text).trim();
+    if (t === '') return '';
+    return /^\d{1,9}$/.test(t) ? Number(t) : NaN;
+  }
+  function field(label, html) { return '<label>' + esc(label) + html + '</label>'; }
+
+  /* ===================== SNBC売上 ===================== */
+  function emptySnbcForm() { return { eventId: newId('E'), eventDate: '', title: '', receivedJpy: '', refundedJpy: '0', paidCount: '', directCostJpy: '' }; }
+
+  function createSnbcController(api, onChange, options) {
+    var opts = options || {};
+    var state = { phase: 'idle', items: [], storeReady: true, skipped: 0, today: null, error: null, open: false, form: emptySnbcForm(), editing: null, saving: false, message: null, formError: null, confirmDelete: false };
+    var seq = 0;
+    function emit() { if (onChange) onChange(state); }
+    function load() {
+      var mine = ++seq;
+      state.phase = state.items.length ? 'refreshing' : 'loading'; state.error = null; emit();
+      api.snbcList(function (res) {
+        if (mine !== seq) return;
+        if (res && res.ok) { state.items = res.items || []; state.storeReady = res.storeReady !== false; state.skipped = res.skippedRows || 0; state.today = res.todayJst || null; state.phase = 'ready'; }
+        else if (res && res.error && DENIED_CODES.indexOf(res.error.code) !== -1) { state.phase = 'denied'; state.error = res.error; }
+        else { state.phase = 'error'; state.error = res && res.error ? res.error : { message: 'SNBC記録の取得に失敗しました。' }; }
+        emit();
+      }, function () {
+        if (mine !== seq) return;
+        state.phase = 'error'; state.error = { message: 'SNBC記録の取得に失敗しました（通信エラー）。' }; emit();
+      });
+    }
+    function resetForm() { state.form = emptySnbcForm(); state.editing = null; state.confirmDelete = false; state.formError = null; }
+    function setOpen(on) {
+      state.open = !!on; state.message = null;
+      if (state.open) { resetForm(); load(); } else resetForm();
+      emit();
+    }
+    function toggle() { setOpen(!state.open); }
+    function setField(k, v) { if (Object.prototype.hasOwnProperty.call(state.form, k)) state.form[k] = v; }
+    function edit(id) {
+      var it = state.items.filter(function (x) { return x.eventId === id; })[0];
+      if (!it) return;
+      state.editing = { eventId: it.eventId, revision: it.revision }; state.confirmDelete = false; state.message = null; state.formError = null;
+      state.form = { eventId: it.eventId, eventDate: it.eventDate, title: it.title, receivedJpy: String(it.receivedJpy), refundedJpy: String(it.refundedJpy), paidCount: it.paidCount === '' ? '' : String(it.paidCount), directCostJpy: it.directCostJpy === '' ? '' : String(it.directCostJpy) };
+      emit();
+    }
+    function cancelEdit() { resetForm(); state.message = null; emit(); }
+    function buildInput() {
+      var f = state.form;
+      var rec = toInt(f.receivedJpy), ref = toInt(f.refundedJpy), cnt = toInt(f.paidCount), cost = toInt(f.directCostJpy);
+      if (!String(f.eventDate).trim()) return { error: '開催日を入力してください。' };
+      if (!String(f.title).trim()) return { error: 'イベント名を入力してください（参加者の情報は入れないでください）。' };
+      if (rec === '' || rec !== rec) return { error: '受領総額は0以上の整数円で入力してください。' };
+      if (ref === '' || ref !== ref || ref > rec) return { error: '返金済総額は0以上の整数円で、受領総額以下にしてください（返金が無ければ0）。' };
+      if (cnt !== cnt) return { error: '有料人数は整数で入力してください（任意）。' };
+      if (cost !== cost) return { error: '直接経費は整数円で入力してください（任意）。' };
+      return { input: { eventId: f.eventId, eventDate: String(f.eventDate).trim(), title: String(f.title).trim(), receivedJpy: rec, refundedJpy: ref, paidCount: cnt, directCostJpy: cost } };
+    }
+    function save() {
+      if (state.saving) return;
+      var built = buildInput();
+      if (built.error) { state.formError = built.error; emit(); return; }
+      state.saving = true; state.formError = null; state.message = null; emit();
+      api.snbcSave({ input: built.input, expectedRevision: state.editing ? state.editing.revision : null }, function (res) {
+        state.saving = false;
+        if (res && res.ok) {
+          state.message = res.replayed ? '保存済みです（同じ内容の再送でした。金額は重ねていません）。' : '保存しました。年商に反映します。';
+          resetForm(); load(); if (opts.onSaved) opts.onSaved();
+        } else {
+          var err = res && res.error ? res.error : { message: UNCONFIRMED };
+          state.formError = withHint(err);
+          if (err.code === 'CONFLICT') { state.message = null; load(); }
+          if (res && res.error && DENIED_CODES.indexOf(res.error.code) !== -1) state.phase = 'denied';
+          emit();
+        }
+      }, function () { state.saving = false; state.formError = UNCONFIRMED; emit(); });
+    }
+    function askDelete() { if (state.editing) { state.confirmDelete = true; emit(); } }
+    function cancelDelete() { state.confirmDelete = false; emit(); }
+    function confirmDelete() {
+      if (state.saving || !state.editing) return;
+      state.saving = true; state.formError = null; emit();
+      api.snbcDelete({ eventId: state.editing.eventId, expectedRevision: state.editing.revision }, function (res) {
+        state.saving = false;
+        if (res && res.ok) { state.message = '削除しました。年商から外れます。'; resetForm(); load(); if (opts.onSaved) opts.onSaved(); }
+        else { state.confirmDelete = false; state.formError = withHint(res && res.error ? res.error : { message: UNCONFIRMED }); if (res && res.error && res.error.code === 'CONFLICT') load(); emit(); }
+      }, function () { state.saving = false; state.confirmDelete = false; state.formError = UNCONFIRMED; emit(); });
+    }
+    return { state: state, load: load, setOpen: setOpen, toggle: toggle, setField: setField, edit: edit, cancelEdit: cancelEdit, save: save, askDelete: askDelete, cancelDelete: cancelDelete, confirmDelete: confirmDelete };
+  }
+
+  function renderSnbc(state) {
+    if (!state.open) return '';
+    var head = '<h2 class="sec">SNBC売上を記録</h2>';
+    if (state.phase === 'denied') return head + '<div class="banner err">この操作の権限がありません。</div>';
+    var html = head + '<p class="note">開催後に1イベント1回、実際に受領を確認できた金額だけを入力します（DM・メモから転記。参加者名は入力しません）。将来の開催・見込みは入れないでください。</p>';
+    if (state.phase === 'loading' && !state.items.length) html += '<div class="banner loading" role="status">取得中…</div>';
+    if (state.phase === 'error') html += '<div class="banner err">' + esc(withHint(state.error)) + '<br><button type="button" class="inline" data-rec="snbc-reload">再取得</button></div>';
+    if (state.storeReady === false && state.phase !== 'error') return html + '<div class="banner stale">保存先（既存メモ用スプレッドシート）が未設定のため、記録できません。</div><button type="button" class="inline" data-rec="snbc-close">閉じる</button>';
+    if (state.skipped > 0) html += '<div class="banner stale">保存先の ' + esc(state.skipped) + ' 行が不正で読み込めていません（年商に含めていません）。</div>';
+    if (state.message) html += '<div class="banner ok" role="status">' + esc(state.message) + '</div>';
+    var f = state.form, editing = !!state.editing;
+    html += '<form class="taskform" data-rec-form="snbc" novalidate><strong>' + (editing ? 'イベントを訂正' : 'イベントを追加') + '</strong>' +
+      field('開催日（開催済みの日。今日を含む過去）', '<input type="date" data-f="eventDate" value="' + esc(f.eventDate) + '"' + (state.today ? ' max="' + esc(state.today) + '"' : '') + '>') +
+      field('イベント名（必須・80文字まで）', '<input type="text" data-f="title" maxlength="80" autocomplete="off" value="' + esc(f.title) + '">') +
+      field('実受領総額（円）', '<input type="text" inputmode="numeric" data-f="receivedJpy" autocomplete="off" value="' + esc(f.receivedJpy) + '">') +
+      field('返金済総額（円。無ければ0）', '<input type="text" inputmode="numeric" data-f="refundedJpy" autocomplete="off" value="' + esc(f.refundedJpy) + '">') +
+      field('有料人数（任意。年商には使いません）', '<input type="text" inputmode="numeric" data-f="paidCount" autocomplete="off" value="' + esc(f.paidCount) + '">') +
+      field('直接経費（円・任意。年商から引きません）', '<input type="text" inputmode="numeric" data-f="directCostJpy" autocomplete="off" value="' + esc(f.directCostJpy) + '">');
+    if (state.formError) html += '<div class="banner err" role="alert">' + esc(state.formError) + '</div>';
+    if (state.confirmDelete) {
+      html += '<div class="banner stale" role="alert"><strong>この1件を削除しますか？</strong>（年商から外れます）</div><div class="formbtns"><button type="button" data-rec="snbc-delete-yes"' + (state.saving ? ' disabled' : '') + '>削除する</button><button type="button" data-rec="snbc-delete-no">やめる</button></div>';
+    } else {
+      html += '<div class="formbtns"><button type="submit" id="rec-snbc-submit"' + (state.saving ? ' disabled' : '') + '>' + (state.saving ? '保存中…' : '保存') + '</button>' +
+        (editing ? '<button type="button" data-rec="snbc-cancel">訂正をやめる</button>' : '<button type="button" data-rec="snbc-close">閉じる</button>') + '</div>' +
+        (editing ? '<button type="button" class="inline" data-rec="snbc-delete">誤登録として削除…</button>' : '');
+    }
+    html += '</form>';
+    html += '<h3 class="sub3">登録済みのイベント（開催日・差引売上）</h3>';
+    if (!state.items.length && state.phase === 'ready') html += '<div class="banner">登録済みのイベントはありません（0円という意味ではなく、未入力です）。</div>';
+    else html += '<ul class="rbreak">' + state.items.map(function (it) {
+      return '<li><button type="button" class="mrow" data-rec="snbc-edit" data-id="' + esc(it.eventId) + '" style="grid-template-columns:6.5em 1fr auto"><span>' + esc(it.eventDate) + '</span><span>' + esc(it.title) + '</span><b>' + esc(yen(it.net)) + '</b></button></li>';
+    }).join('') + '</ul><p class="note">行を押すと訂正・削除できます。差引売上＝受領−返金（開催月に計上）。</p>';
+    return html;
+  }
+
+  /* ===================== 現地払いの受領 ===================== */
+  function emptyOnsiteForm() { return { receivedJpy: '', refundedJpy: '0', method: 'cash', receivedOn: '' }; }
+
+  function createOnsiteController(api, onChange, options) {
+    var opts = options || {};
+    var state = { bookingId: null, ref: null, phase: 'idle', data: null, error: null, form: emptyOnsiteForm(), saving: false, message: null, formError: null, confirmDelete: false };
+    var seq = 0;
+    function emit() { if (onChange) onChange(state); }
+    function fillFrom(rec) {
+      state.form = rec ? { receivedJpy: String(rec.receivedJpy), refundedJpy: String(rec.refundedJpy), method: rec.method, receivedOn: rec.receivedOn } : emptyOnsiteForm();
+    }
+    function load(keepMessage) {
+      var mine = ++seq;
+      var id = state.bookingId;
+      state.phase = 'loading'; state.error = null; if (!keepMessage) state.message = null; emit();
+      api.onsiteGet(id, function (res) {
+        if (mine !== seq || id !== state.bookingId) return;
+        if (res && res.ok) { state.data = res; state.phase = 'ready'; fillFrom(res.record); }
+        else if (res && res.error && DENIED_CODES.indexOf(res.error.code) !== -1) { state.phase = 'denied'; state.error = res.error; }
+        else { state.phase = 'error'; state.error = res && res.error ? res.error : { message: '受領記録の取得に失敗しました。' }; }
+        emit();
+      }, function () {
+        if (mine !== seq || id !== state.bookingId) return;
+        state.phase = 'error'; state.error = { message: '受領記録の取得に失敗しました（通信エラー）。' }; emit();
+      });
+    }
+    /* 予約詳細（ops-client の state）が変わるたびに呼ぶ。現地払いの予約だけが対象。 */
+    function sync(opsState) {
+      var d = opsState && opsState.detailPhase === 'ready' ? opsState.detail : null;
+      var eligible = d && String(d.paymentMethod || '').trim() !== CARD_METHOD;
+      if (!eligible) {
+        if (state.bookingId !== null) { seq++; state.bookingId = null; state.ref = null; state.phase = 'idle'; state.data = null; state.message = null; state.formError = null; state.confirmDelete = false; state.form = emptyOnsiteForm(); }
+        return;
+      }
+      state.ref = { bookingId: d.bookingId, date: d.date, serviceLabel: d.serviceLabel, price: d.effectivePriceAmount };
+      if (state.bookingId !== d.bookingId) { state.bookingId = d.bookingId; state.data = null; state.message = null; state.formError = null; state.confirmDelete = false; state.form = emptyOnsiteForm(); load(); }
+    }
+    function setField(k, v) { if (Object.prototype.hasOwnProperty.call(state.form, k)) state.form[k] = v; }
+    function save() {
+      if (state.saving) return;
+      var f = state.form, rec = toInt(f.receivedJpy), ref = toInt(f.refundedJpy);
+      var err = null;
+      if (rec === '' || rec !== rec) err = '受け取った累計金額は0以上の整数円で入力してください（0円でも、実際に確認した場合は0と入力）。';
+      else if (ref === '' || ref !== ref || ref > rec) err = '返金済みの累計金額は0以上の整数円で、受領額以下にしてください（返金が無ければ0）。';
+      else if (!String(f.receivedOn).trim()) err = '受領確認日を入力してください。';
+      if (err) { state.formError = err; emit(); return; }
+      state.saving = true; state.formError = null; state.message = null; emit();
+      var rev = state.data && state.data.record ? state.data.record.revision : null;
+      api.onsiteSave({ input: { bookingId: state.bookingId, receivedJpy: rec, refundedJpy: ref, method: f.method, receivedOn: String(f.receivedOn).trim() }, expectedRevision: rev }, function (res) {
+        state.saving = false;
+        if (res && res.ok) { state.message = res.replayed ? '保存済みです（同じ内容の再送でした。金額は重ねていません）。' : '受領を記録しました。利用終了後に年商へ反映します。'; load(true); if (opts.onSaved) opts.onSaved(); }
+        else { var e = res && res.error ? res.error : { message: UNCONFIRMED }; state.formError = withHint(e); if (e.code === 'CONFLICT') load(); emit(); }
+      }, function () { state.saving = false; state.formError = UNCONFIRMED; emit(); });
+    }
+    function askDelete() { state.confirmDelete = true; emit(); }
+    function cancelDelete() { state.confirmDelete = false; emit(); }
+    function confirmDelete() {
+      if (state.saving || !state.data || !state.data.record) return;
+      state.saving = true; state.formError = null; emit();
+      api.onsiteDelete({ bookingId: state.bookingId, expectedRevision: state.data.record.revision }, function (res) {
+        state.saving = false; state.confirmDelete = false;
+        if (res && res.ok) { state.message = '記録を削除しました。'; load(true); if (opts.onSaved) opts.onSaved(); }
+        else { state.formError = withHint(res && res.error ? res.error : { message: UNCONFIRMED }); if (res && res.error && res.error.code === 'CONFLICT') load(); emit(); }
+      }, function () { state.saving = false; state.confirmDelete = false; state.formError = UNCONFIRMED; emit(); });
+    }
+    return { state: state, sync: sync, load: load, setField: setField, save: save, askDelete: askDelete, cancelDelete: cancelDelete, confirmDelete: confirmDelete };
+  }
+
+  function renderOnsite(state) {
+    if (state.phase === 'idle' || !state.ref) return '';
+    var head = '<h2>現地払いの受領を記録</h2>';
+    if (state.phase === 'loading' && !state.data) return head + '<div class="banner loading" role="status">取得中…</div>';
+    if (state.phase === 'denied') return head + '<div class="banner err">この操作の権限がありません。</div>';
+    if (state.phase === 'error') return head + '<div class="banner err">' + esc(withHint(state.error)) + '<br><button type="button" class="inline" data-rec="onsite-reload">再取得</button></div>';
+    var d = state.data, rec = d.record, r = state.ref;
+    var html = head + '<dl><dt>予約ID</dt><dd>' + esc(r.bookingId) + '</dd><dt>利用日</dt><dd>' + esc(r.date) + '</dd><dt>ブランド</dt><dd>' + esc(r.serviceLabel) + '</dd>' +
+      '<dt>現在の予定料金</dt><dd>' + (r.price === null || r.price === undefined ? '未計算' : esc(yen(r.price))) + '（参考値。実際の受領額として自動確定しません）</dd></dl>';
+    if (d.storeReady === false) return html + '<div class="banner stale">保存先（既存メモ用スプレッドシート）が未設定のため、記録できません。</div>';
+    if (state.message) html += '<div class="banner ok" role="status">' + esc(state.message) + '</div>';
+    if (d.ledgerReceipt) {
+      html += '<div class="banner ok" data-ledger="1"><strong>台帳に記録あり</strong>（カード決済済み、または予約台帳に受領額の記録があります）。台帳を正本とするため、ここでの新規記録は不要です（重複計上の防止）。</div>';
+      if (rec) html += '<div class="banner stale" role="alert">手入力の受領記録も残っています（受領 ' + esc(yen(rec.receivedJpy)) + '・返金済 ' + esc(yen(rec.refundedJpy)) + '）。台帳と重複するため年商では「要確認」になります。不要なら削除してください。</div>' +
+        (state.confirmDelete ? '<div class="formbtns"><button type="button" data-rec="onsite-delete-yes"' + (state.saving ? ' disabled' : '') + '>削除する</button><button type="button" data-rec="onsite-delete-no">やめる</button></div>' : '<button type="button" class="inline" data-rec="onsite-delete">手入力の記録を削除…</button>');
+      if (state.formError) html += '<div class="banner err" role="alert">' + esc(state.formError) + '</div>';
+      return html;
+    }
+    html += '<p class="note">実際に受け取ったことを確認できたときだけ記録してください。金額は取引ごとではなく<strong>累計</strong>です。売上への計上は利用終了後（取消後は取消確定月）です。</p>';
+    html += rec ? '<div class="banner" data-recorded="1">記録済み: 受領 ' + esc(yen(rec.receivedJpy)) + '・返金済 ' + esc(yen(rec.refundedJpy)) + '・' + esc(rec.methodLabel) + '・確認日 ' + esc(rec.receivedOn) + '</div>'
+      : '<div class="banner">まだ記録がありません（未入力。0円という意味ではありません）。</div>';
+    var f = state.form;
+    html += '<form class="taskform" data-rec-form="onsite" novalidate>' +
+      field('受け取った累計金額（円）', '<input type="text" inputmode="numeric" data-f="receivedJpy" autocomplete="off" value="' + esc(f.receivedJpy) + '">') +
+      field('完了した返金の累計金額（円。無ければ0）', '<input type="text" inputmode="numeric" data-f="refundedJpy" autocomplete="off" value="' + esc(f.refundedJpy) + '">') +
+      field('方法', '<select data-f="method">' + METHOD_OPTIONS.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (f.method === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>') +
+      field('受領確認日', '<input type="date" data-f="receivedOn" value="' + esc(f.receivedOn) + '"' + (d.todayJst ? ' max="' + esc(d.todayJst) + '"' : '') + '>');
+    if (state.formError) html += '<div class="banner err" role="alert">' + esc(state.formError) + '</div>';
+    if (state.confirmDelete) {
+      html += '<div class="banner stale" role="alert"><strong>この予約の受領記録を削除しますか？</strong></div><div class="formbtns"><button type="button" data-rec="onsite-delete-yes"' + (state.saving ? ' disabled' : '') + '>削除する</button><button type="button" data-rec="onsite-delete-no">やめる</button></div>';
+    } else {
+      html += '<div class="formbtns"><button type="submit" id="rec-onsite-submit"' + (state.saving ? ' disabled' : '') + '>' + (state.saving ? '保存中…' : rec ? '訂正して保存' : '受領を記録') + '</button>' +
+        (rec ? '<button type="button" data-rec="onsite-delete">誤登録として削除…</button>' : '') + '</div>';
+    }
+    return html + '</form>';
+  }
+
+  /* 現地払い欄の差し込み先。ops-client の予約詳細が、現地払いの予約にだけ置く。 */
+  var ONSITE_BOX = '<div id="onsite-box"></div>';
+
+  /*
+   * DOMへの結線（ブラウザーでのみ呼ぶ）。api は { snbcList, snbcSave, snbcDelete, onsiteGet, onsiteSave, onsiteDelete }。
+   * options.onSaved(): 保存・削除に成功したとき（年商を再取得する）。
+   */
+  function mount(doc, api, options) {
+    var opts = options || {};
+    function $(id) { return doc.getElementById(id); }
+    var snbc = createSnbcController(api, function () { var el = $('snbc-view'); if (el) el.innerHTML = renderSnbc(snbc.state); }, opts);
+    var onsite = createOnsiteController(api, function () { var el = $('onsite-box'); if (el) el.innerHTML = renderOnsite(onsite.state); }, opts);
+    function delegate(root, getCtl, prefix) {
+      root.addEventListener('input', function (e) { var k = e.target && e.target.getAttribute && e.target.getAttribute('data-f'); if (k && root.contains(e.target)) getCtl().setField(k, e.target.value); });
+      root.addEventListener('change', function (e) { var k = e.target && e.target.getAttribute && e.target.getAttribute('data-f'); if (k) getCtl().setField(k, e.target.value); });
+      root.addEventListener('submit', function (e) { var f = e.target && e.target.getAttribute && e.target.getAttribute('data-rec-form'); if (f === prefix) { e.preventDefault(); getCtl().save(); } });
+      root.addEventListener('click', function (e) {
+        var node = e.target;
+        while (node && node !== root) {
+          var act = node.getAttribute && node.getAttribute('data-rec');
+          if (act && act.indexOf(prefix + '-') === 0) {
+            var c = getCtl(), a = act.slice(prefix.length + 1);
+            if (a === 'edit') c.edit(node.getAttribute('data-id'));
+            else if (a === 'cancel') c.cancelEdit();
+            else if (a === 'close') c.setOpen(false);
+            else if (a === 'reload') c.load();
+            else if (a === 'delete') c.askDelete();
+            else if (a === 'delete-yes') c.confirmDelete();
+            else if (a === 'delete-no') c.cancelDelete();
+            return;
+          }
+          node = node.parentNode;
+        }
+      });
+    }
+    if ($('snbc-view')) delegate($('snbc-view'), function () { return snbc; }, 'snbc');
+    if ($('view')) delegate($('view'), function () { return onsite; }, 'onsite');
+    /* 予約タブの変更通知から呼ぶ。詳細が再描画されても入力中の内容は state に残っている。 */
+    function syncOnsite(opsState) { onsite.sync(opsState); var el = $('onsite-box'); if (el) el.innerHTML = renderOnsite(onsite.state); }
+    return { snbc: snbc, onsite: onsite, toggleSnbc: function () { snbc.toggle(); }, syncOnsite: syncOnsite };
+  }
+
+  return { esc: esc, yen: yen, toInt: toInt, createSnbcController: createSnbcController, createOnsiteController: createOnsiteController,
+    renderSnbc: renderSnbc, renderOnsite: renderOnsite, mount: mount, ONSITE_BOX: ONSITE_BOX, CARD_METHOD: CARD_METHOD };
 });
 
 </script>
@@ -1518,7 +1856,30 @@
     };
   }
 
-  return { createGasApi: createGasApi, createGasTasksApi: createGasTasksApi };
+  /*
+   * SNBC売上・現地払い受領（Issue #995）用のGASアダプター。端末の項目と版番号だけを渡し、保存先のID・タブ名・範囲は一切渡さない
+   * （サーバーが毎回、所有者認可して既存メモ保存先内の固定2タブに限って読み書きする）。
+   */
+  function createGasRecordsApi(runner) {
+    function call(name, arg, ok, ng) {
+      try {
+        runner.withSuccessHandler(ok).withFailureHandler(ng)[name](arg);
+      } catch (e) {
+        ng(e);
+      }
+    }
+    return {
+      kind: 'gas',
+      snbcList: function (ok, ng) { call('opsListSnbc', {}, ok, ng); },
+      snbcSave: function (payload, ok, ng) { call('opsSaveSnbc', payload, ok, ng); },
+      snbcDelete: function (payload, ok, ng) { call('opsDeleteSnbc', payload, ok, ng); },
+      onsiteGet: function (bookingId, ok, ng) { call('opsGetOnsite', bookingId, ok, ng); },
+      onsiteSave: function (payload, ok, ng) { call('opsSaveOnsite', payload, ok, ng); },
+      onsiteDelete: function (payload, ok, ng) { call('opsDeleteOnsite', payload, ok, ng); }
+    };
+  }
+
+  return { createGasApi: createGasApi, createGasTasksApi: createGasTasksApi, createGasRecordsApi: createGasRecordsApi };
 });
 
 </script>
@@ -1526,10 +1887,12 @@
     (function () {
       var range = OpsHomeClient.monthRange(OpsHomeClient.jstMonth(Date.now()));
       var home = null;
+      var rec = null, revCtl = null;
       var resCtl = OpsClient.mount(document, OpsGasAdapter.createGasApi(google.script.run),
-        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });
+        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function (s) { if (home) home.render(); if (rec) rec.syncOnsite(s); } });
       var tasksCtl = OpsTasksClient.mount(document, OpsGasAdapter.createGasTasksApi(google.script.run), { onChange: function () { if (home) home.render(); } });
-      var revCtl = OpsRevenueClient.mount(document, OpsGasAdapter.createGasApi(google.script.run), { onDrill: function (d) { home.drill(d.month); } });
+      rec = OpsRecordsClient.mount(document, OpsGasAdapter.createGasRecordsApi(google.script.run), { onSaved: function () { if (revCtl) revCtl.load(); } });
+      revCtl = OpsRevenueClient.mount(document, OpsGasAdapter.createGasApi(google.script.run), { onDrill: function (d) { home.drill(d.month); }, onSnbc: function () { rec.toggleSnbc(); } });
       home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl, revenue: revCtl });
     })();
   </script>

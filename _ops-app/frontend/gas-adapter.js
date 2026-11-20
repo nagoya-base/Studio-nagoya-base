@@ -55,5 +55,28 @@
     };
   }
 
-  return { createGasApi: createGasApi, createGasTasksApi: createGasTasksApi };
+  /*
+   * SNBC売上・現地払い受領（Issue #995）用のGASアダプター。端末の項目と版番号だけを渡し、保存先のID・タブ名・範囲は一切渡さない
+   * （サーバーが毎回、所有者認可して既存メモ保存先内の固定2タブに限って読み書きする）。
+   */
+  function createGasRecordsApi(runner) {
+    function call(name, arg, ok, ng) {
+      try {
+        runner.withSuccessHandler(ok).withFailureHandler(ng)[name](arg);
+      } catch (e) {
+        ng(e);
+      }
+    }
+    return {
+      kind: 'gas',
+      snbcList: function (ok, ng) { call('opsListSnbc', {}, ok, ng); },
+      snbcSave: function (payload, ok, ng) { call('opsSaveSnbc', payload, ok, ng); },
+      snbcDelete: function (payload, ok, ng) { call('opsDeleteSnbc', payload, ok, ng); },
+      onsiteGet: function (bookingId, ok, ng) { call('opsGetOnsite', bookingId, ok, ng); },
+      onsiteSave: function (payload, ok, ng) { call('opsSaveOnsite', payload, ok, ng); },
+      onsiteDelete: function (payload, ok, ng) { call('opsDeleteOnsite', payload, ok, ng); }
+    };
+  }
+
+  return { createGasApi: createGasApi, createGasTasksApi: createGasTasksApi, createGasRecordsApi: createGasRecordsApi };
 });
