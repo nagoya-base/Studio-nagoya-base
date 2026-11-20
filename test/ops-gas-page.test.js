@@ -53,10 +53,10 @@ test('生成物: OpsPage.html は _ops-app/frontend/ の正本と一致し、モ
   assert.ok(!/<script[^>]+src=/.test(page), '外部スクリプトを読み込まない');
 });
 
-test('生成物: 秘密情報・外部送信を含まない（呼ぶのは予約の読み取り3関数（詳細・一覧・鍵状態）・売上集計1関数・メモの3関数・SNBC/現地払い記録の6関数（#995）だけ）', function () {
+test('生成物: 秘密情報・外部送信を含まない（呼ぶのは予約の読み取り3関数（詳細・一覧・鍵状態）・売上集計1関数・運営枠の閲覧1関数（#1003）・メモの3関数・SNBC/現地払い記録の6関数（#995）だけ）', function () {
   var page = fs.readFileSync(builder.OUT, 'utf8');
   var names = (page.match(/'ops[A-Za-z]+'/g) || []).sort();
-  assert.deepStrictEqual(names, ["'opsDeleteOnsite'", "'opsDeleteSnbc'", "'opsDeleteTask'", "'opsGetKeyStatus'", "'opsGetOnsite'", "'opsGetReservation'", "'opsGetRevenue'", "'opsListReservations'", "'opsListSnbc'", "'opsListTasks'", "'opsSaveOnsite'", "'opsSaveSnbc'", "'opsSaveTask'"]);
+  assert.deepStrictEqual(names, ["'opsDeleteOnsite'", "'opsDeleteSnbc'", "'opsDeleteTask'", "'opsGetKeyStatus'", "'opsGetOnsite'", "'opsGetReservation'", "'opsGetRevenue'", "'opsListInternalSlots'", "'opsListReservations'", "'opsListSnbc'", "'opsListTasks'", "'opsSaveOnsite'", "'opsSaveSnbc'", "'opsSaveTask'"]);
   var code = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
   assert.ok(!/fetch\(|XMLHttpRequest|sendBeacon|localStorage|sessionStorage|document\.cookie/.test(code));
   assert.ok(!/OPS_OWNER_EMAIL|OPS_SPREADSHEET_ID|OPS_ACCESS_STATUS|Bearer |api[_-]?key/i.test(code));

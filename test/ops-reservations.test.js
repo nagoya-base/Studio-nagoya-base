@@ -501,10 +501,10 @@ test('期間: 始端=0:00(含む)・終端=翌0:00(含まない)の時間帯の�
 test('境界: 予約台帳は読み取り専用スコープ・自分のみ公開・書き込み/送信APIを含まない（#941: 保存先は設定IDのメモ専用ファイルに固定）', function () {
   var manifest = JSON.parse(readFile('appsscript.json'));
   /* #941 追加修正: 手動用意のメモ専用ファイルに届く最小の scope は spreadsheets（ファイル単位で絞れない）。台帳への書込みは権限では防げないため、
-     コードで固定する（下の静的検査 + test/ops-tasks.test.js）。drive 全体・メール・カレンダー・トリガーは持たない。 */
-  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
+     コードで固定する（下の静的検査 + test/ops-tasks.test.js）。drive 全体・メール・トリガーは持たない。カレンダーは #1003 の運営枠閲覧用に calendar.readonly（読み取り専用）だけ（書込みの calendar は持たない。test/ops-internal-slots-1003.test.js）。 */
+  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
   assert.strictEqual(manifest.webapp.access, 'MYSELF');
-  var forbidden = /setValue|setValues|appendRow|insertSheet|deleteRow|\.clear\(|MailApp|GmailApp|CalendarApp|SpreadsheetApp|DriveApp|SpreadsheetApp\.create|ANYONE/;
+  var forbidden = /setValue|setValues|appendRow|insertSheet|deleteRow|\.clear\(|MailApp|GmailApp|SpreadsheetApp|DriveApp|SpreadsheetApp\.create|ANYONE/;
   fs.readdirSync(DIR).forEach(function (f) {
     var code = readFile(f).replace(/\/\*[\s\S]*?\*\//g, '');
     assert.ok(!forbidden.test(code), f + 'に書き込み・送信系のAPIが含まれる');

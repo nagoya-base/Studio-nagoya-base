@@ -414,7 +414,7 @@ test('API: 書込み系・予約の変更・メール送信のコード経路を
   var fn = api2.slice(api2.indexOf('function keyStatus_'), api2.indexOf('/* 共通契約の入口'));
   assert.ok(!/OpsTasks|setProperty|MailApp/.test(fn));
   var m = JSON.parse(fs.readFileSync(path.join(DIR, 'appsscript.json'), 'utf8'));
-  assert.deepStrictEqual(m.oauthScopes, ['https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
+  assert.deepStrictEqual(m.oauthScopes, ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
   assert.deepStrictEqual(m.webapp, { access: 'MYSELF', executeAs: 'USER_DEPLOYING' });
 });
 

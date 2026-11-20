@@ -4,7 +4,7 @@
  * 管理者が明示実行する個別鍵の最終状態の保存（#971。runKeyFinalSave。予約台帳の accessKeyFinalStatus 列の1セルだけ）に限る。handle（画面・一覧・詳細・鍵状態）からは書かない。
  *
  * handle(request, ctx) が共通の接続契約の入口:
- *   request: { op: 'list', params } | { op: 'detail', id } | { op: 'tasks_list' | 'task_save' | 'task_delete', ... }（OpsTasks.gs）
+ *   request: { op: 'list', params } | { op: 'detail', id } | { op: 'internal_slots' }（運営枠・読み取り専用 #1003）| { op: 'tasks_list' | 'task_save' | 'task_delete', ... }（OpsTasks.gs）
  *   ctx:     { authenticate, readLedger, tasks }（省略時は GAS Session 認証器 / Sheets API 読み取り / 専用保存先）
  *   戻り値:  { ok: true, ...} | { ok: false, error: { code, message } }（codeは OpsContract.ERROR_CODES）
  * 全要求で毎回認可し、拒否時は予約情報を一切返さない。ログは件数と固定コードのみ。
@@ -159,6 +159,35 @@ var OpsApi = (function () {
       url: url, token: token,
       fetch: function (u, options) { return UrlFetchApp.fetch(u, options); }
     };
+  }
+
+  /*
+   * 運営枠（Issue #1003。読み取り専用）の既定の読み取り（GAS）。Calendar IDはサーバー側のScript Property
+   * （OPS_INTERNAL_SLOTS_CALENDAR_ID。Booking Admin の CALENDAR_ID と同じ値）だけ。端末からは受け取らない。
+   * CalendarApp は getCalendarById と getEvents / getTag 系の読み取りにしか使わない（calendar.readonly）。
+   */
+  function readInternalSlotsGas_(nowMs) {
+    return OpsInternalSlots.read({
+      getCalendarId: function () { return PropertiesService.getScriptProperties().getProperty('OPS_INTERNAL_SLOTS_CALENDAR_ID'); },
+      getCalendar: function (id) { return CalendarApp.getCalendarById(id); }
+    }, nowMs);
+  }
+
+  /*
+   * 運営枠の一覧。予約台帳（readLedger）には触れない別の要求で、失敗しても ok:true のまま state で返す
+   * （通常予約の一覧を巻き込まない・取得失敗を「0件」にしない）。認可は handle で済み。
+   */
+  function internalSlots_(ctx, nowMs) {
+    var view;
+    try {
+      view = ctx.readInternalSlots(nowMs);
+    } catch (e) {
+      view = { state: 'read_failed', slots: [], invalid: 0 };
+    }
+    if (!view || typeof view.state !== 'string') view = { state: 'read_failed', slots: [], invalid: 0 };
+    /* ログは固定の状態名と件数のみ（Calendar ID・イベントID・件名を出さない）。 */
+    Logger.log('ops internal_slots state=' + view.state.replace(/[^a-z_]/g, '') + ' slots=' + (view.slots ? view.slots.length : 0));
+    return { ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), internalSlots: view };
   }
 
   function load_(ctx) {
@@ -350,13 +379,14 @@ var OpsApi = (function () {
       return error_(code, AUTH_MESSAGES_[code]);
     }
     var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_, accessConfig: context.accessConfig || accessConfigGas_, readRevenueSources: context.readRevenueSources || readRevenueSourcesGas_,
-      readRecords: context.readRecords || readRecordsGas_, records: context.records || recordsGas_ };
+      readRecords: context.readRecords || readRecordsGas_, records: context.records || recordsGas_, readInternalSlots: context.readInternalSlots || readInternalSlotsGas_ };
     var nowMs = typeof context.nowMs === 'number' ? context.nowMs : Date.now();
     var op = request && request.op;
     if (op === 'list') return list_(request.params, full, nowMs);
     if (op === 'detail') return detail_(request.id, full, nowMs);
     if (op === 'key_status') return keyStatus_(request.id, full, nowMs);
     if (op === 'revenue') return revenue_(request.params, full, nowMs);
+    if (op === 'internal_slots') return internalSlots_(full, nowMs);
     /* SNBC実績・現地払い受領（Issue #995）。認可は上で済み。書込み先は既存メモ保存先内の固定2タブだけ。 */
     if (op === 'snbc_list' || op === 'snbc_save' || op === 'snbc_delete' || op === 'onsite_get' || op === 'onsite_save' || op === 'onsite_delete') {
       return recordsOp_(request, full, nowMs);
@@ -461,6 +491,9 @@ function opsListReservations(params) { return OpsApi.handle({ op: 'list', params
 function opsGetReservation(bookingId) { return OpsApi.handle({ op: 'detail', id: bookingId }); }
 /* 鍵・案内の状況（Issue #942）。読み取り専用。接続先・トークンは画面へ渡さない。 */
 function opsGetKeyStatus(bookingId) { return OpsApi.handle({ op: 'key_status', id: bookingId }); }
+
+/* 運営枠の閲覧（Issue #1003）。読み取り専用。所有者認可は handle で毎回。読取先Calendarは画面から指定できない。 */
+function opsListInternalSlots() { return OpsApi.handle({ op: 'internal_slots' }); }
 
 /* 年商・月次の売上集計（Issue #990 PR-B）。読み取り専用。所有者認可は handle で毎回。 */
 function opsGetRevenue(params) { return OpsApi.handle({ op: 'revenue', params: params }); }
