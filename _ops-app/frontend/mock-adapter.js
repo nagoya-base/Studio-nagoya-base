@@ -141,7 +141,8 @@
       return { ok: true, contractVersion: 1, fetchedAt: isoNow(nowMs), excludedRows: 0, revenue: {
         year: year, currentMonth: year === yearNow ? monthNow : null, basis: '（モック）実績売上＝利用日が過ぎ、かつ支払い済み（paid）。',
         sources: { studio: { state: 'ready' }, options: { state: 'not_connected' }, members: { state: 'not_connected' }, snbc: { state: 'not_connected' }, expenses: { state: 'not_connected' } },
-        months: months, totals: { actual: total, scheduled: 14000, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, studioByService: by, options: 0, members: 0 },
+        partial: { isPartial: true, reasons: ['SNBC_NOT_CONNECTED', 'ONSITE_PAYMENT_UNCONFIRMED', 'REFUND_UNSETTLED', 'MEMBERS_UNAVAILABLE', 'OPTIONS_UNAVAILABLE'] },
+        months: months, totals: { actual: total, scheduled: 14000, unconfirmed: 0, refundedCount: 2, unknownAmountCount: 0, onsiteUnconfirmed: 18000, onsiteUnconfirmedCount: 3, refundUnsettledCount: 1, retained: 0, studioByService: by, options: 0, members: 0 },
         goals: goals, forecast: year === yearNow ? Math.round(total / 300 * 365) : null, notes: { pendingCount: 0, optionUnmatchedCount: 0 } } };
     }
 

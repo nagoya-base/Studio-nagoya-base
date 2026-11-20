@@ -1336,6 +1336,20 @@
     return src.state === 'error' ? name + 'の取得に失敗しました（金額に含めていません）' : name + 'は未接続です（金額に含めていません）';
   }
 
+  var PARTIAL_TEXT = {
+    SNBC_NOT_CONNECTED: 'SNBCイベント収益が未接続（正本が未実装）',
+    ONSITE_PAYMENT_UNCONFIRMED: '現地払い（現金・PayPay）の受領記録が台帳にない予約がある',
+    REFUND_UNSETTLED: '返金処理中または返金方法が不明な取消がある',
+    AMOUNT_UNKNOWN: '金額が読めない確定予約がある',
+    MEMBERS_UNAVAILABLE: '会員費を取得できていない',
+    OPTIONS_UNAVAILABLE: '有料オプションを取得できていない',
+    OPTION_UNMATCHED: '紐づく予約のない支払い済みオプションがある'
+  };
+  function partialText(reasons) {
+    var list = (reasons || []).map(function (c) { return PARTIAL_TEXT[c]; }).filter(Boolean);
+    return list.length ? '未接続ソースあり・未確定の項目あり: ' + list.map(esc).join(' ／ ') + '。' : '';
+  }
+
   function renderMonths(rev, goalAmount, year) {
     var base = goalAmount / 12;
     var rows = rev.months.map(function (m) {
@@ -1372,8 +1386,10 @@
     html += '<div class="rtabs" role="group" aria-label="目標の切替">' + rev.goals.map(function (g) {
       return '<button type="button" class="chip" data-rev="goal" data-goal="' + esc(g.id) + '" aria-pressed="' + (g.id === goal.id ? 'true' : 'false') + '">' + esc(g.label) + ' ' + esc(yen(g.amount)) + '</button>';
     }).join('') + '</div>';
-    html += '<div class="rhero"><div class="rlabel">' + esc(rev.year) + '年の実績売上（年累計）</div><div class="rnum">' + esc(yen(t.actual)) + '<small> / ' + esc(yen(goal.amount)) + '</small></div>' +
-      bar(goal.rate) + '<div class="rsub"><strong>達成率 ' + esc(pct(goal.rate)) + '</strong> ・ 残額 ' + esc(yen(goal.remaining)) + '</div>';
+    var part = rev.partial || { isPartial: false, reasons: [] };
+    if (part.isPartial) html += '<div class="banner stale" role="note"><strong>この金額は「接続済み・確認済み額の部分計」です。全体の年商ではありません。</strong>' + partialText(part.reasons) + '</div>';
+    html += '<div class="rhero"><div class="rlabel">' + esc(rev.year) + '年の実績売上（確認済み額の部分計・年累計）</div><div class="rnum">' + esc(yen(t.actual)) + '<small> / ' + esc(yen(goal.amount)) + '</small></div>' +
+      bar(goal.rate) + '<div class="rsub"><strong>達成率 ' + esc(pct(goal.rate)) + '</strong>' + (part.isPartial ? '（部分計に対する達成率。確定達成率とは扱いません）' : '') + ' ・ 残額 ' + esc(yen(goal.remaining)) + '</div>';
     if (goal.requiredMonthlyAverage !== null) html += '<div class="rsub">達成に必要な月平均（当月を含む残り月数で割った値）: ' + esc(yen(goal.requiredMonthlyAverage)) + '</div>';
     if (rev.forecast !== null) html += '<div class="rsub dim">参考予測: ' + esc(yen(rev.forecast)) + '（年初からの実績ペースが続いた場合の年末見込。予測であり、達成率には含めません）</div>';
     html += '</div>';
@@ -1395,7 +1411,9 @@
 
     html += '<h3 class="sub3">実績に含めない項目（別枠）</h3><ul class="rbreak">' +
       '<li><span>予定（確定済み・利用がこれから）</span><b>' + esc(yen(t.scheduled)) + '</b></li>' +
-      '<li><span>利用済み・入金未確認（現地払い等）</span><b>' + esc(yen(t.unconfirmed)) + '</b></li>' +
+      '<li><span>現地払い・受領記録なし（現金・PayPay等。受領済みでも台帳に記録がないため実績に入れていません）</span><b>' + esc(yen(t.onsiteUnconfirmed || 0)) + '（' + esc(t.onsiteUnconfirmedCount || 0) + '件）</b></li>' +
+      '<li><span>カード決済で利用済み・未入金</span><b>' + esc(yen(t.unconfirmed)) + '</b></li>' +
+      '<li><span>返金処理中・結果不明（差引額を確定できず金額に含めていません）</span><b>' + esc(t.refundUnsettledCount || 0) + '件</b></li>' +
       '<li><span>返金（件数のみ）</span><b>' + esc(t.refundedCount) + '件</b></li>' +
       '<li><span>経費・利益</span><b class="dim">未接続（売上達成率から差し引きません）</b></li></ul>';
     html += '<h3 class="sub3">月別の実績</h3>' + renderMonths(rev, goal.amount, rev.year);

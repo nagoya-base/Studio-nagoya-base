@@ -29,9 +29,10 @@ function load() {
 var SB = load();
 
 function jst(y, m, d, hh, mm) { return new Date(Date.UTC(y, m - 1, d, hh - 9, mm)); }
-var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name'];
+var CARD = 'オンラインクレジットカード';
+var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name', 'paymentMethod', 'refundDecision', 'refundAmount'];
 function booking(id, over) {
-  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME' }, over || {});
+  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME', paymentMethod: CARD, refundDecision: '', refundAmount: '' }, over || {});
   return HEADER.map(function (h) { return b[h]; });
 }
 function ledger(rows) { return { values: [HEADER].concat(rows) }; }
@@ -45,7 +46,7 @@ function call(rows, extra, params) {
   return JSON.parse(JSON.stringify(SB.OpsApi.handle({ op: 'revenue', params: params }, ctx)));
 }
 
-test('計上基準: 実績＝利用が過ぎ、かつ paid。未入金は実績に入れず別枠、将来は予定、返金は件数のみ。PENDING/キャンセルは売上にしない', function () {
+test('計上基準: 実績＝利用が過ぎ、かつ paid。未入金は実績に入れず別枠、将来は予定。返金方法が不明な返金は確定しない。PENDING/キャンセルは売上にしない', function () {
   var res = call([
     booking('A1'),                                                                                     /* 実績 10,000 (SNB) */
     booking('A2', { brand: 'mens', priceAmount: 5000 }),                                               /* 実績 5,000 (Mens) */
@@ -57,7 +58,7 @@ test('計上基準: 実績＝利用が過ぎ、かつ paid。未入金は実績�
     booking('C2', { date: '2026-12-06', startAt: jst(2026, 12, 6, 10, 0), endAt: jst(2026, 12, 6, 12, 0), paymentStatus: 'not_started', priceAmount: 3000 }), /* 予定（未入金でも予定） */
     booking('D1', { paymentStatus: 'refunded', priceAmount: 9999 }),                                   /* 返金 */
     booking('D2', { paymentStatus: 'refund_pending', priceAmount: 9999 }),
-    booking('E1', { status: 'CANCELLED', priceAmount: 8888 }),
+    booking('E1', { status: 'CANCELLED', paymentStatus: 'not_started', priceAmount: 8888 }),
     booking('E2', { status: 'EXPIRED', priceAmount: 8888 }),
     booking('E3', { status: 'PENDING', priceAmount: 8888 }),
     booking('F1', { priceAmount: '' }),                                                                /* 金額不明 */
@@ -73,6 +74,7 @@ test('計上基準: 実績＝利用が過ぎ、かつ paid。未入金は実績�
   assert.strictEqual(t.unconfirmed, 4000 + 1000 + 2000);
   assert.strictEqual(t.scheduled, 6000 + 3000);
   assert.strictEqual(t.refundedCount, 2);
+  assert.strictEqual(t.refundUnsettledCount, 2, '返金方法が記録されていない返金は差引額を確定しない');
   assert.strictEqual(t.unknownAmountCount, 1);
   assert.strictEqual(res.revenue.notes.pendingCount, 1);
   assert.strictEqual(res.revenue.months[10].actual, t.actual, '11月に計上');
@@ -255,8 +257,8 @@ test('制御: 年の切替は古い応答を破棄し、権限なしでは表示
 
 test('レビュー対応(#992): キャンセル後に返金状態になった予約も返金件数に数える（金額は合算しない）', function () {
   var res = call([
-    booking('R1', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 9000 }),
-    booking('R2', { status: 'CANCELLED', paymentStatus: 'refund_pending', priceAmount: 9000 }),
+    booking('R1', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 9000, refundDecision: 'FULL', refundAmount: 9000 }),
+    booking('R2', { status: 'CANCELLED', paymentStatus: 'refund_pending', priceAmount: 9000, refundDecision: 'FULL', refundAmount: 9000 }),
     booking('R3', { status: 'CANCELLED', paymentStatus: 'not_started', priceAmount: 9000 })
   ]);
   assert.strictEqual(res.revenue.totals.refundedCount, 2);
@@ -301,4 +303,62 @@ test('レビュー対応(#992): 紐づく予約のない支払い済みオプシ
   assert.ok(/実績は不完全です/.test(html) && /紐づく予約が見つからない支払い済みオプションが 2 件/.test(html));
   var clean = R.renderRevenue(stateOf(resp()));
   assert.ok(!/紐づく予約が見つからない/.test(clean));
+});
+
+/* ---------- タケルレビュー(#992) P1: 現地払い・取消返金 ---------- */
+test('P1: 現地払い（現金・PayPay）は受領記録が無いので実績に入れず「現地払い・受領記録なし」として別枠。カードpaidは実績', function () {
+  var res = call([
+    booking('K1', { priceAmount: 10000 }),                                                                 /* カードpaid → 実績 */
+    booking('K2', { paymentMethod: '現地払い（現金）', paymentStatus: 'not_started', priceAmount: 6000 }),  /* 現地・利用済み（NOT_STARTEDのまま） → 受領未確認 */
+    booking('K3', { paymentMethod: '現地払い（PayPay）', paymentStatus: '', priceAmount: 4000 }),
+    booking('K4', { paymentMethod: '現地払い（現金）', paymentStatus: 'paid', priceAmount: 1500 }),          /* 台帳に paid と記録済み → 実績 */
+    booking('K5', { paymentMethod: '現地払い（現金）', date: '2026-12-05', startAt: jst(2026, 12, 5, 10, 0), endAt: jst(2026, 12, 5, 12, 0), priceAmount: 3000 }), /* 現地・これから → 予定 */
+    booking('K6', { paymentStatus: 'not_started', priceAmount: 2000 })                                      /* カード未入金・利用済み → 別枠（現地払いではない） */
+  ]);
+  var t = res.revenue.totals;
+  assert.strictEqual(t.actual, 10000 + 1500);
+  assert.strictEqual(t.onsiteUnconfirmed, 6000 + 4000);
+  assert.strictEqual(t.onsiteUnconfirmedCount, 2);
+  assert.strictEqual(t.unconfirmed, 2000);
+  assert.strictEqual(t.scheduled, 3000);
+  assert.ok(res.revenue.partial.isPartial && res.revenue.partial.reasons.indexOf('ONSITE_PAYMENT_UNCONFIRMED') !== -1);
+});
+
+test('P1: 取消の返金方法（全額/一部/なし/返金中/結果不明）で差引額を安全に計上する', function () {
+  var res = call([
+    booking('F1', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'FULL', refundAmount: 6000 }),   /* 全額返金完了 → 0 */
+    booking('F2', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: 2000 }), /* 一部返金完了 → 残額4,000 */
+    booking('F3', { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 3000, refundDecision: 'NONE', refundAmount: 0 }),            /* 返金なし → 全額3,000 */
+    booking('F4', { status: 'CANCELLED', paymentStatus: 'refund_pending', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: 2000 }), /* 返金中 → 確定しない */
+    booking('F5', { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 5000 }),                                                       /* 取消・paid・返金方法の記録なし → 確定しない */
+    booking('F6', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: 9000 }),  /* 返金額が受領額超過（不正） → 確定しない */
+    booking('F7', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: '' }),    /* 返金額が不明 → 確定しない */
+    booking('F8', { status: 'CANCELLED', paymentStatus: 'not_started', priceAmount: 7000 })                                                 /* 受領なしの取消 → 売上なし・要確認でもない */
+  ]);
+  var t = res.revenue.totals;
+  assert.strictEqual(t.actual, 4000 + 3000);
+  assert.strictEqual(t.retained, 4000 + 3000);
+  assert.strictEqual(t.refundUnsettledCount, 4, 'F4・F5・F6・F7');
+  assert.strictEqual(t.refundedCount, 5, 'F1・F2・F4・F6・F7（返金状態の予約）');
+  assert.strictEqual(t.unconfirmed, 0);
+  assert.ok(res.revenue.partial.reasons.indexOf('REFUND_UNSETTLED') !== -1);
+  assert.ok(!/SECRET/.test(JSON.stringify(res)));
+});
+
+test('P1: 部分計の明示 — SNBC未接続の間は常に部分計（全体年商の確定達成率ではない）', function () {
+  var res = call([booking('A1', { priceAmount: 1000 })], { options: { state: 'ready', rows: [] }, members: { state: 'ready', periods: [], months: [], refunds: [] } });
+  assert.deepStrictEqual(res.revenue.partial.reasons, ['SNBC_NOT_CONNECTED']);
+  assert.strictEqual(res.revenue.partial.isPartial, true);
+});
+
+test('P1: 画面は実績を「確認済み額の部分計」と表示し、達成率も部分計に対するものと明記。現地払い・返金の未確定を別枠で出す', function () {
+  var d = resp();
+  d.revenue.totals.onsiteUnconfirmed = 10000; d.revenue.totals.onsiteUnconfirmedCount = 2; d.revenue.totals.refundUnsettledCount = 3;
+  d.revenue.partial = { isPartial: true, reasons: ['SNBC_NOT_CONNECTED', 'ONSITE_PAYMENT_UNCONFIRMED', 'REFUND_UNSETTLED'] };
+  var html = R.renderRevenue(stateOf(d));
+  assert.ok(/確認済み額の部分計/.test(html) && /全体の年商ではありません/.test(html));
+  assert.ok(/部分計に対する達成率/.test(html) && !/確定達成率/.test(html.replace(/確定達成率とは扱いません/g, '')));
+  assert.ok(/現地払い・受領記録なし/.test(html) && /¥10,000/.test(html) && /2件/.test(html));
+  assert.ok(/返金処理中・結果不明/.test(html) && /3件/.test(html));
+  assert.ok(/SNBC/.test(html) && /未接続ソースあり/.test(html));
 });
