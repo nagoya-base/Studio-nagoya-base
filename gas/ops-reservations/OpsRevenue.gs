@@ -10,6 +10,8 @@
  *   実績は『確認済み額の部分計』であり全体年商ではない）。受領記録の正本ができるまで確定達成率とは扱わない。
  * - 日程変更・人数変更の精算: 現在の料金（見積り）を受領額とみなさない。精算が未了（追加請求・返金待ち）のものは、確認済みの入出金の累計
  *   （feePaidAmount－feeRefundedAmount）だけを実績にし、差額は未確定として件数で示す（記録が無ければ金額に含めない）。
+ * - キャンセル料の計上月: **取消確定月（cancelledAt・JST）**。元の利用予定月ではない（オーナー確定 2026-11-20）。取消確定日時が不明なものは
+ *   利用予定月へフォールバックせず、「取消計上月不明」の件数として集計から除外する。
  * - 取消・返金: 返金方法（refundDecision: FULL/PARTIAL/NONE）と返金額（refundAmount）を使い、「受領額－返金額」の残額を計上する。
  *   返金が完了（paymentStatus=refunded）していて返金額が確定しているときだけ残額を実績にする。返金NONE（返金なしで paid のまま）は全額が残額。
  *   返金処理中（refund_pending）・返金方法が不明・返金額が受領額を超えるなど差引額を確定できないものは、金額に含めず「返金処理中・結果不明」の件数にする。
@@ -114,7 +116,7 @@ var OpsRevenue = (function () {
     var months = [];
     for (var i = 0; i < 12; i++) months.push(emptyMonth_());
     var usage = {}; /* bookingId → { passed, ym }（オプションの紐づけ用） */
-    var notes = { pendingCount: 0, bookingsOutOfYear: 0, optionUnmatchedCount: 0 };
+    var notes = { pendingCount: 0, bookingsOutOfYear: 0, optionUnmatchedCount: 0, cancelMonthUnknownCount: 0 };
 
     (input.bookings || []).forEach(function (r) {
       var ym = ymOfDate_(r.date);
@@ -122,30 +124,41 @@ var OpsRevenue = (function () {
       var endOrStart = r.endMs !== null && r.endMs !== undefined && r.endMs > r.startMs ? r.endMs : r.startMs;
       var passed = endOrStart <= nowMs;
       usage[r.bookingId] = { passed: passed, ym: ym, status: r.status };
-      if (ym.y !== year) { notes.bookingsOutOfYear++; return; }
       var svc = STUDIO_SERVICES.indexOf(r.service) !== -1 ? r.service : 'unclassified';
-      var cell = months[ym.m - 1].studio[svc];
       var kind = paymentKind_(r.paymentStatus);
       var price = num_(r.effectivePriceAmount);
       var isCard = String(r.paymentMethod || '').trim() === CARD_METHOD;
       var basis = receiptBasis_(r, price);
-      /* 返金が関わる予約（返金処理中・返金完了、または返金を伴わない取消でも受領済みのもの）。 */
-      if (kind === 'refund') {
-        cell.refundedCount++;
-        var net = refundNet_(r, basis.involved ? null : price); /* 日程変更の精算が関与する場合、2つの返金記録を突き合わせられないので確定しない */
-        /* 返金完了（refunded）かつ差引額が確定しているときだけ残額を実績にする。返金中・方法不明・精算が絡むものは金額に含めない。 */
-        if (String(r.paymentStatus).trim() !== 'refunded' || net === null) cell.refundUnsettledCount++;
-        else if (net > 0) { cell.actual += net; cell.retained += net; cell.actualCount++; }
-        return;
-      }
-      if (r.status === 'CANCELLED' && kind === 'paid') {
+      /*
+       * 取消・返金に関わる予約（キャンセル料）は、オーナー確定（2026-11-20）により**取消確定月（cancelledAt・JST）**に計上する。
+       * 元の利用予定月ではない。利用日による年フィルタより前に分岐し、年をまたぐ取消（翌年の予約を今年取り消す等）も取りこぼさない。
+       * 取消確定日時が空・不正・未来のときは、利用予定月へフォールバックせず「取消計上月不明」として集計から除外する（金額に含めない）。
+       */
+      if (r.status === 'CANCELLED' || kind === 'refund') {
+        if (kind !== 'paid' && kind !== 'refund') return; /* 受領なしの取消は売上にしない */
+        var cMs = toMs_(r.cancelledAt);
+        if (cMs === null || cMs > nowMs) { notes.cancelMonthUnknownCount++; return; }
+        var cym = jstYearMonth_(cMs);
+        if (cym.y !== year) return;
+        var ccell = months[cym.m - 1].studio[svc];
+        if (kind === 'refund') {
+          ccell.refundedCount++;
+          var net = refundNet_(r, basis.involved ? null : price); /* 日程変更の精算が関与する場合、2つの返金記録を突き合わせられないので確定しない */
+          /* 返金完了（refunded）かつ差引額が確定しているときだけ残額を実績にする。返金中・方法不明・精算が絡むものは金額に含めない。 */
+          if (String(r.paymentStatus).trim() !== 'refunded' || net === null) ccell.refundUnsettledCount++;
+          else if (net > 0) { ccell.actual += net; ccell.retained += net; ccell.actualCount++; }
+          return;
+        }
         /* 取消でも paid のまま（返金なし）。返金方法が NONE と記録され、精算が関与しないときだけ全額を残額として計上。 */
-        if (String(r.refundDecision || '').trim() === 'NONE' && price !== null && !basis.involved) { cell.actual += price; cell.retained += price; cell.actualCount++; }
-        else cell.refundUnsettledCount++;
+        if (String(r.refundDecision || '').trim() === 'NONE' && price !== null && !basis.involved) { ccell.actual += price; ccell.retained += price; ccell.actualCount++; }
+        else ccell.refundUnsettledCount++;
         return;
       }
+      /* 以下は通常の予約（利用日基準）。 */
+      if (ym.y !== year) { notes.bookingsOutOfYear++; return; }
+      var cell = months[ym.m - 1].studio[svc];
       if (r.status === 'PENDING') { notes.pendingCount++; return; }
-      if (r.status !== 'CONFIRMED') return; /* キャンセル（受領なし）・失効・不明は売上にしない */
+      if (r.status !== 'CONFIRMED') return; /* 失効・不明は売上にしない */
       if (price === null) { cell.unknownAmountCount++; return; }
       /* 明示的に記録された入金（feePaidAmount。現地払いの受領確認も含む）は、決済状態（旧来の paymentStatus）に関わらず受領額として扱う。 */
       if (passed && (kind === 'paid' || basis.hasRecord)) {
@@ -225,6 +238,7 @@ var OpsRevenue = (function () {
     if (totals.refundUnsettledCount > 0) partialReasons.push('REFUND_UNSETTLED');
     if (totals.settlementPendingCount > 0) partialReasons.push('SETTLEMENT_PENDING');
     if (totals.receiptUnresolvedCount > 0) partialReasons.push('RECEIPT_UNRESOLVED');
+    if (notes.cancelMonthUnknownCount > 0) partialReasons.push('CANCEL_MONTH_UNKNOWN');
     if (totals.unknownAmountCount > 0) partialReasons.push('AMOUNT_UNKNOWN');
     if (sources.members.state !== 'ready') partialReasons.push('MEMBERS_UNAVAILABLE');
     if (sources.options.state !== 'ready') partialReasons.push('OPTIONS_UNAVAILABLE');
@@ -257,7 +271,7 @@ var OpsRevenue = (function () {
       partial: { isPartial: partialReasons.length > 0, reasons: partialReasons },
       months: out,
       totals: { actual: totals.actual, scheduled: totals.scheduled, unconfirmed: totals.unconfirmed, refundedCount: totals.refundedCount, unknownAmountCount: totals.unknownAmountCount,
-        onsiteUnconfirmed: totals.onsiteUnconfirmed, onsiteUnconfirmedCount: totals.onsiteUnconfirmedCount, refundUnsettledCount: totals.refundUnsettledCount, retained: totals.retained, settlementPendingCount: totals.settlementPendingCount, receiptUnresolvedCount: totals.receiptUnresolvedCount,
+        onsiteUnconfirmed: totals.onsiteUnconfirmed, onsiteUnconfirmedCount: totals.onsiteUnconfirmedCount, refundUnsettledCount: totals.refundUnsettledCount, retained: totals.retained, settlementPendingCount: totals.settlementPendingCount, receiptUnresolvedCount: totals.receiptUnresolvedCount, cancelMonthUnknownCount: notes.cancelMonthUnknownCount,
         studioByService: byService, options: optionsTotal, members: membersTotal },
       goals: goals,
       forecast: forecast,

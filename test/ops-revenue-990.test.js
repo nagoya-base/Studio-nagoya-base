@@ -30,9 +30,11 @@ var SB = load();
 
 function jst(y, m, d, hh, mm) { return new Date(Date.UTC(y, m - 1, d, hh - 9, mm)); }
 var CARD = 'オンラインクレジットカード';
-var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name', 'paymentMethod', 'refundDecision', 'refundAmount', 'feePaidAmount', 'feeRefundedAmount', 'feeSettlementState', 'stripeAmount'];
+var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name', 'paymentMethod', 'refundDecision', 'refundAmount', 'feePaidAmount', 'feeRefundedAmount', 'feeSettlementState', 'stripeAmount', 'cancelledAt'];
 function booking(id, over) {
-  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME', paymentMethod: CARD, refundDecision: '', refundAmount: '', feePaidAmount: '', feeRefundedAmount: '', feeSettlementState: '', stripeAmount: '' }, over || {});
+  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME', paymentMethod: CARD, refundDecision: '', refundAmount: '', feePaidAmount: '', feeRefundedAmount: '', feeSettlementState: '', stripeAmount: '', cancelledAt: '' }, over || {});
+  /* 取消・返金の予約には、既定で取消確定日時（2026-11-10。既定の利用日と同月）を入れる。個別に上書きできる。 */
+  if (!over || !('cancelledAt' in over)) { if (b.status === 'CANCELLED' || /refund/.test(String(b.paymentStatus))) b.cancelledAt = jst(2026, 11, 10, 9, 0); }
   return HEADER.map(function (h) { return b[h]; });
 }
 function ledger(rows) { return { values: [HEADER].concat(rows) }; }
@@ -432,4 +434,63 @@ test('画面: 受領済みの可能性があるが集計不可の件数と理由
   d.revenue.partial = { isPartial: true, reasons: ['SNBC_NOT_CONNECTED', 'RECEIPT_UNRESOLVED'] };
   var html = R.renderRevenue(stateOf(d));
   assert.ok(/受領済みの可能性があるが集計不可/.test(html) && /2件/.test(html) && /二重算入を避ける/.test(html));
+});
+
+/* ---------- タケル再レビュー(#992) P1: キャンセル料は取消確定月（cancelledAt・JST）に計上 ---------- */
+test('P1: キャンセル料は取消確定月に計上する（2026-12-20利用予定・2026-11-20取消・6,000円受領・2,000円一部返金完了 → 11月に4,000円、12月は0円）', function () {
+  var res = call([booking('Z1', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: 2000,
+    date: '2026-12-20', startAt: jst(2026, 12, 20, 10, 0), endAt: jst(2026, 12, 20, 12, 0), cancelledAt: jst(2026, 11, 20, 9, 0) })]);
+  var m = res.revenue.months;
+  assert.strictEqual(m[10].actual, 4000, '11月');
+  assert.strictEqual(m[11].actual, 0, '12月');
+  assert.strictEqual(res.revenue.totals.retained, 4000);
+});
+
+test('P1: 年をまたぐ取消 — 2027-01利用予定を2026-11に取消（返金なし）は2026年の実績。2026年の予定を2025年に取消したものは2026年に入れない', function () {
+  var res = call([
+    booking('Y1', { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 5000, refundDecision: 'NONE', refundAmount: 0, date: '2027-01-15', startAt: jst(2027, 1, 15, 10, 0), endAt: jst(2027, 1, 15, 12, 0), cancelledAt: jst(2026, 11, 5, 9, 0) }),
+    booking('Y2', { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 7000, refundDecision: 'NONE', refundAmount: 0, date: '2026-03-15', startAt: jst(2026, 3, 15, 10, 0), endAt: jst(2026, 3, 15, 12, 0), cancelledAt: jst(2025, 12, 28, 9, 0) })
+  ]);
+  assert.strictEqual(res.revenue.totals.actual, 5000);
+  assert.strictEqual(res.revenue.months[10].actual, 5000, '取消確定月（11月）');
+  assert.strictEqual(res.revenue.months[2].actual, 0, '利用予定月（3月）には入れない');
+  var y25 = call([booking('Y2', { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 7000, refundDecision: 'NONE', refundAmount: 0, date: '2026-03-15', startAt: jst(2026, 3, 15, 10, 0), endAt: jst(2026, 3, 15, 12, 0), cancelledAt: jst(2025, 12, 28, 9, 0) })], null, { year: 2025 });
+  assert.strictEqual(y25.revenue.months[11].actual, 7000, '2025年12月の実績');
+});
+
+test('P1: 取消確定日時が空・不正・未来のときは利用予定月へフォールバックせず「取消計上月不明」で除外。受領なしの取消は数えない。月境界はJST', function () {
+  var base = { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 5000, refundDecision: 'NONE', refundAmount: 0 };
+  var res = call([
+    booking('U1', Object.assign({}, base, { cancelledAt: '' })),
+    booking('U2', Object.assign({}, base, { cancelledAt: 'not a date' })),
+    booking('U3', Object.assign({}, base, { cancelledAt: jst(2027, 1, 5, 9, 0) })),   /* 未来 */
+    booking('U4', { status: 'CANCELLED', paymentStatus: 'not_started', priceAmount: 5000, cancelledAt: '' }), /* 受領なし：数えない */
+    booking('U5', Object.assign({}, base, { cancelledAt: new Date(Date.UTC(2026, 9, 31, 15, 30)) })) /* UTC 10/31 15:30 = JST 11/1 00:30 → 11月 */
+  ]);
+  var t = res.revenue.totals;
+  assert.strictEqual(t.cancelMonthUnknownCount, 3);
+  assert.strictEqual(t.actual, 5000);
+  assert.strictEqual(res.revenue.months[10].actual, 5000, 'JSTの11月');
+  assert.ok(res.revenue.partial.reasons.indexOf('CANCEL_MONTH_UNKNOWN') !== -1);
+});
+
+test('P1: FULL・NONE・PARTIAL・返金中・返金額不明を取消確定月で正しく扱う', function () {
+  var c = jst(2026, 11, 20, 9, 0);
+  var res = call([
+    booking('M1', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'FULL', refundAmount: 6000, cancelledAt: c }),
+    booking('M2', { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 3000, refundDecision: 'NONE', refundAmount: 0, cancelledAt: c }),
+    booking('M3', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: 2000, cancelledAt: c }),
+    booking('M4', { status: 'CANCELLED', paymentStatus: 'refund_pending', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: 2000, cancelledAt: c }),
+    booking('M5', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: '', cancelledAt: c })
+  ]);
+  assert.strictEqual(res.revenue.months[10].actual, 3000 + 4000);
+  assert.strictEqual(res.revenue.totals.refundUnsettledCount, 2);
+});
+
+test('画面: 取消計上月不明の件数を表示し、月の行は利用日ベースの一覧であることを明記する', function () {
+  var d = resp(); d.revenue.totals.cancelMonthUnknownCount = 2;
+  d.revenue.partial = { isPartial: true, reasons: ['SNBC_NOT_CONNECTED', 'CANCEL_MONTH_UNKNOWN'] };
+  var html = R.renderRevenue(stateOf(d));
+  assert.ok(/取消計上月不明/.test(html) && /2件/.test(html) && /利用予定月へは振り替えず/.test(html));
+  assert.ok(/利用日ベース/.test(html) && /取消確定月/.test(html));
 });
