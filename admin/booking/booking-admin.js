@@ -3928,7 +3928,6 @@ function initInternalSlotUi_() {
   internalSlotUi_.panel = panel;
   internalSlotUi_.listEl = document.getElementById('internal-slot-list');
   panel.addEventListener('click', internalSlotMinClick_);
-  document.addEventListener('click', function (ev) { if (!panel.contains(ev.target)) internalSlotMinClick_(ev); });
   internalSlotField_('submit').addEventListener('click', internalSlotSubmit_);
   internalSlotField_('cancel-edit').addEventListener('click', internalSlotResetForm_);
   /* 開いたときだけ取得する（通常の予約一覧の読み込みに影響させない）。 */
