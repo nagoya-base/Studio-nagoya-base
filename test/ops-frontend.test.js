@@ -462,3 +462,9 @@ test('画面(#953): 呼び出し自体の失敗は台帳取得の失敗と区別
   assert.deepStrictEqual(contract.validateError({ ok: false, error: { code: 'FETCH_FAILED', message: 'x', diagnostic: { code: 'DATA/TRANSIENT/503', advice: '案内' } } }), []);
   assert.ok(contract.validateError({ ok: false, error: { code: 'FORBIDDEN', message: 'x', diagnostic: { code: 'DATA/TRANSIENT/503', advice: '案内' } } }).length > 0);
 });
+
+test('Issue #1000: button.inline.btn-primary は青背景に on-accent 文字色が勝つ（青文字化の回帰防止）', function () {
+  var html = fs.readFileSync(path.join(FRONT, 'index.html'), 'utf8');
+  assert.ok(/button\.inline\.btn-primary\s*\{[^}]*background:var\(--blue\);[^}]*color:var\(--on-accent\)/.test(html));
+  assert.ok(html.indexOf('button.inline.btn-primary') > html.indexOf('button.inline { margin-top'));
+});
