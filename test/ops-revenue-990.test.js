@@ -512,3 +512,12 @@ test('レビュー対応(#992): 取消・失効に紐づく支払い済みオプ
   var d = resp(); d.revenue.notes.optionInactiveCount = 2;
   assert.ok(/取消・失効・仮予約に紐づく支払い済みオプションが 2 件/.test(R.renderRevenue(stateOf(d))));
 });
+
+test('レビュー対応(#992): 受領記録のある現地払いの取消は、残る額を確定できないので黙って落とさず「返金処理中・結果不明」に数える', function () {
+  var res = call([
+    booking('Q1', { status: 'CANCELLED', paymentMethod: '現地払い（現金）', paymentStatus: 'not_started', priceAmount: 10000, feePaidAmount: 10000, feeSettlementState: 'SETTLED' }),
+    booking('Q2', { status: 'CANCELLED', paymentMethod: '現地払い（現金）', paymentStatus: 'not_started', priceAmount: 10000 }) /* 受領の記録なし：数えない */
+  ]);
+  assert.strictEqual(res.revenue.totals.refundUnsettledCount, 1);
+  assert.strictEqual(res.revenue.totals.actual, 0);
+});

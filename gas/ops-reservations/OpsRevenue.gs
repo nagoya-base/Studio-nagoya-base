@@ -135,7 +135,7 @@ var OpsRevenue = (function () {
        * 取消確定日時が空・不正・未来のときは、利用予定月へフォールバックせず「取消計上月不明」として集計から除外する（金額に含めない）。
        */
       if (r.status === 'CANCELLED' || kind === 'refund') {
-        if (kind !== 'paid' && kind !== 'refund') return; /* 受領なしの取消は売上にしない */
+        if (kind !== 'paid' && kind !== 'refund' && !basis.hasRecord) return; /* 受領の記録がない取消は売上にしない */
         var cMs = toMs_(r.cancelledAt);
         if (cMs === null || cMs > nowMs) { notes.cancelMonthUnknownCount++; return; }
         var cym = jstYearMonth_(cMs);
@@ -149,6 +149,8 @@ var OpsRevenue = (function () {
           else if (net > 0) { ccell.actual += net; ccell.retained += net; ccell.actualCount++; }
           return;
         }
+        /* 現地払い等で、受領の記録（feePaidAmount）はあるが決済状態が paid でない取消は、残る額を確定できないので金額に含めず警告する。 */
+        if (kind !== 'paid') { ccell.refundUnsettledCount++; return; }
         /* 取消でも paid のまま（返金なし）。返金方法が NONE と記録され、精算が関与しないときだけ全額を残額として計上。 */
         if (String(r.refundDecision || '').trim() === 'NONE' && price !== null && !basis.involved) { ccell.actual += price; ccell.retained += price; ccell.actualCount++; }
         else ccell.refundUnsettledCount++;
