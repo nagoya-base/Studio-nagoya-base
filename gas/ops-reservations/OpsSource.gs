@@ -124,6 +124,16 @@ var OpsSource = (function () {
    * シートが無ければ opsCode 'SHEET_NOT_FOUND'。
    */
   function readBookings(deps) {
+    return readSheet(deps, { sheetName: SHEET_NAME, columns: OpsNormalizer.ALLOWED_COLUMNS, dateColumns: DATE_COLUMNS });
+  }
+
+  /*
+   * 収益集計（Issue #990 PR-B）用に、同じ台帳ファイルの別シートを「列の許可リスト」だけ読む（金額・日付・識別子のみ。
+   * メール・氏名・Stripe IDなどの列は取得しない）。仕組みは readBookings と同一（Sheets API v4 の GET のみ）。
+   * spec: { sheetName, columns: [列名...], dateColumns: [列名...] }
+   */
+  function readSheet(deps, spec) {
+    var SHEET_NAME = spec.sheetName;
     var base = API_BASE + encodeURIComponent(deps.spreadsheetId);
     function get(tail, stage) {
       var token;
@@ -151,7 +161,7 @@ var OpsSource = (function () {
     var headerRes = get('/values/' + q('1:1') + '?' + RENDER, 'HEADER');
     var header = ((headerRes.values && headerRes.values[0]) || []).map(function (h) { return String(h).trim(); });
     /* 射影する前の元ヘッダーで、許可項目の列名の重複を検出して停止する（射影後は重複が見えなくなる）。 */
-    var duplicated = OpsNormalizer.ALLOWED_COLUMNS.filter(function (name) {
+    var duplicated = spec.columns.filter(function (name) {
       return header.filter(function (h) { return h === name; }).length > 1;
     });
     if (duplicated.length) {
@@ -160,7 +170,7 @@ var OpsSource = (function () {
       throw dup;
     }
     var wanted = [];
-    OpsNormalizer.ALLOWED_COLUMNS.forEach(function (name) {
+    spec.columns.forEach(function (name) {
       var i = header.indexOf(name);
       if (i !== -1) wanted.push({ name: name, col: i + 1 });
     });
@@ -180,11 +190,11 @@ var OpsSource = (function () {
     for (var i = 0; i < rowCount; i++) {
       out.push(wanted.map(function (w, k) {
         var cell = columns[k][i] && columns[k][i][0] !== undefined && columns[k][i][0] !== null ? columns[k][i][0] : '';
-        return typeof cell === 'number' && isFinite(cell) && DATE_COLUMNS.indexOf(w.name) !== -1 ? serialToDate_(cell, offset) : cell;
+        return typeof cell === 'number' && isFinite(cell) && spec.dateColumns.indexOf(w.name) !== -1 ? serialToDate_(cell, offset) : cell;
       }));
     }
     return out;
   }
 
-  return { readBookings: readBookings, MAX_ROWS: MAX_ROWS, DATE_COLUMNS: DATE_COLUMNS, STAGES: STAGES };
+  return { readBookings: readBookings, readSheet: readSheet, MAX_ROWS: MAX_ROWS, DATE_COLUMNS: DATE_COLUMNS, STAGES: STAGES };
 })();

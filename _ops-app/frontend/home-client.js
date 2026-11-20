@@ -334,7 +334,16 @@
     /* 起動時のホームは既に表示中。取得済みの応答は各コントローラーの変更通知で描画する。 */
     tasks.load();
     render();
-    return { render: render, model: model, show: show, sync: sync };
+    /* 売上の月別行から、その月の予約一覧（キャンセル除外・全サービス）へ移る。ホームに戻ると条件はホームの月へ戻る。 */
+    function drill(ym) {
+      var r = monthRange(ym);
+      if (!r) return;
+      res.closeDetail();
+      res.setFilters({ service: 'all', status: 'active', scope: 'custom', from: r.from, to: r.to });
+      res.reload();
+      go('res');
+    }
+    return { render: render, model: model, show: show, sync: sync, drill: drill };
   }
 
   return { esc: esc, jstMonth: jstMonth, monthRange: monthRange, addMonths: addMonths, monthOptions: monthOptions, todayText: todayText,

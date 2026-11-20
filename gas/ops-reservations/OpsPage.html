@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   OpsPage.html — 自動生成（scripts/build-ops-gas-page.js）。手で編集しない。
-  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / home-client.js / gas-adapter.js）。Issue #936 / #941 / #990。
+  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / home-client.js / revenue-client.js / gas-adapter.js）。Issue #936 / #941 / #990。
   予約は読み取り専用、メモは専用保存先のみ。google.script.run は gas-adapter.js のみ。応答はエスケープして描画する。
 -->
 <html lang="ja">
@@ -138,6 +138,32 @@
       .uprow .c-when, .uprow .c-svc, .uprow .c-ppl, .uprow .c-st, .uprow .chev { grid-column:auto; grid-row:auto; }
       .uprow .c-svc, .uprow .c-ppl { font-size:inherit; color:inherit; }
     }
+    /* 売上（年商）KPI */
+    .revhead { margin-top:18px; max-width:200px; }
+    .revhead label { font-size:.8rem; color:var(--muted); display:block; }
+    .revhead select { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+    .rtabs { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
+    .rhero, .rmonth { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:10px; box-shadow:0 1px 2px rgba(20,40,75,.06); }
+    .rlabel { font-size:.8rem; color:var(--muted); }
+    .rnum { font-size:2rem; font-weight:700; color:var(--navy); line-height:1.25; overflow-wrap:anywhere; }
+    .rnum.sm { font-size:1.5rem; }
+    .rnum small { font-size:.9rem; font-weight:500; color:var(--muted); }
+    @media (prefers-color-scheme: dark) { .rnum { color:var(--fg); } }
+    .rbar { display:block; height:10px; border-radius:999px; background:var(--blue-soft); overflow:hidden; margin:6px 0; min-width:60px; }
+    .rbar > span { display:block; height:100%; background:var(--blue); }
+    .rsub { font-size:.85rem; margin-top:2px; }
+    .dim { color:var(--muted); }
+    h3.sub3 { font-size:.9rem; margin:14px 0 6px; color:var(--muted); }
+    .rbreak { list-style:none; padding:0; margin:0; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+    .rbreak b { text-align:right; }
+    .rbreak b:not(.dim) { white-space:nowrap; }
+    .rbreak li { display:flex; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+    .rbreak li:last-child { border-bottom:0; }
+    .mlist { list-style:none; padding:0; margin:0; display:grid; gap:4px; }
+    .mrow { display:grid; grid-template-columns:3em 6.5em 1fr 4.5em; align-items:center; gap:8px; text-align:left; min-height:44px; padding:4px 10px; border-radius:8px; }
+    .mrow.cur { border-color:var(--blue); background:var(--blue-soft); }
+    .mrate { text-align:right; font-size:.8rem; color:var(--muted); }
+    @media (min-width: 900px) { #revenue-view { display:block; } }
   </style>
 </head>
 <body>
@@ -169,6 +195,8 @@
       </div>
       <div id="home-stamp"></div>
       <div id="home-view"></div>
+      <div class="revhead"><label>売上の対象年<select id="rev-year"></select></label></div>
+      <div id="revenue-view"></div>
     </section>
     <div id="res-panel" hidden>
       <div id="banner"></div>
@@ -1229,12 +1257,179 @@
     /* 起動時のホームは既に表示中。取得済みの応答は各コントローラーの変更通知で描画する。 */
     tasks.load();
     render();
-    return { render: render, model: model, show: show, sync: sync };
+    /* 売上の月別行から、その月の予約一覧（キャンセル除外・全サービス）へ移る。ホームに戻ると条件はホームの月へ戻る。 */
+    function drill(ym) {
+      var r = monthRange(ym);
+      if (!r) return;
+      res.closeDetail();
+      res.setFilters({ service: 'all', status: 'active', scope: 'custom', from: r.from, to: r.to });
+      res.reload();
+      go('res');
+    }
+    return { render: render, model: model, show: show, sync: sync, drill: drill };
   }
 
   return { esc: esc, jstMonth: jstMonth, monthRange: monthRange, addMonths: addMonths, monthOptions: monthOptions, todayText: todayText,
     selectPriority: selectPriority, selectUpcoming: selectUpcoming, resStatus: resStatus, taskStatus: taskStatus, buildCards: buildCards,
     renderHome: renderHome, renderCard: renderCard, renderStamp: renderStamp, mount: mount, SERVICE_CHIPS: SERVICE_CHIPS };
+});
+
+</script>
+  <script>
+/*
+ * revenue-client.js — 年商（売上）目標の達成状況と月次KPI（Issue #990 PR-B）。
+ *
+ * - 集計はバックエンド（OpsRevenue.gs）が行う。ここは応答を描画するだけで、金額を計算し直したり推計したりしない
+ *   （達成率の表示用の割り算と、表示上の丸めのみ）。
+ * - 80万円・130万円は年商（売上）目標。利益ではない。経費・利益・SNBCイベント収益は未接続なら「未接続」と表示し、0円にしない。
+ * - 実績（利用が過ぎ、かつ支払い済み）／予定／利用済み・入金未確認／返金は別項目。予定は達成率に入れない。
+ * - 取得失敗・権限なし・一部ソース未接続・台帳の読めない行は、実績が不完全であることを明示する。
+ * - 描画は文字列をすべてエスケープする。個人名・予約IDは扱わない。
+ */
+(function (root, factory) {
+  var api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.OpsRevenueClient = api;
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  var DENIED_CODES = ['UNAUTHENTICATED', 'FORBIDDEN'];
+  var SERVICE_LABELS = { snb: 'SNB', snb_mens: 'SNB Mens', studio_x: 'Studio X', unclassified: '未分類（ブランド不明）' };
+
+  function esc(value) {
+    return String(value === null || value === undefined ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function yen(n) { return '¥' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  /* 達成率は切り捨て（100%未満を100%と見せない）。 */
+  function pct(rate) { return (Math.floor(rate * 1000) / 10).toFixed(1) + '%'; }
+  function bar(rate) { return '<span class="rbar" aria-hidden="true"><span style="width:' + Math.min(100, Math.max(0, Math.floor(rate * 100))) + '%"></span></span>'; }
+
+  function createController(api, onChange, options) {
+    var opts = options || {};
+    var state = { phase: 'idle', data: null, error: null, year: opts.year || null, goal: 'base', mock: !!(api && api.kind === 'mock') };
+    var seq = 0;
+    function emit() { if (onChange) onChange(state); }
+    function load() {
+      var mine = ++seq;
+      state.phase = state.data ? 'refreshing' : 'loading'; state.error = null; emit();
+      var params = state.year ? { year: state.year } : {};
+      if (!api || typeof api.revenue !== 'function') { state.phase = 'error'; state.error = { message: 'この画面では売上を取得できません。' }; emit(); return; }
+      api.revenue(params, function (res) {
+        if (mine !== seq) return;
+        if (res && res.ok) { state.data = res; state.phase = 'ready'; if (!state.year) state.year = res.revenue.year; }
+        else if (res && res.error && DENIED_CODES.indexOf(res.error.code) !== -1) { state.data = null; state.phase = 'denied'; state.error = res.error; }
+        else { state.phase = 'error'; state.error = res && res.error ? res.error : { message: '売上の取得に失敗しました。' }; }
+        emit();
+      }, function () {
+        if (mine !== seq) return;
+        state.phase = 'error'; state.error = { message: '売上の取得に失敗しました（通信エラー）。' }; emit();
+      });
+    }
+    function setYear(y) { state.year = Number(y); state.data = null; load(); }
+    function setGoal(id) { state.goal = id === 'upper' ? 'upper' : 'base'; emit(); }
+    return { state: state, load: load, setYear: setYear, setGoal: setGoal };
+  }
+
+  function sourceNote(name, src) {
+    if (!src || src.state === 'ready') return null;
+    return src.state === 'error' ? name + 'の取得に失敗しました（金額に含めていません）' : name + 'は未接続です（金額に含めていません）';
+  }
+
+  function renderMonths(rev, goalAmount, year) {
+    var base = goalAmount / 12;
+    var rows = rev.months.map(function (m) {
+      var future = rev.currentMonth !== null && m.month > rev.currentMonth;
+      var ym = year + '-' + (m.month < 10 ? '0' : '') + m.month;
+      var rate = base > 0 ? m.actual / base : 0;
+      return '<li><button type="button" class="mrow' + (rev.currentMonth === m.month ? ' cur' : '') + '" data-rev="month" data-month="' + esc(ym) + '">' +
+        '<span class="mname">' + m.month + '月</span>' +
+        '<span class="mval">' + (future && m.actual === 0 ? '<span class="dim">—</span>' : esc(yen(m.actual))) + '</span>' +
+        bar(rate) + '<span class="mrate">' + (future && m.actual === 0 ? '' : esc(pct(rate))) + '</span></button></li>';
+    }).join('');
+    return '<ul class="mlist">' + rows + '</ul><p class="note">月の行を押すと、その月の予約一覧を開きます（金額は予約・会員費・オプションの合計のため、一覧の件数とは一致しません）。</p>';
+  }
+
+  function renderRevenue(state) {
+    var head = '<h2 class="sec">年商の達成状況（売上・暦年）</h2>';
+    var mock = state.mock ? '<div class="banner stale">モックデータ（架空）です。実際の売上ではありません。</div>' : '';
+    if (state.phase === 'idle' || (state.phase === 'loading' && !state.data)) return head + mock + '<div class="banner loading" role="status">売上を取得中…</div>';
+    if (state.phase === 'denied') return head + '<div class="banner err">売上を表示する権限がありません。</div>';
+    if (state.phase === 'error' && !state.data) return head + mock + '<div class="banner err">' + esc(state.error && state.error.message || '売上の取得に失敗しました。') + '（0円という意味ではありません）<br><button type="button" class="inline" data-rev="retry">売上を再取得</button></div>';
+    var d = state.data, rev = d.revenue;
+    var goal = rev.goals.filter(function (g) { return g.id === state.goal; })[0] || rev.goals[0];
+    var t = rev.totals;
+    var html = head + mock;
+    if (state.phase === 'error') html += '<div class="banner stale">最新の取得に失敗しました。古い内容を表示しています。</div>';
+    var incomplete = [];
+    var n1 = sourceNote('会員費', rev.sources.members), n2 = sourceNote('有料オプション', rev.sources.options);
+    if (n1) incomplete.push(n1); if (n2) incomplete.push(n2);
+    if (d.excludedRows > 0) incomplete.push('台帳の ' + d.excludedRows + ' 件が読み込めず一覧から除外されています');
+    if (t.unknownAmountCount > 0) incomplete.push('金額が読めない確定予約が ' + t.unknownAmountCount + ' 件あります（金額に含めていません）');
+    if (incomplete.length) html += '<div class="banner stale" role="alert"><strong>実績は不完全です：</strong>' + incomplete.map(esc).join(' ／ ') + '</div>';
+
+    html += '<div class="rtabs" role="group" aria-label="目標の切替">' + rev.goals.map(function (g) {
+      return '<button type="button" class="chip" data-rev="goal" data-goal="' + esc(g.id) + '" aria-pressed="' + (g.id === goal.id ? 'true' : 'false') + '">' + esc(g.label) + ' ' + esc(yen(g.amount)) + '</button>';
+    }).join('') + '</div>';
+    html += '<div class="rhero"><div class="rlabel">' + esc(rev.year) + '年の実績売上（年累計）</div><div class="rnum">' + esc(yen(t.actual)) + '<small> / ' + esc(yen(goal.amount)) + '</small></div>' +
+      bar(goal.rate) + '<div class="rsub"><strong>達成率 ' + esc(pct(goal.rate)) + '</strong> ・ 残額 ' + esc(yen(goal.remaining)) + '</div>';
+    if (goal.requiredMonthlyAverage !== null) html += '<div class="rsub">達成に必要な月平均（当月を含む残り月数で割った値）: ' + esc(yen(goal.requiredMonthlyAverage)) + '</div>';
+    if (rev.forecast !== null) html += '<div class="rsub dim">参考予測: ' + esc(yen(rev.forecast)) + '（年初からの実績ペースが続いた場合の年末見込。予測であり、達成率には含めません）</div>';
+    html += '</div>';
+
+    if (rev.currentMonth !== null) {
+      var cur = rev.months[rev.currentMonth - 1], prev = rev.currentMonth > 1 ? rev.months[rev.currentMonth - 2] : null;
+      var rate = goal.monthlyBase > 0 ? cur.actual / goal.monthlyBase : 0;
+      html += '<div class="rmonth"><div class="rlabel">当月（' + rev.currentMonth + '月）の実績 / 基準月額 ' + esc(yen(goal.monthlyBase)) + '（年間目標÷12）</div>' +
+        '<div class="rnum sm">' + esc(yen(cur.actual)) + '</div>' + bar(rate) +
+        '<div class="rsub"><strong>月次達成度 ' + esc(pct(rate)) + '</strong>' + (prev ? ' ・ 前月比 ' + (cur.actual - prev.actual >= 0 ? '+' : '−') + esc(yen(Math.abs(cur.actual - prev.actual))) + '（前月 ' + esc(yen(prev.actual)) + '）' : '') + '</div></div>';
+    }
+
+    html += '<h3 class="sub3">内訳（年累計の実績売上）</h3><ul class="rbreak">';
+    ['snb', 'snb_mens', 'studio_x'].forEach(function (s) { html += '<li><span>' + esc(SERVICE_LABELS[s]) + '</span><b>' + esc(yen(t.studioByService[s])) + '</b></li>'; });
+    if (t.studioByService.unclassified > 0) html += '<li><span>' + esc(SERVICE_LABELS.unclassified) + '</span><b>' + esc(yen(t.studioByService.unclassified)) + '</b></li>';
+    html += '<li><span>会員費（入金日基準）</span>' + (rev.sources.members.state === 'ready' ? '<b>' + esc(yen(t.members)) + '</b>' : '<b class="dim">' + (rev.sources.members.state === 'error' ? '取得失敗' : '未接続') + '</b>') + '</li>';
+    html += '<li><span>有料オプション</span>' + (rev.sources.options.state === 'ready' ? '<b>' + esc(yen(t.options)) + '</b>' : '<b class="dim">' + (rev.sources.options.state === 'error' ? '取得失敗' : '未接続') + '</b>') + '</li>';
+    html += '<li><span>SNBC イベント収益</span><b class="dim">未接続（正本が未実装）</b></li></ul>';
+
+    html += '<h3 class="sub3">実績に含めない項目（別枠）</h3><ul class="rbreak">' +
+      '<li><span>予定（確定済み・利用がこれから）</span><b>' + esc(yen(t.scheduled)) + '</b></li>' +
+      '<li><span>利用済み・入金未確認（現地払い等）</span><b>' + esc(yen(t.unconfirmed)) + '</b></li>' +
+      '<li><span>返金（件数のみ）</span><b>' + esc(t.refundedCount) + '件</b></li>' +
+      '<li><span>経費・利益</span><b class="dim">未接続（売上達成率から差し引きません）</b></li></ul>';
+    html += '<h3 class="sub3">月別の実績</h3>' + renderMonths(rev, goal.amount, rev.year);
+    html += '<p class="note">計上基準: ' + esc(rev.basis) + ' 最終取得 ' + esc((d.fetchedAt || '').slice(0, 16).replace('T', ' ')) + '</p>';
+    return html;
+  }
+
+  /* DOMへの結線。opts.onDrill({ month: 'YYYY-MM' }) で月の予約一覧へ移る。 */
+  function mount(doc, api, options) {
+    var opts = options || {};
+    function $(id) { return doc.getElementById(id); }
+    var now = opts.now ? opts.now() : Date.now();
+    var curYear = new Date(now + 9 * 3600 * 1000).getUTCFullYear();
+    $('rev-year').innerHTML = [curYear - 1, curYear].map(function (y) { return '<option value="' + y + '">' + y + '年</option>'; }).join('');
+    var ctl = createController(api, function (state) {
+      if (state.year) $('rev-year').value = String(state.year);
+      $('revenue-view').innerHTML = renderRevenue(state);
+      if (opts.onChange) opts.onChange(state);
+    }, { year: curYear });
+    $('rev-year').addEventListener('change', function () { ctl.setYear($('rev-year').value); });
+    $('revenue-view').addEventListener('click', function (e) {
+      var node = e.target;
+      while (node && node !== $('revenue-view')) {
+        var act = node.getAttribute && node.getAttribute('data-rev');
+        if (act === 'goal') { ctl.setGoal(node.getAttribute('data-goal')); return; }
+        if (act === 'retry') { ctl.load(); return; }
+        if (act === 'month') { if (opts.onDrill) opts.onDrill({ month: node.getAttribute('data-month') }); return; }
+        node = node.parentNode;
+      }
+    });
+    ctl.load();
+    return ctl;
+  }
+
+  return { esc: esc, yen: yen, pct: pct, createController: createController, renderRevenue: renderRevenue, mount: mount };
 });
 
 </script>
@@ -1269,7 +1464,9 @@
       list: function (params, ok, ng) { call('opsListReservations', params, ok, ng); },
       detail: function (id, ok, ng) { call('opsGetReservation', id, ok, ng); },
       /* 鍵・案内の状況（#942）。読み取り専用。接続先・トークンは画面に渡らない。 */
-      keyStatus: function (id, ok, ng) { call('opsGetKeyStatus', id, ok, ng); }
+      keyStatus: function (id, ok, ng) { call('opsGetKeyStatus', id, ok, ng); },
+      /* 年商・月次の売上集計（#990 PR-B）。読み取り専用。 */
+      revenue: function (params, ok, ng) { call('opsGetRevenue', params, ok, ng); }
     };
   }
 
@@ -1306,8 +1503,9 @@
         { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });
       var tasksCtl = OpsTasksClient.mount(document, OpsGasAdapter.createGasTasksApi(google.script.run), { onChange: function () { if (home) home.render(); } });
       home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl });
+      OpsRevenueClient.mount(document, OpsGasAdapter.createGasApi(google.script.run), { onDrill: function (d) { home.drill(d.month); } });
     })();
   </script>
-  <p class="note" style="text-align:center">画面版 ops-ui-2（Phase 2）</p>
+  <p class="note" style="text-align:center">画面版 ops-ui-3（Phase 2 / 売上KPI）</p>
 </body>
 </html>

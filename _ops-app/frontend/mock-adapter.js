@@ -120,8 +120,36 @@
       'MOCK-007': function () { return keyView('REVOKE_UNCONFIRMED', '失効未確認', 'warn', [], [keyOp('失効待ち', null)], { code: 'REVOKING', label: '失効処理中（失効の確認待ち）', tone: 'warn', alert: false }); }
     };
 
+    /* 年商KPI（#990 PR-B）の架空応答。金額はすべて架空。SNBC・経費は未接続のまま。?scenario=error/denied は失敗を返す。 */
+    function mockRevenue(params) {
+      var yearNow = new Date(nowMs + 9 * 3600 * 1000).getUTCFullYear();
+      var monthNow = new Date(nowMs + 9 * 3600 * 1000).getUTCMonth() + 1;
+      var year = params && params.year ? params.year : yearNow;
+      var amounts = [0, 0, 18000, 22000, 0, 30000, 26000, 0, 41000, 38000, 52000, 12000];
+      var months = amounts.map(function (a, i) {
+        var m = i + 1, past = year < yearNow || (year === yearNow && m <= monthNow);
+        var cell = function (v) { return { actual: past ? v : 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, actualCount: 0 }; };
+        var studio = { snb: cell(past ? Math.round(a * 0.6) : 0), snb_mens: cell(past ? Math.round(a * 0.1) : 0), studio_x: cell(past ? Math.round(a * 0.3) : 0), unclassified: cell(0) };
+        return { month: m, studio: studio, options: { actual: 0, scheduled: 0 }, members: { actual: 0 }, actual: past ? a : 0, scheduled: year === yearNow && m === monthNow ? 14000 : 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0 };
+      });
+      var total = months.reduce(function (t, m) { return t + m.actual; }, 0);
+      var by = { snb: 0, snb_mens: 0, studio_x: 0, unclassified: 0 };
+      months.forEach(function (m) { Object.keys(by).forEach(function (k) { by[k] += m.studio[k].actual; }); });
+      var goals = [{ id: 'base', label: '基本目標', amount: 800000 }, { id: 'upper', label: '上位目標', amount: 1300000 }].map(function (g) {
+        return { id: g.id, label: g.label, amount: g.amount, rate: total / g.amount, remaining: Math.max(0, g.amount - total), monthlyBase: g.amount / 12, requiredMonthlyAverage: year === yearNow ? Math.max(0, g.amount - total) / (12 - (monthNow - 1)) : null };
+      });
+      return { ok: true, contractVersion: 1, fetchedAt: isoNow(nowMs), excludedRows: 0, revenue: {
+        year: year, currentMonth: year === yearNow ? monthNow : null, basis: '（モック）実績売上＝利用日が過ぎ、かつ支払い済み（paid）。',
+        sources: { studio: { state: 'ready' }, options: { state: 'not_connected' }, members: { state: 'not_connected' }, snbc: { state: 'not_connected' }, expenses: { state: 'not_connected' } },
+        months: months, totals: { actual: total, scheduled: 14000, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, studioByService: by, options: 0, members: 0 },
+        goals: goals, forecast: year === yearNow ? Math.round(total / 300 * 365) : null, notes: { pendingCount: 0, optionUnmatchedCount: 0 } } };
+    }
+
     return {
       kind: 'mock',
+      revenue: function (params, ok) {
+        defer(function () { var f = failure(); ok(f || mockRevenue(params)); });
+      },
       keyStatus: function (id, ok) {
         defer(function () {
           if (keyScenario === 'denied') return ok(err('FORBIDDEN', '権限がありません。（モック）'));

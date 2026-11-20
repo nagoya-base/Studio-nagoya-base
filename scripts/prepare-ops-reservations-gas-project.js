@@ -21,7 +21,7 @@ var SRC = path.join(ROOT, 'gas', 'ops-reservations');
 
 /* 配布するファイル。GASは同一グローバルで読み込むためファイル順は関係しない（関数宣言のみ）。 */
 var COPIED = [
-  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsKeyFinal.gs', 'OpsKeyFinalStore.gs', 'OpsKeyStatus.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
+  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsKeyFinal.gs', 'OpsKeyFinalStore.gs', 'OpsKeyStatus.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsRevenue.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
 ];
 var GENERATED = ['OpsPage.html'];
 

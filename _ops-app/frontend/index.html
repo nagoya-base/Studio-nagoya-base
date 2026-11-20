@@ -141,6 +141,32 @@
       .uprow .c-when, .uprow .c-svc, .uprow .c-ppl, .uprow .c-st, .uprow .chev { grid-column:auto; grid-row:auto; }
       .uprow .c-svc, .uprow .c-ppl { font-size:inherit; color:inherit; }
     }
+    /* 売上（年商）KPI */
+    .revhead { margin-top:18px; max-width:200px; }
+    .revhead label { font-size:.8rem; color:var(--muted); display:block; }
+    .revhead select { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+    .rtabs { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
+    .rhero, .rmonth { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:10px; box-shadow:0 1px 2px rgba(20,40,75,.06); }
+    .rlabel { font-size:.8rem; color:var(--muted); }
+    .rnum { font-size:2rem; font-weight:700; color:var(--navy); line-height:1.25; overflow-wrap:anywhere; }
+    .rnum.sm { font-size:1.5rem; }
+    .rnum small { font-size:.9rem; font-weight:500; color:var(--muted); }
+    @media (prefers-color-scheme: dark) { .rnum { color:var(--fg); } }
+    .rbar { display:block; height:10px; border-radius:999px; background:var(--blue-soft); overflow:hidden; margin:6px 0; min-width:60px; }
+    .rbar > span { display:block; height:100%; background:var(--blue); }
+    .rsub { font-size:.85rem; margin-top:2px; }
+    .dim { color:var(--muted); }
+    h3.sub3 { font-size:.9rem; margin:14px 0 6px; color:var(--muted); }
+    .rbreak { list-style:none; padding:0; margin:0; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+    .rbreak b { text-align:right; }
+    .rbreak b:not(.dim) { white-space:nowrap; }
+    .rbreak li { display:flex; justify-content:space-between; gap:12px; padding:10px 12px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+    .rbreak li:last-child { border-bottom:0; }
+    .mlist { list-style:none; padding:0; margin:0; display:grid; gap:4px; }
+    .mrow { display:grid; grid-template-columns:3em 6.5em 1fr 4.5em; align-items:center; gap:8px; text-align:left; min-height:44px; padding:4px 10px; border-radius:8px; }
+    .mrow.cur { border-color:var(--blue); background:var(--blue-soft); }
+    .mrate { text-align:right; font-size:.8rem; color:var(--muted); }
+    @media (min-width: 900px) { #revenue-view { display:block; } }
   </style>
 </head>
 <body>
@@ -174,6 +200,8 @@
       </div>
       <div id="home-stamp"></div>
       <div id="home-view"></div>
+      <div class="revhead"><label>売上の対象年<select id="rev-year"></select></label></div>
+      <div id="revenue-view"></div>
     </section>
     <div id="res-panel" hidden>
       <div id="banner"></div>
@@ -202,6 +230,7 @@
   <script src="ops-client.js"></script>
   <script src="tasks-client.js"></script>
   <script src="home-client.js"></script>
+  <script src="revenue-client.js"></script>
   <script src="mock-adapter.js"></script>
   <script>
     (function () {
@@ -212,9 +241,10 @@
         { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });
       var tasksCtl = OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }), { onChange: function () { if (home) home.render(); } });
       home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl });
+      OpsRevenueClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }), { onDrill: function (d) { home.drill(d.month); } });
     })();
   </script>
   <!--/OPS:SCRIPTS-->
-  <p class="note" style="text-align:center">画面版 ops-ui-2（Phase 2）</p>
+  <p class="note" style="text-align:center">画面版 ops-ui-3（Phase 2 / 売上KPI）</p>
 </body>
 </html>

@@ -259,7 +259,7 @@ test('結線: 予約行を押すと予約タブで詳細が開く（鍵・メモ
 /* ---------- 配布物 ---------- */
 test('配布物: 生成物に画面版の印・ホーム・ナビがあり、鍵・メモへの導線コードを含む。未稼働メニューを出さない', function () {
   var page = builder.build();
-  assert.ok(/ops-ui-2/.test(page), '配布版の取り違えを確認できる印');
+  assert.ok(/ops-ui-3/.test(page), '配布版の取り違えを確認できる印');
   assert.ok(/id="tab-home"/.test(page) && /id="appnav"/.test(page) && /home-client|OpsHomeClient/.test(page));
   assert.ok(/鍵・案内の状況/.test(page) && /メモ・期限を開く/.test(page), '#961で欠落報告のあった表示');
   var nav = page.slice(page.indexOf('<nav id="appnav"'), page.indexOf('</nav>'));

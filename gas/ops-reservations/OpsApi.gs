@@ -229,6 +229,64 @@ var OpsApi = (function () {
     return { ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), bookingId: rec.bookingId, keyStatus: view };
   }
 
+  /*
+   * 売上集計の追加ソース（Issue #990 PR-B）の既定の読み取り（GAS）。同じ台帳ファイルの別シートを、金額・日付・識別子の列だけ読む。
+   * シートが無い→'not_connected'、その他の失敗→'error'（どちらも0円として足さない）。
+   */
+  var REVENUE_SHEETS_ = {
+    options: [{ key: 'rows', sheet: 'OptionOrders', columns: ['bookingId', 'amountJpy', 'paymentStatus', 'status'], dates: [] }],
+    members: [
+      { key: 'periods', sheet: 'MemberPeriods', columns: ['sourceType', 'sourceId', 'amount', 'paidAt'], dates: ['paidAt'] },
+      { key: 'months', sheet: 'MemberMonths', columns: ['sourceType', 'sourceId', 'amount', 'paidAt'], dates: ['paidAt'] },
+      { key: 'refunds', sheet: 'MemberRefunds', columns: ['sourceType', 'sourceId'], dates: [] }
+    ]
+  };
+  function rowsOf_(values) {
+    var header = (values && values[0]) || [];
+    return (values || []).slice(1).map(function (row) {
+      var o = {};
+      header.forEach(function (h, i) { o[h] = row[i] === undefined ? '' : row[i]; });
+      return o;
+    });
+  }
+  function readRevenueSourcesGas_() {
+    var id = PropertiesService.getScriptProperties().getProperty('OPS_SPREADSHEET_ID');
+    function sourceOf_(specs) {
+      var out = { state: 'ready' };
+      for (var i = 0; i < specs.length; i++) {
+        try {
+          out[specs[i].key] = rowsOf_(OpsSource.readSheet({
+            spreadsheetId: id,
+            fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
+            getToken: function () { return ScriptApp.getOAuthToken(); }
+          }, { sheetName: specs[i].sheet, columns: specs[i].columns, dateColumns: specs[i].dates }));
+        } catch (e) {
+          return { state: e && e.opsCode === 'SHEET_NOT_FOUND' ? 'not_connected' : 'error' };
+        }
+      }
+      return out;
+    }
+    return { options: sourceOf_(REVENUE_SHEETS_.options), members: sourceOf_(REVENUE_SHEETS_.members) };
+  }
+
+  function revenue_(params, ctx, nowMs) {
+    var p = params && typeof params === 'object' ? params : {};
+    var curYear = Number(OpsContract.formatJstDate(nowMs).slice(0, 4));
+    var year = p.year === undefined || p.year === '' || p.year === null ? curYear : p.year;
+    if (typeof year !== 'number' || Math.floor(year) !== year || year < 2020 || year > curYear + 1) return error_('INVALID_PARAMS', '対象年が不正です。');
+    var loaded = load_(ctx);
+    if (!loaded.ok) return loaded;
+    var extra;
+    try { extra = ctx.readRevenueSources(); } catch (e) { extra = { options: { state: 'error' }, members: { state: 'error' } }; }
+    var result = OpsRevenue.compute({ bookings: loaded.normalized.records, options: extra && extra.options, members: extra && extra.members }, year, nowMs);
+    Logger.log('ops revenue year=' + year + ' bookings=' + loaded.normalized.records.length + ' options=' + result.sources.options.state + ' members=' + result.sources.members.state);
+    return {
+      ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), revenue: result,
+      /* 台帳の読めない行（除外）があれば集計は不完全。件数のみ返す。 */
+      excludedRows: loaded.normalized.issues.filter(function (i) { return i.severity === 'error'; }).length
+    };
+  }
+
   /* 共通契約の入口。ctx.nowMs は検証用（省略時は現在時刻）。 */
   function handle(request, ctx) {
     var context = ctx || {};
@@ -238,12 +296,13 @@ var OpsApi = (function () {
       var code = auth && auth.code === 'FORBIDDEN' ? 'FORBIDDEN' : 'UNAUTHENTICATED';
       return error_(code, AUTH_MESSAGES_[code]);
     }
-    var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_, accessConfig: context.accessConfig || accessConfigGas_ };
+    var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_, accessConfig: context.accessConfig || accessConfigGas_, readRevenueSources: context.readRevenueSources || readRevenueSourcesGas_ };
     var nowMs = typeof context.nowMs === 'number' ? context.nowMs : Date.now();
     var op = request && request.op;
     if (op === 'list') return list_(request.params, full, nowMs);
     if (op === 'detail') return detail_(request.id, full, nowMs);
     if (op === 'key_status') return keyStatus_(request.id, full, nowMs);
+    if (op === 'revenue') return revenue_(request.params, full, nowMs);
     /* メモ（Issue #941）。認可は上で済み。予約台帳（readLedger）には触れず、専用の保存先だけを使う。 */
     if (op === 'tasks_list' || op === 'task_save' || op === 'task_delete') {
       return OpsTasks.handle(request, context.tasks || tasksGas_(), nowMs);
@@ -344,6 +403,9 @@ function opsListReservations(params) { return OpsApi.handle({ op: 'list', params
 function opsGetReservation(bookingId) { return OpsApi.handle({ op: 'detail', id: bookingId }); }
 /* 鍵・案内の状況（Issue #942）。読み取り専用。接続先・トークンは画面へ渡さない。 */
 function opsGetKeyStatus(bookingId) { return OpsApi.handle({ op: 'key_status', id: bookingId }); }
+
+/* 年商・月次の売上集計（Issue #990 PR-B）。読み取り専用。所有者認可は handle で毎回。 */
+function opsGetRevenue(params) { return OpsApi.handle({ op: 'revenue', params: params }); }
 
 /* 個別鍵の最終状態の保存（Issue #971 Phase 1）。管理者が Apps Script エディタから明示実行する（画面からは呼ばない・トリガーなし）。 */
 function opsSaveKeyFinalStatuses() { return OpsApi.runKeyFinalSave(); }
