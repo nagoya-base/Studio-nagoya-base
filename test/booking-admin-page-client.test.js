@@ -3157,8 +3157,88 @@ test('Issue #864: buildLoadBookingsTiming_はserverTimingから同じ呼び出�
   assert.deepStrictEqual(JSON.parse(JSON.stringify(timing)), {
     responseMs: 3500, renderMs: 10, bookings: 2,
     serverTotalMs: 1400, outsideServerMs: 2100,
-    serverConfigMs: 200, serverSpreadsheetOpenMs: 300, serverOptionOrdersMs: 300, serverBookingsReadMs: 400, serverBuildMs: 200
+    serverConfigMs: 200, serverSpreadsheetOpenMs: 300, serverOptionOrdersMs: 300, serverBookingsReadMs: 400, serverBuildMs: 200,
+    serverBookingRows: 2 /* Issue #993: bookingRowsは許可リストに追加された */
   });
+});
+
+/* ---------- Issue #993 Phase 1: 既存serverTimingのSheet I/O内訳をConsoleへ転記 ---------- */
+
+var IO_TIMING_FULL_ = {
+  totalMs: 1789, bookingsSheetMs: 10, bookingsValuesReadMs: 520, bookingsConvertMs: 30,
+  bookingsColumns: 104, bookingRows: 78,
+  optionOrdersOpenMs: 40, optionOrdersSheetMs: 12, optionOrdersReadMs: 450, optionOrdersConvertMs: 25,
+  optionOrdersRows: 12, optionOrdersColumns: 29, optionOrderBookings: 5, ttlConfigReads: 3
+};
+
+test('Issue #993: 許可リストの全キーをserver接頭辞付きの数値で転記し、既存指標は変えない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.bookings = [];
+  var timing = JSON.parse(JSON.stringify(sandbox.buildLoadBookingsTiming_(
+    { serverTiming: Object.assign({ optionOrdersMs: 527, bookingsReadMs: 527 }, IO_TIMING_FULL_) }, 1000, 5000, 5010
+  )));
+  assert.deepStrictEqual(timing, {
+    responseMs: 4000, renderMs: 10, bookings: 0,
+    serverTotalMs: 1789, outsideServerMs: 2211, serverOptionOrdersMs: 527, serverBookingsReadMs: 527,
+    serverBookingsSheetMs: 10, serverBookingsValuesReadMs: 520, serverBookingsConvertMs: 30,
+    serverBookingsColumns: 104, serverBookingRows: 78,
+    serverOptionOrdersOpenMs: 40, serverOptionOrdersSheetMs: 12, serverOptionOrdersReadMs: 450, serverOptionOrdersConvertMs: 25,
+    serverOptionOrdersRows: 12, serverOptionOrdersColumns: 29, serverOptionOrderBookings: 5, serverTtlConfigReads: 3
+  });
+});
+
+test('Issue #993: 旧GAS（総時間のみ）・部分欠損ではキー自体を省略する', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.bookings = [];
+  var old = JSON.parse(JSON.stringify(sandbox.buildLoadBookingsTiming_({ serverTiming: { totalMs: 1000 } }, 0, 1500, 1500)));
+  assert.deepStrictEqual(Object.keys(old).sort(), ['bookings', 'outsideServerMs', 'renderMs', 'responseMs', 'serverTotalMs']);
+  var part = JSON.parse(JSON.stringify(sandbox.buildLoadBookingsTiming_({ serverTiming: { totalMs: 1000, bookingsValuesReadMs: 7, optionOrdersRows: 3 } }, 0, 1500, 1500)));
+  assert.strictEqual(part.serverBookingsValuesReadMs, 7);
+  assert.strictEqual(part.serverOptionOrdersRows, 3);
+  assert.strictEqual('serverBookingsSheetMs' in part, false);
+  assert.strictEqual('serverBookingsColumns' in part, false);
+});
+
+test('Issue #993: 汚染入力（文字列/NaN/Infinity/負数/小数の件数/任意キー/PII）は転記しない', function () {
+  var sandbox = loadClientSandbox();
+  sandbox.state.bookings = [];
+  var timing = JSON.parse(JSON.stringify(sandbox.buildLoadBookingsTiming_({ serverTiming: {
+    totalMs: 1000,
+    bookingsSheetMs: '10', bookingsValuesReadMs: NaN, bookingsConvertMs: Infinity,
+    optionOrdersOpenMs: -1, optionOrdersSheetMs: -Infinity, optionOrdersReadMs: null, optionOrdersConvertMs: {},
+    bookingsColumns: 1.5, bookingRows: -3, optionOrdersRows: '12', optionOrdersColumns: NaN,
+    optionOrderBookings: 2.5, ttlConfigReads: Infinity,
+    bookingId: 'SX-20260101-0001', email: 'taro@example.com', name: '山田太郎', unknownMs: 5
+  } }, 0, 1500, 1500)));
+  assert.deepStrictEqual(Object.keys(timing).sort(), ['bookings', 'outsideServerMs', 'renderMs', 'responseMs', 'serverTotalMs']);
+  var s = JSON.stringify(timing);
+  ['SX-2026', 'taro@', '山田', 'unknown'].forEach(function (t) { assert.strictEqual(s.indexOf(t), -1, t); });
+});
+
+test('Issue #993: 古い応答はログ・state反映せずonDoneは呼ぶ。最新応答のみログ1件', function () {
+  var sandbox = loadClientSandbox(), run = sandbox.google.script.run;
+  var infos = [], done = [];
+  sandbox.console = { info: function () { infos.push(Array.prototype.slice.call(arguments)); } };
+  sandbox.loadBookings(function () { done.push('old'); });
+  var oldIndex = run.calls.length - 1;
+  sandbox.loadBookings(function () { done.push('new'); });
+  var newIndex = run.calls.length - 1;
+  run.resolveCall(newIndex, { todayJst: TODAY, bookings: [booking()], serverTiming: IO_TIMING_FULL_ });
+  run.resolveCall(oldIndex, { todayJst: TODAY, bookings: [], serverTiming: Object.assign({}, IO_TIMING_FULL_, { bookingsValuesReadMs: 9999 }) });
+  assert.strictEqual(infos.length, 1);
+  assert.strictEqual(JSON.parse(infos[0][1]).serverBookingsValuesReadMs, 520);
+  assert.strictEqual(sandbox.state.bookings.length, 1);
+  assert.deepStrictEqual(done.sort(), ['new', 'old']);
+});
+
+test('Issue #993: console.infoが例外を投げても描画・onDoneは維持される', function () {
+  var sandbox = loadClientSandbox(), run = sandbox.google.script.run;
+  var done = 0;
+  sandbox.console = { info: function () { throw new Error('console broken'); } };
+  sandbox.loadBookings(function () { done += 1; });
+  run.resolveCall(run.calls.length - 1, { todayJst: TODAY, bookings: [booking()], serverTiming: IO_TIMING_FULL_ });
+  assert.strictEqual(sandbox.state.bookings.length, 1);
+  assert.strictEqual(done, 1);
 });
 
 test('Issue #983: 新しい区間（spreadsheetIdMs/tail*）もserver接頭辞付きで記録し、outsideServerMsの定義は変えない', function () {
