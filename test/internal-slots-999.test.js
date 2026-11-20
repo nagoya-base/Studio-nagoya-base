@@ -75,6 +75,7 @@ test('オーナー以外は一覧・作成・変更・取消のすべてを拒�
 test('一般予約と重なる時間は登録・変更できず、登録後は公開の空き判定に反映され、取消で解放される', function () {
   var t = setup(OWNER);
   makeEvent(t.calendar, '[SNB 確定] SNB-1', at(DATE, '14:00'), at(DATE, '16:00'));
+  assert.strictEqual(t.s.adminInternalSlotCreate(input({ date: futureJstDate(120) })).error.code, 'INVALID_DATE', '一覧に出ない遠い日付は登録させない');
   var rejected = t.s.adminInternalSlotCreate(input());
   assert.strictEqual(rejected.error.code, 'SLOT_CONFLICT');
   assert.strictEqual(t.calendar.events.length, 1);

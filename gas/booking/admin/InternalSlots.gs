@@ -109,6 +109,15 @@ var InternalSlots = (function () {
     };
   }
 
+  /* 過去、または一覧に出ない遠い日付は登録・変更させない（登録できた枠は必ず一覧から編集・取消できる）。 */
+  function dateRangeError_(date, now, timezone) {
+    if (date < BookingAvailability.formatDateInTimezone(now, timezone)) return err_('INVALID_DATE', '過去の日付は指定できません。');
+    if (date > BookingAvailability.formatDateInTimezone(new Date(now.getTime() + (LIST_DAYS_ - 1) * DAY_MS_), timezone)) {
+      return err_('INVALID_DATE', LIST_DAYS_ + '日より先の日付は指定できません。');
+    }
+    return null;
+  }
+
   function eventTitle_(type, title) { return '[運営 ' + TYPES_[type] + '] ' + title; }
 
   function applyFields_(event, v) {
@@ -171,7 +180,8 @@ var InternalSlots = (function () {
     var checked = validate_(input, timezone);
     if (!checked.success) return checked;
     var v = checked.value;
-    if (v.date < BookingAvailability.formatDateInTimezone(now, timezone)) return err_('INVALID_DATE', '過去の日付には登録できません。');
+    var rangeError = dateRangeError_(v.date, now, timezone);
+    if (rangeError) return rangeError;
     return withLock_(function () {
       var calendar = getCalendar_();
       var startAt = CalendarRepository.parseDateTime(v.date, v.startTime, timezone);
@@ -200,7 +210,8 @@ var InternalSlots = (function () {
     var checked = validate_(input, timezone);
     if (!checked.success) return checked;
     var v = checked.value;
-    if (v.date < BookingAvailability.formatDateInTimezone(now, timezone)) return err_('INVALID_DATE', '過去の日付には変更できません。');
+    var rangeError = dateRangeError_(v.date, now, timezone);
+    if (rangeError) return rangeError;
     return withLock_(function () {
       var calendar = getCalendar_();
       var event = calendar.getEventById(String(id || ''));
