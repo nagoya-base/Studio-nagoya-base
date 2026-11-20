@@ -107,6 +107,8 @@ var BookingAdminAlerts = (function () {
     notifyLateConfirmedBooking: notifyLateConfirmedBooking,
     notifyPaidBookingNotConfirmed: notifyPaidBookingNotConfirmed,
     notifyAccessGuideBlockedForTomorrow: notifyAccessGuideBlockedForTomorrow,
-    notifyRefundNeedsAttention: notifyRefundNeedsAttention
+    notifyRefundNeedsAttention: notifyRefundNeedsAttention,
+    /* Issue #999: 運営枠（InternalSlots.gs）の運営者宛通知。宛先・リンクは他の通知と同じ。 */
+    sendNotice: send_
   };
 })();

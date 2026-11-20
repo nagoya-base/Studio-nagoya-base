@@ -3733,6 +3733,143 @@ document.getElementById('modal-overlay').addEventListener('click', function (eve
   if (event.target.id === 'modal-overlay') closeModal();
 });
 
+/*
+ * 運営専用予約枠（Issue #999）。オーナー1人用の最小UI: 種別・場所・日時・件名・任意メモ → 登録。
+ * 一覧は今日以降の運営枠だけ（一般予約と混ぜず、売上0・鍵なし・通知状況を明示する）。
+ * 認可・衝突判定・通知はすべてサーバー側（InternalSlots.gs）。ここは表示と呼び出しだけ。
+ */
+var internalSlotUi_ = { panel: null, listEl: null, form: null, editingId: '' };
+var INTERNAL_SLOT_TYPES_ = [['snbc_event', 'SNBCイベント'], ['setup', '設営・片付け'], ['cleaning', '清掃・メンテナンス'], ['other', 'その他の運営確保枠']];
+var INTERNAL_SLOT_PLACES_ = [['snb', 'SNB'], ['mens', 'SNB mens'], ['studio_x', 'Studio X']];
+
+function internalSlotOptions_(pairs) {
+  return pairs.map(function (p) { return '<option value="' + escapeHtml(p[0]) + '">' + escapeHtml(p[1]) + '</option>'; }).join('');
+}
+
+function internalSlotField_(id) { return document.getElementById('internal-slot-' + id); }
+
+function internalSlotFormValues_() {
+  return {
+    type: internalSlotField_('type').value,
+    place: internalSlotField_('place').value,
+    title: internalSlotField_('title').value,
+    date: internalSlotField_('date').value,
+    startTime: internalSlotField_('start').value,
+    endTime: internalSlotField_('end').value,
+    memo: internalSlotField_('memo').value
+  };
+}
+
+function internalSlotResetForm_() {
+  internalSlotUi_.editingId = '';
+  ['title', 'memo'].forEach(function (k) { internalSlotField_(k).value = ''; });
+  internalSlotField_('submit').textContent = '登録';
+  internalSlotField_('cancel-edit').classList.add('hidden');
+}
+
+function renderInternalSlots_(slots) {
+  var el = internalSlotUi_.listEl;
+  if (!el) return;
+  if (!slots || slots.length === 0) { el.innerHTML = '<div class="internal-slot-empty">今後の運営枠はありません。</div>'; return; }
+  el.innerHTML = slots.map(function (s) {
+    return '<div class="internal-slot-card" data-slot-id="' + escapeHtml(s.id) + '">' +
+      '<div><span class="option-badge">運営枠</span> ' + escapeHtml(s.typeLabel) + '　' + escapeHtml(s.title) + '</div>' +
+      '<div>' + escapeHtml(s.date) + ' ' + escapeHtml(s.startTime) + '〜' + escapeHtml(s.endTime) + '　' + escapeHtml(s.placeLabel) + '</div>' +
+      (s.memo ? '<div>メモ: ' + escapeHtml(s.memo) + '</div>' : '') +
+      '<div>売上0円・鍵なし・前日通知: ' + (s.reminded ? '送信済み' : '未送信') + '</div>' +
+      '<button type="button" data-slot-action="edit" data-slot-id="' + escapeHtml(s.id) + '">編集</button> ' +
+      '<button type="button" data-slot-action="cancel" data-slot-id="' + escapeHtml(s.id) + '">取消</button></div>';
+  }).join('');
+  el.querySelectorAll('button[data-slot-action]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var slot = slots.find(function (x) { return x.id === btn.getAttribute('data-slot-id'); });
+      if (slot) { if (btn.getAttribute('data-slot-action') === 'edit') internalSlotStartEdit_(slot); else internalSlotCancel_(slot); }
+    });
+  });
+}
+
+function loadInternalSlots_() {
+  google.script.run
+    .withSuccessHandler(function (r) {
+      if (r && r.success) renderInternalSlots_(r.slots);
+      else if (internalSlotUi_.listEl) internalSlotUi_.listEl.textContent = '運営枠を取得できませんでした。' + (r && r.error ? r.error.message : '');
+    })
+    .withFailureHandler(function () { if (internalSlotUi_.listEl) internalSlotUi_.listEl.textContent = '運営枠を取得できませんでした。'; })
+    .adminInternalSlotList();
+}
+
+function internalSlotStartEdit_(slot) {
+  internalSlotUi_.editingId = slot.id;
+  internalSlotField_('type').value = slot.type;
+  internalSlotField_('place').value = slot.place;
+  internalSlotField_('title').value = slot.title;
+  internalSlotField_('date').value = slot.date;
+  internalSlotField_('start').value = slot.startTime;
+  internalSlotField_('end').value = slot.endTime;
+  internalSlotField_('memo').value = slot.memo;
+  internalSlotField_('submit').textContent = '更新';
+  internalSlotField_('cancel-edit').classList.remove('hidden');
+  internalSlotUi_.panel.open = true;
+}
+
+function internalSlotCancel_(slot) {
+  if (!window.confirm('運営枠を取り消します（空き枠に戻ります）。\n' + slot.date + ' ' + slot.startTime + '〜' + slot.endTime + ' ' + slot.title + '\n\n実行しますか？')) return;
+  google.script.run
+    .withSuccessHandler(function (r) {
+      if (!r || !r.success) alert('取り消せませんでした: ' + (r && r.error && r.error.message));
+      else if (r.notifyFailed) alert('取り消しました。ただし運営者宛の通知メールを送れませんでした。');
+      loadInternalSlots_();
+    })
+    .withFailureHandler(function (e) { alert('取消でエラーが発生しました: ' + (e && e.message ? e.message : e)); loadInternalSlots_(); })
+    .adminInternalSlotCancel(slot.id);
+}
+
+function internalSlotSubmit_() {
+  var btn = internalSlotField_('submit');
+  var values = internalSlotFormValues_();
+  var id = internalSlotUi_.editingId;
+  btn.disabled = true;
+  var done = function (r) {
+    btn.disabled = false;
+    if (!r || !r.success) { alert((id ? '更新' : '登録') + 'できませんでした: ' + (r && r.error && r.error.message)); return; }
+    internalSlotResetForm_();
+    loadInternalSlots_();
+    if (r.notifyFailed) alert('保存しました。ただし運営者宛の通知メールを送れませんでした。');
+  };
+  var fail = function (e) { btn.disabled = false; alert('エラーが発生しました: ' + (e && e.message ? e.message : e)); };
+  var run = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+  if (id) run.adminInternalSlotUpdate(id, values); else run.adminInternalSlotCreate(values);
+}
+
+function initInternalSlotUi_() {
+  var main = document.querySelector('main');
+  var statusLine = document.getElementById('status-line');
+  if (!main || !statusLine) return;
+  var panel = document.createElement('details');
+  panel.id = 'internal-slot-panel';
+  panel.className = 'internal-slot-panel';
+  panel.innerHTML =
+    '<summary>運営枠（SNBC・設営・清掃など）</summary>' +
+    '<div class="internal-slot-form">' +
+    '<select id="internal-slot-type">' + internalSlotOptions_(INTERNAL_SLOT_TYPES_) + '</select> ' +
+    '<select id="internal-slot-place">' + internalSlotOptions_(INTERNAL_SLOT_PLACES_) + '</select> ' +
+    '<input id="internal-slot-title" type="text" maxlength="60" placeholder="件名"> ' +
+    '<input id="internal-slot-date" type="date"> ' +
+    '<input id="internal-slot-start" type="time" step="900"> 〜 <input id="internal-slot-end" type="time" step="900"> ' +
+    '<textarea id="internal-slot-memo" maxlength="500" placeholder="メモ（任意）"></textarea> ' +
+    '<button type="button" id="internal-slot-submit">登録</button> ' +
+    '<button type="button" id="internal-slot-cancel-edit" class="hidden">編集をやめる</button>' +
+    '<div class="internal-slot-note">一般予約と同じ時間は登録できません。決済・鍵・顧客メールはありません。</div>' +
+    '</div><div id="internal-slot-list"></div>';
+  main.insertBefore(panel, statusLine);
+  internalSlotUi_.panel = panel;
+  internalSlotUi_.listEl = document.getElementById('internal-slot-list');
+  internalSlotField_('submit').addEventListener('click', internalSlotSubmit_);
+  internalSlotField_('cancel-edit').addEventListener('click', internalSlotResetForm_);
+  /* 開いたときだけ取得する（通常の予約一覧の読み込みに影響させない）。 */
+  panel.addEventListener('toggle', function () { if (panel.open) loadInternalSlots_(); });
+}
+
 initHeaderUi_();
 initTabCountsUi_();
 initSearchUi_();
@@ -3743,5 +3880,6 @@ initPaymentUi_();
 initFilterToggleUi_();
 initPaymentRecoveryUi_();
 initOptionUi_();
+initInternalSlotUi_();
 
 loadBookings();
