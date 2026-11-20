@@ -396,3 +396,16 @@ test('P1(Codex): 画面は精算未了の件数と、部分計の理由を表示
   var html = R.renderRevenue(stateOf(d));
   assert.ok(/日程・人数変更の精算が未了/.test(html) && /2件/.test(html) && /受領額の差額が確定していない/.test(html));
 });
+
+test('P2(Codex): 精算の記録（feePaidAmount）がある現地払いは、paymentStatus が未更新でも受領済みとして実績に入れる。記録のない現地払いは除外のまま', function () {
+  var res = call([
+    booking('L1', { paymentMethod: '現地払い（現金）', paymentStatus: 'not_started', priceAmount: 10000, feePaidAmount: 10000, feeRefundedAmount: 0, feeSettlementState: 'SETTLED' }), /* 確認済みの受領 → 実績 */
+    booking('L2', { paymentMethod: '現地払い（PayPay）', paymentStatus: 'not_started', priceAmount: 5000 }),                                                                        /* 記録なし → 受領記録なし */
+    booking('L3', { paymentMethod: '現地払い（現金）', paymentStatus: 'not_started', priceAmount: 8000, feePaidAmount: 3000, feeRefundedAmount: 1000, feeSettlementState: 'PENDING_CHARGE' }) /* 受領2,000のみ確認・差額未了 */
+  ]);
+  var t = res.revenue.totals;
+  assert.strictEqual(t.actual, 10000 + 2000);
+  assert.strictEqual(t.onsiteUnconfirmed, 5000);
+  assert.strictEqual(t.onsiteUnconfirmedCount, 1);
+  assert.strictEqual(t.settlementPendingCount, 1);
+});

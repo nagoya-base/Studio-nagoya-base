@@ -79,9 +79,9 @@ var OpsRevenue = (function () {
     var paid = num_(r.feePaidAmount), refunded = num_(r.feeRefundedAmount) || 0;
     var hasRecord = paid !== null && paid > 0;
     var pending = state !== '' && state !== 'SETTLED';
-    if (pending) return { amount: hasRecord ? Math.max(0, paid - refunded) : null, pending: true, involved: true };
-    if (hasRecord) return { amount: Math.max(0, paid - refunded), pending: false, involved: true };
-    return { amount: price, pending: false, involved: state !== '' };
+    if (pending) return { amount: hasRecord ? Math.max(0, paid - refunded) : null, pending: true, involved: true, hasRecord: hasRecord };
+    if (hasRecord) return { amount: Math.max(0, paid - refunded), pending: false, involved: true, hasRecord: true };
+    return { amount: price, pending: false, involved: state !== '', hasRecord: false };
   }
 
   /* 決済状態の判定（Booking の正規化と同じ語彙）。未知の値は 'unknown'（支払い済みと断定しない）。 */
@@ -134,7 +134,8 @@ var OpsRevenue = (function () {
       if (r.status === 'PENDING') { notes.pendingCount++; return; }
       if (r.status !== 'CONFIRMED') return; /* キャンセル（受領なし）・失効・不明は売上にしない */
       if (price === null) { cell.unknownAmountCount++; return; }
-      if (passed && kind === 'paid') {
+      /* 明示的に記録された入金（feePaidAmount。現地払いの受領確認も含む）は、決済状態（旧来の paymentStatus）に関わらず受領額として扱う。 */
+      if (passed && (kind === 'paid' || basis.hasRecord)) {
         /* 実績は「記録された受領額」。精算が未了（追加請求・返金待ち）で差額が未確定の分は実績に入れず、件数で示す。 */
         if (basis.amount !== null) { cell.actual += basis.amount; cell.actualCount++; }
         if (basis.pending || basis.amount === null) cell.settlementPendingCount++;
