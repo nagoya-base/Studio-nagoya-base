@@ -29,22 +29,29 @@ function build() {
   var index = fs.readFileSync(path.join(FRONT, 'index.html'), 'utf8');
   var client = fs.readFileSync(path.join(FRONT, 'ops-client.js'), 'utf8');
   var tasks = fs.readFileSync(path.join(FRONT, 'tasks-client.js'), 'utf8');
+  var home = fs.readFileSync(path.join(FRONT, 'home-client.js'), 'utf8');
   var adapter = fs.readFileSync(path.join(FRONT, 'gas-adapter.js'), 'utf8');
-  if (/<\/script/i.test(client + tasks + adapter)) throw new Error('スクリプト内に </script を含められません');
+  if (/<\/script/i.test(client + tasks + home + adapter)) throw new Error('スクリプト内に </script を含められません');
 
   var html = index;
   var head = between(html, 'OPS:HEAD');
   html = html.slice(0, head.start) +
-    '<h1>予約確認・メモ</h1>\n    <p class="note">予約台帳の内容は閲覧のみです（予約の変更・決済・鍵の操作はできません）。メモは専用の保存先にだけ保存します。</p>' +
+    '<h1>SNB Operations</h1>\n    <p class="note">予約台帳の内容は閲覧のみです（予約の変更・決済・鍵の操作はできません）。メモは専用の保存先にだけ保存します。</p>' +
     html.slice(head.end);
   var scripts = between(html, 'OPS:SCRIPTS');
   html = html.slice(0, scripts.start) +
-    '<script>\n' + client + '\n</script>\n  <script>\n' + tasks + '\n</script>\n  <script>\n' + adapter + '\n</script>\n  <script>\n' +
-    '    OpsClient.mount(document, OpsGasAdapter.createGasApi(google.script.run));\n' +
-    '    OpsTasksClient.mount(document, OpsGasAdapter.createGasTasksApi(google.script.run));\n  </script>' +
+    '<script>\n' + client + '\n</script>\n  <script>\n' + tasks + '\n</script>\n  <script>\n' + home + '\n</script>\n  <script>\n' + adapter + '\n</script>\n  <script>\n' +
+    '    (function () {\n' +
+    '      var range = OpsHomeClient.monthRange(OpsHomeClient.jstMonth(Date.now()));\n' +
+    '      var home = null;\n' +
+    '      var resCtl = OpsClient.mount(document, OpsGasAdapter.createGasApi(google.script.run),\n' +
+    "        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });\n" +
+    '      var tasksCtl = OpsTasksClient.mount(document, OpsGasAdapter.createGasTasksApi(google.script.run), { onChange: function () { if (home) home.render(); } });\n' +
+    '      home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl });\n' +
+    '    })();\n  </script>' +
     html.slice(scripts.end);
-  html = html.replace('<title>予約確認・メモ（モック）</title>', '<title>予約確認・メモ</title>')
-    .replace(/<!--[\s\S]*?-->\s*<html/, '<!--\n  OpsPage.html — 自動生成（scripts/build-ops-gas-page.js）。手で編集しない。\n  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / gas-adapter.js）。Issue #936 / #941。\n  予約は読み取り専用、メモは専用保存先のみ。google.script.run は gas-adapter.js のみ。応答はエスケープして描画する。\n-->\n<html');
+  html = html.replace('<title>SNB Operations（モック）</title>', '<title>SNB Operations</title>')
+    .replace(/<!--[\s\S]*?-->\s*<html/, '<!--\n  OpsPage.html — 自動生成（scripts/build-ops-gas-page.js）。手で編集しない。\n  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / home-client.js / gas-adapter.js）。Issue #936 / #941 / #990。\n  予約は読み取り専用、メモは専用保存先のみ。google.script.run は gas-adapter.js のみ。応答はエスケープして描画する。\n-->\n<html');
   return html;
 }
 

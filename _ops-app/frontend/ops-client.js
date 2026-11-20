@@ -298,17 +298,28 @@
   }
 
   /* DOMへの結線（ブラウザーでのみ呼ぶ）。api は契約アダプター。 */
-  function mount(doc, api) {
+  function mount(doc, api, options) {
+    var opts = options || {};
     function $(id) { return doc.getElementById(id); }
     $('f-service').innerHTML = optionsHtml(SERVICES);
     $('f-status').innerHTML = optionsHtml(STATUSES);
     var ctl = createController(api, function (state) {
       $('banner').innerHTML = renderBanner(state);
       $('view').innerHTML = renderView(state);
+      if (opts.onChange) opts.onChange(state);
     });
-    function reload() {
-      ctl.load(paramsFromInputs({ service: $('f-service').value, status: $('f-status').value, scope: $('f-scope').value, from: $('f-from').value, to: $('f-to').value }));
+    var FILTER_IDS = { service: 'f-service', status: 'f-status', scope: 'f-scope', from: 'f-from', to: 'f-to' };
+    /* ホーム（#990）が予約一覧と同じ絞り込みを共有するための入出力。値は画面の入力欄そのもの。 */
+    function getFilters() {
+      var f = {};
+      Object.keys(FILTER_IDS).forEach(function (k) { f[k] = $(FILTER_IDS[k]).value; });
+      return f;
     }
+    function setFilters(f) {
+      Object.keys(FILTER_IDS).forEach(function (k) { if (f && f[k] !== undefined) $(FILTER_IDS[k]).value = f[k]; });
+    }
+    function reload() { ctl.load(paramsFromInputs(getFilters())); }
+    if (opts.initial) setFilters(opts.initial);
     ['f-service', 'f-status', 'f-scope', 'f-from', 'f-to'].forEach(function (id) { $(id).addEventListener('change', reload); });
     $('f-reload').addEventListener('click', reload);
     $('view').addEventListener('click', function (e) {
@@ -321,6 +332,7 @@
       }
     });
     reload();
+    ctl.reload = reload; ctl.getFilters = getFilters; ctl.setFilters = setFilters;
     return ctl;
   }
 

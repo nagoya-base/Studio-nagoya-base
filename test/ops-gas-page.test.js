@@ -47,7 +47,8 @@ test('生成物: OpsPage.html は _ops-app/frontend/ の正本と一致し、モ
   assert.strictEqual(fs.readFileSync(builder.OUT, 'utf8'), builder.build(), 'node scripts/build-ops-gas-page.js を実行して再生成してください');
   var page = fs.readFileSync(builder.OUT, 'utf8');
   assert.ok(!/OpsMockAdapter|mock-adapter/.test(page), 'モックアダプターを含めない');
-  assert.ok(/OpsClient\.mount\(document, OpsGasAdapter\.createGasApi\(google\.script\.run\)\)/.test(page));
+  assert.ok(/OpsClient\.mount\(document, OpsGasAdapter\.createGasApi\(google\.script\.run\)/.test(page));
+  assert.ok(/OpsHomeClient\.mount\(document, \{ res: resCtl, tasks: tasksCtl \}\)/.test(page), 'ホームを結線する');
   assert.ok(/noindex,nofollow/.test(page) && /name="viewport"/.test(page));
   assert.ok(!/<script[^>]+src=/.test(page), '外部スクリプトを読み込まない');
 });

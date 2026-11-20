@@ -10,19 +10,20 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow">
-  <title>予約確認・メモ（モック）</title>
+  <title>SNB Operations（モック）</title>
   <style>
     :root { --bg:#f4f6fb; --fg:#14213d; --muted:#5b6478; --line:#d5dbe8; --card:#fff; --warn:#9a5b00; --err:#b3261e; --navy:#14284b; --blue:#1d5bd8; --blue-soft:#e8effd; --on-accent:#fff; }
     @media (prefers-color-scheme: dark) { :root { --bg:#0f1626; --fg:#e8ecf6; --muted:#9aa5bd; --line:#2a3550; --card:#18223a; --warn:#f2b24c; --err:#f2877f; --navy:#0b1220; --blue:#6f9cf5; --blue-soft:#1d2c52; --on-accent:#0b1220; } }
     * { box-sizing: border-box; }
     body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
-    header { background:var(--bg); border-bottom:1px solid var(--line); }
-    header, main { padding: 12px max(16px, calc((100% - 928px) / 2)); }
+    body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+    header.top { background:var(--navy); color:#fff; padding:14px max(16px, calc((100% - 1040px) / 2)); }
+    #res-filters, main { padding: 12px max(16px, calc((100% - 1040px) / 2)); }
     main { padding-bottom: 48px; }
-    h1 { font-size: 1.15rem; margin: 4px 0 8px; color:var(--navy); }
-    @media (prefers-color-scheme: dark) { h1 { color:var(--fg); } }
+    h1 { font-size: 1.15rem; margin: 0 0 2px; color:#fff; }
+    header.top .note { color:#c9d3ea; margin:0; }
     .note { color: var(--muted); font-size: .85rem; margin: 0 0 8px; }
     .filters { display:grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .filters label { display:block; font-size:.8rem; color:var(--muted); min-width:0; }
@@ -59,9 +60,6 @@
     dt { color:var(--muted); font-size:.85rem; } dd { margin:0; overflow-wrap:anywhere; }
     .empty { color:var(--muted); font-style:italic; }
     details { margin-top:12px; } details li { overflow-wrap:anywhere; }
-    .tabs { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin:8px 0; }
-    .tabs button { font-weight:600; }
-    .tabs button[aria-selected="true"] { background:var(--navy); border-color:var(--navy); color:#fff; font-weight:700; }
     [hidden] { display:none !important; }
     .banner.ok { border-color:#2e7d32; color:#2e7d32; }
     @media (prefers-color-scheme: dark) { .banner.ok { border-color:#81c995; color:#81c995; } }
@@ -76,31 +74,107 @@
     form.taskform input, form.taskform select, form.taskform textarea { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:6px 8px; min-width:0; }
     form.taskform textarea { min-height:6em; }
     .formbtns { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
-    @media (min-width: 900px) { header { position:sticky; top:0; z-index:5; } .cards { grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 900px) { .cards { grid-template-columns: 1fr 1fr; } }
     @media (min-width: 640px) { .filters { grid-template-columns: repeat(4, 1fr); } .row2 { grid-column: auto; grid-template-columns: 1fr; } }
+
+    /* ナビ: スマホ幅は下部固定（セーフエリア対応）、PC幅は左の濃紺サイドバー。同じ要素を切り替える。 */
+    #appnav { position:fixed; left:0; right:0; bottom:0; z-index:20; display:grid; grid-template-columns:repeat(3, 1fr); background:var(--navy); padding-bottom:env(safe-area-inset-bottom); border-top:1px solid #2a3a62; }
+    #appnav .brand { display:none; }
+    #appnav button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; min-height:56px; border:0; border-radius:0; background:transparent; color:#b9c5e3; font-size:.75rem; font-weight:600; padding:6px 4px; }
+    #appnav button .ico { font-size:1.25rem; line-height:1; }
+    #appnav button[aria-selected="true"] { color:#fff; background:rgba(255,255,255,.1); box-shadow:inset 0 3px 0 var(--blue); }
+    #appnav button:focus-visible { outline-color:#fff; outline-offset:-3px; }
+    /* ホーム */
+    .hhead { display:flex; justify-content:space-between; align-items:flex-end; gap:8px; flex-wrap:wrap; }
+    .hhead h2 { font-size:1.35rem; margin:0; color:var(--navy); }
+    @media (prefers-color-scheme: dark) { .hhead h2, .kpi .v { color:var(--fg); } }
+    .hctl { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
+    .hctl .full { grid-column:1 / -1; }
+    .hctl label { font-size:.8rem; color:var(--muted); min-width:0; }
+    .hctl select { width:100%; min-height:44px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 8px; }
+    .btn-primary, button.inline { width:auto; padding:6px 16px; }
+    .btn-primary { background:var(--blue); color:var(--on-accent); border-color:var(--blue); font-weight:700; }
+    button.inline { margin-top:6px; color:var(--blue); font-weight:600; }
+    h2.sec { font-size:1rem; margin:18px 0 8px; color:var(--navy); }
+    @media (prefers-color-scheme: dark) { h2.sec { color:var(--fg); } }
+    .prio, .kpis, .uplist { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
+    .prow, .uprow { display:flex; align-items:center; gap:12px; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px; box-shadow:0 1px 2px rgba(20,40,75,.06); }
+    .prow:hover, .uprow:hover { background:var(--blue-soft); }
+    .prow.overdue { border-color:var(--err); }
+    .rank { flex:none; width:28px; height:28px; border-radius:50%; background:var(--navy); color:#fff; display:grid; place-items:center; font-weight:700; font-size:.85rem; }
+    .ptxt { flex:1; min-width:0; display:grid; overflow-wrap:anywhere; }
+    .psub { color:var(--muted); font-size:.8rem; }
+    .chev { flex:none; color:var(--blue); font-size:1.5rem; line-height:1; }
+    .kpis { grid-template-columns:1fr 1fr; }
+    .kpi { display:grid; gap:2px; width:100%; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; min-height:96px; box-shadow:0 1px 2px rgba(20,40,75,.06); }
+    button.kpi:hover { background:var(--blue-soft); }
+    .kpi.off { border-style:dashed; color:var(--muted); }
+    .kpi .lbl { font-size:.8rem; color:var(--muted); }
+    .kpi .v { font-size:1.9rem; font-weight:700; color:var(--navy); line-height:1.2; }
+    .kpi .v small { font-size:.9rem; margin-left:2px; }
+    .kpi .v.dim { font-size:1.15rem; color:var(--muted); }
+    .kpi .sub { font-size:.75rem; color:var(--muted); }
+    .kpi .sub.warn { color:var(--warn); }
+    .chips { display:none; gap:8px; flex-wrap:wrap; margin-top:14px; }
+    .chip { width:auto; min-height:36px; padding:4px 14px; border-radius:999px; }
+    .chip[aria-pressed="true"] { background:var(--blue); border-color:var(--blue); color:var(--on-accent); font-weight:700; }
+    .uphead { display:none; }
+    .uprow { display:grid; grid-template-columns:1fr auto; gap:2px 8px; }
+    .uprow .c-when { grid-column:1; }
+    .uprow .c-svc, .uprow .c-ppl { grid-column:1; color:var(--muted); font-size:.85rem; }
+    .uprow .c-st { grid-column:2; grid-row:1; }
+    .uprow .chev { grid-column:2; grid-row:2 / span 2; justify-self:end; }
+    .svcsel { display:block; }
+    @media (min-width: 900px) {
+      body { padding-bottom:0; padding-left:220px; }
+      #appnav { top:0; bottom:0; right:auto; width:220px; display:flex; flex-direction:column; gap:4px; padding:20px 12px; border-top:0; }
+      #appnav .brand { display:block; color:#fff; font-weight:700; font-size:1.1rem; padding:4px 10px 16px; }
+      #appnav button { flex-direction:row; justify-content:flex-start; gap:10px; min-height:44px; border-radius:8px; font-size:.95rem; padding:6px 12px; }
+      #appnav button[aria-selected="true"] { box-shadow:inset 3px 0 0 var(--blue); }
+      .hctl { grid-template-columns:200px auto; }
+      .hctl .full, .svcsel { display:none; }
+      .kpis { grid-template-columns:repeat(4, 1fr); }
+      .chips { display:flex; }
+      .uphead, .uprow { display:grid; grid-template-columns:1.2fr 1fr .7fr 1fr 24px; align-items:center; gap:8px; }
+      .uphead { color:var(--muted); font-size:.8rem; padding:0 12px; margin-bottom:4px; }
+      .uprow .c-when, .uprow .c-svc, .uprow .c-ppl, .uprow .c-st, .uprow .chev { grid-column:auto; grid-row:auto; }
+      .uprow .c-svc, .uprow .c-ppl { font-size:inherit; color:inherit; }
+    }
   </style>
 </head>
 <body>
-  <header>
+  <nav id="appnav" aria-label="メインメニュー">
+    <div class="brand">SNB Operations</div>
+    <button type="button" id="tab-home" aria-selected="true"><span class="ico" aria-hidden="true">⌂</span><span>ホーム</span></button>
+    <button type="button" id="tab-res" aria-selected="false"><span class="ico" aria-hidden="true">▦</span><span>予約</span></button>
+    <button type="button" id="tab-tasks" aria-selected="false"><span class="ico" aria-hidden="true">✎</span><span>メモ</span></button>
+  </nav>
+  <header class="top">
     <!--OPS:HEAD-->
-    <h1>予約確認・メモ（モック）</h1>
+    <h1>SNB Operations（モック）</h1>
     <p class="note">架空のモックデータです。実際の予約・メモは表示も保存もされません。</p>
     <!--/OPS:HEAD-->
-    <nav class="tabs" aria-label="表示の切り替え">
-      <button type="button" id="tab-res" aria-selected="true">予約</button>
-      <button type="button" id="tab-tasks" aria-selected="false">メモ・期限</button>
-    </nav>
-    <div class="filters" id="res-filters">
-      <label>サービス<select id="f-service"></select></label>
-      <label>状態<select id="f-status"></select></label>
-      <label>期間<select id="f-scope"><option value="upcoming">今日から30日間</option><option value="past">過去30日間</option><option value="custom">日付を指定</option></select></label>
-      <div class="row2"><button type="button" id="f-reload">再取得</button></div>
-      <label>開始日<input type="date" id="f-from"></label>
-      <label>終了日<input type="date" id="f-to"></label>
-    </div>
   </header>
+  <div class="filters" id="res-filters" hidden>
+    <label>サービス<select id="f-service"></select></label>
+    <label>状態<select id="f-status"></select></label>
+    <label>期間<select id="f-scope"><option value="upcoming">今日から30日間</option><option value="past">過去30日間</option><option value="custom">日付を指定</option></select></label>
+    <div class="row2"><button type="button" id="f-reload">再取得</button></div>
+    <label>開始日<input type="date" id="f-from"></label>
+    <label>終了日<input type="date" id="f-to"></label>
+  </div>
   <main>
-    <div id="res-panel">
+    <section id="home-panel" aria-label="ホーム">
+      <div class="hhead"><div><h2>今日、確認すること</h2><p class="note" id="home-today"></p></div><button type="button" id="home-add" class="btn-primary">＋ メモを追加</button></div>
+      <div class="hctl">
+        <label>表示する月（利用日・日本時間）<select id="home-month"></select></label>
+        <label class="svcsel">サービス<select id="home-service"></select></label>
+        <div class="full"><button type="button" id="home-reload">再取得</button></div>
+      </div>
+      <div id="home-stamp"></div>
+      <div id="home-view"></div>
+    </section>
+    <div id="res-panel" hidden>
       <div id="banner"></div>
       <div id="view"></div>
     </div>
@@ -126,14 +200,20 @@
   <!--OPS:SCRIPTS-->
   <script src="ops-client.js"></script>
   <script src="tasks-client.js"></script>
+  <script src="home-client.js"></script>
   <script src="mock-adapter.js"></script>
   <script>
     (function () {
       var q = new URLSearchParams(location.search);
-      OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }));
-      OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }));
+      var range = OpsHomeClient.monthRange(OpsHomeClient.jstMonth(Date.now()));
+      var home = null;
+      var resCtl = OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }),
+        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });
+      var tasksCtl = OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }), { onChange: function () { if (home) home.render(); } });
+      home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl });
     })();
   </script>
   <!--/OPS:SCRIPTS-->
+  <p class="note" style="text-align:center">画面版 ops-ui-2（Phase 2）</p>
 </body>
 </html>
