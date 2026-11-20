@@ -62,6 +62,7 @@
     SNBC_NOT_CONNECTED: 'SNBCイベント収益が未接続（正本が未実装）',
     ONSITE_PAYMENT_UNCONFIRMED: '現地払い（現金・PayPay）の受領記録が台帳にない予約がある',
     REFUND_UNSETTLED: '返金処理中または返金方法が不明な取消がある',
+    SETTLEMENT_PENDING: '日程・人数変更の精算（追加請求・返金）が未了で、受領額の差額が確定していない予約がある',
     AMOUNT_UNKNOWN: '金額が読めない確定予約がある',
     MEMBERS_UNAVAILABLE: '会員費を取得できていない',
     OPTIONS_UNAVAILABLE: '有料オプションを取得できていない',
@@ -135,6 +136,7 @@
       '<li><span>予定（確定済み・利用がこれから）</span><b>' + esc(yen(t.scheduled)) + '</b></li>' +
       '<li><span>現地払い・受領記録なし（現金・PayPay等。受領済みでも台帳に記録がないため実績に入れていません）</span><b>' + esc(yen(t.onsiteUnconfirmed || 0)) + '（' + esc(t.onsiteUnconfirmedCount || 0) + '件）</b></li>' +
       '<li><span>カード決済で利用済み・未入金</span><b>' + esc(yen(t.unconfirmed)) + '</b></li>' +
+      '<li><span>日程・人数変更の精算が未了（受領が確認できた額だけを実績に入れ、差額は未確定）</span><b>' + esc(t.settlementPendingCount || 0) + '件</b></li>' +
       '<li><span>返金処理中・結果不明（差引額を確定できず金額に含めていません）</span><b>' + esc(t.refundUnsettledCount || 0) + '件</b></li>' +
       '<li><span>返金（件数のみ）</span><b>' + esc(t.refundedCount) + '件</b></li>' +
       '<li><span>経費・利益</span><b class="dim">未接続（売上達成率から差し引きません）</b></li></ul>';

@@ -8,6 +8,8 @@
  * - 現地払い（現金・PayPay等）: 既存の予約システムは現地払いの paymentStatus を NOT_STARTED のまま更新せず、受領の記録が台帳に無い。
  *   したがって利用が過ぎた現地払いは「現地払い・受領記録なし」として別枠に出し、実績には入れない（実際には受領済みでも年商に入らないため、
  *   実績は『確認済み額の部分計』であり全体年商ではない）。受領記録の正本ができるまで確定達成率とは扱わない。
+ * - 日程変更・人数変更の精算: 現在の料金（見積り）を受領額とみなさない。精算が未了（追加請求・返金待ち）のものは、確認済みの入出金の累計
+ *   （feePaidAmount－feeRefundedAmount）だけを実績にし、差額は未確定として件数で示す（記録が無ければ金額に含めない）。
  * - 取消・返金: 返金方法（refundDecision: FULL/PARTIAL/NONE）と返金額（refundAmount）を使い、「受領額－返金額」の残額を計上する。
  *   返金が完了（paymentStatus=refunded）していて返金額が確定しているときだけ残額を実績にする。返金NONE（返金なしで paid のまま）は全額が残額。
  *   返金処理中（refund_pending）・返金方法が不明・返金額が受領額を超えるなど差引額を確定できないものは、金額に含めず「返金処理中・結果不明」の件数にする。
@@ -41,7 +43,7 @@ var OpsRevenue = (function () {
   }
   function emptyMonth_() {
     var studio = {};
-    STUDIO_SERVICES.forEach(function (s) { studio[s] = { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, actualCount: 0, retained: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0 }; });
+    STUDIO_SERVICES.forEach(function (s) { studio[s] = { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, actualCount: 0, retained: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, settlementPendingCount: 0 }; });
     return { studio: studio, options: { actual: 0, scheduled: 0 }, members: { actual: 0 } };
   }
 
@@ -62,6 +64,24 @@ var OpsRevenue = (function () {
       return ra !== null && ra <= price ? price - ra : null;
     }
     return null;
+  }
+
+  /*
+   * 受領額の基準（日程変更・人数変更の精算を考慮）。現在の料金（priceOverrideAmount を含む見積り）を受領額とみなさない。
+   * - 精算が未了（feeSettlementState が PENDING_CHARGE / PENDING_REFUND / PENDING_DECISION）: 実際に確認した入出金の累計
+   *   （feePaidAmount－feeRefundedAmount）だけを受領額とする。記録が無ければ受領額は不明（null）。いずれも差額は未確定。
+   * - 精算済み・記録あり: 記録された入出金の累計を受領額とする。
+   * - 精算の関与なし（通常の予約）: 料金を受領額とする。
+   * 戻り値: { amount: 受領額|null, pending: 精算未了か, involved: 日程/人数変更の精算が関与しているか }
+   */
+  function receiptBasis_(r, price) {
+    var state = String(r.feeSettlementState || '').trim();
+    var paid = num_(r.feePaidAmount), refunded = num_(r.feeRefundedAmount) || 0;
+    var hasRecord = paid !== null && paid > 0;
+    var pending = state !== '' && state !== 'SETTLED';
+    if (pending) return { amount: hasRecord ? Math.max(0, paid - refunded) : null, pending: true, involved: true };
+    if (hasRecord) return { amount: Math.max(0, paid - refunded), pending: false, involved: true };
+    return { amount: price, pending: false, involved: state !== '' };
   }
 
   /* 決済状態の判定（Booking の正規化と同じ語彙）。未知の値は 'unknown'（支払い済みと断定しない）。 */
@@ -95,25 +115,30 @@ var OpsRevenue = (function () {
       var kind = paymentKind_(r.paymentStatus);
       var price = num_(r.effectivePriceAmount);
       var isCard = String(r.paymentMethod || '').trim() === CARD_METHOD;
-      /* 返金が関わる予約（返金処理中・返金完了、または返金を伴わない取消でも受領済みのもの）。予約の状態に関わらず差引額で扱う。 */
+      var basis = receiptBasis_(r, price);
+      /* 返金が関わる予約（返金処理中・返金完了、または返金を伴わない取消でも受領済みのもの）。 */
       if (kind === 'refund') {
         cell.refundedCount++;
-        var net = refundNet_(r, price);
-        /* 返金完了（refunded）かつ差引額が確定しているときだけ残額を実績にする。返金中・方法不明は金額に含めない。 */
+        var net = refundNet_(r, basis.involved ? null : price); /* 日程変更の精算が関与する場合、2つの返金記録を突き合わせられないので確定しない */
+        /* 返金完了（refunded）かつ差引額が確定しているときだけ残額を実績にする。返金中・方法不明・精算が絡むものは金額に含めない。 */
         if (String(r.paymentStatus).trim() !== 'refunded' || net === null) cell.refundUnsettledCount++;
         else if (net > 0) { cell.actual += net; cell.retained += net; cell.actualCount++; }
         return;
       }
       if (r.status === 'CANCELLED' && kind === 'paid') {
-        /* 取消でも paid のまま（返金なし）。返金方法が NONE と記録されている場合だけ全額を残額として計上。記録が無ければ確定しない。 */
-        if (String(r.refundDecision || '').trim() === 'NONE' && price !== null) { cell.actual += price; cell.retained += price; cell.actualCount++; }
+        /* 取消でも paid のまま（返金なし）。返金方法が NONE と記録され、精算が関与しないときだけ全額を残額として計上。 */
+        if (String(r.refundDecision || '').trim() === 'NONE' && price !== null && !basis.involved) { cell.actual += price; cell.retained += price; cell.actualCount++; }
         else cell.refundUnsettledCount++;
         return;
       }
       if (r.status === 'PENDING') { notes.pendingCount++; return; }
       if (r.status !== 'CONFIRMED') return; /* キャンセル（受領なし）・失効・不明は売上にしない */
       if (price === null) { cell.unknownAmountCount++; return; }
-      if (passed && kind === 'paid') { cell.actual += price; cell.actualCount++; }
+      if (passed && kind === 'paid') {
+        /* 実績は「記録された受領額」。精算が未了（追加請求・返金待ち）で差額が未確定の分は実績に入れず、件数で示す。 */
+        if (basis.amount !== null) { cell.actual += basis.amount; cell.actualCount++; }
+        if (basis.pending || basis.amount === null) cell.settlementPendingCount++;
+      }
       else if (passed && !isCard) { cell.onsiteUnconfirmed += price; cell.onsiteUnconfirmedCount++; } /* 現地払い・受領記録なし（実績に入れない） */
       else if (passed) cell.unconfirmed += price; /* カード決済で利用済み・未入金（実績に入れない） */
       else cell.scheduled += price;
@@ -153,10 +178,10 @@ var OpsRevenue = (function () {
     } else if (input.members) sources.members = { state: input.members.state || 'not_connected' };
 
     var out = months.map(function (mo, idx) {
-      var studioActual = 0, studioSched = 0, studioUnconf = 0, refundedCount = 0, unknownAmount = 0, onsite = 0, onsiteCount = 0, unsettled = 0, retained = 0;
+      var studioActual = 0, studioSched = 0, studioUnconf = 0, refundedCount = 0, unknownAmount = 0, onsite = 0, onsiteCount = 0, unsettled = 0, retained = 0, settlePending = 0;
       STUDIO_SERVICES.forEach(function (s) {
         var c = mo.studio[s]; studioActual += c.actual; studioSched += c.scheduled; studioUnconf += c.unconfirmed; refundedCount += c.refundedCount; unknownAmount += c.unknownAmountCount;
-        onsite += c.onsiteUnconfirmed; onsiteCount += c.onsiteUnconfirmedCount; unsettled += c.refundUnsettledCount; retained += c.retained;
+        onsite += c.onsiteUnconfirmed; onsiteCount += c.onsiteUnconfirmedCount; unsettled += c.refundUnsettledCount; retained += c.retained; settlePending += c.settlementPendingCount;
       });
       var optActual = sources.options.state === 'ready' ? mo.options.actual : 0;
       var memActual = sources.members.state === 'ready' ? mo.members.actual : 0;
@@ -170,19 +195,20 @@ var OpsRevenue = (function () {
         unconfirmed: studioUnconf,
         refundedCount: refundedCount,
         unknownAmountCount: unknownAmount,
-        onsiteUnconfirmed: onsite, onsiteUnconfirmedCount: onsiteCount, refundUnsettledCount: unsettled, retained: retained
+        onsiteUnconfirmed: onsite, onsiteUnconfirmedCount: onsiteCount, refundUnsettledCount: unsettled, retained: retained, settlementPendingCount: settlePending
       };
     });
     var totals = out.reduce(function (t, m) {
       t.actual += m.actual; t.scheduled += m.scheduled; t.unconfirmed += m.unconfirmed; t.refundedCount += m.refundedCount; t.unknownAmountCount += m.unknownAmountCount;
-      t.onsiteUnconfirmed += m.onsiteUnconfirmed; t.onsiteUnconfirmedCount += m.onsiteUnconfirmedCount; t.refundUnsettledCount += m.refundUnsettledCount; t.retained += m.retained;
+      t.onsiteUnconfirmed += m.onsiteUnconfirmed; t.onsiteUnconfirmedCount += m.onsiteUnconfirmedCount; t.refundUnsettledCount += m.refundUnsettledCount; t.retained += m.retained; t.settlementPendingCount += m.settlementPendingCount;
       return t;
-    }, { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, retained: 0 });
+    }, { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, retained: 0, settlementPendingCount: 0 });
     /* 実績は「接続済み・確認済み額の部分計」。全体年商として確定できない理由を固定コードで返す（SNBC未接続は現状常に該当）。 */
     var partialReasons = [];
     if (sources.snbc.state !== 'ready') partialReasons.push('SNBC_NOT_CONNECTED');
     if (totals.onsiteUnconfirmedCount > 0) partialReasons.push('ONSITE_PAYMENT_UNCONFIRMED');
     if (totals.refundUnsettledCount > 0) partialReasons.push('REFUND_UNSETTLED');
+    if (totals.settlementPendingCount > 0) partialReasons.push('SETTLEMENT_PENDING');
     if (totals.unknownAmountCount > 0) partialReasons.push('AMOUNT_UNKNOWN');
     if (sources.members.state !== 'ready') partialReasons.push('MEMBERS_UNAVAILABLE');
     if (sources.options.state !== 'ready') partialReasons.push('OPTIONS_UNAVAILABLE');
@@ -215,7 +241,7 @@ var OpsRevenue = (function () {
       partial: { isPartial: partialReasons.length > 0, reasons: partialReasons },
       months: out,
       totals: { actual: totals.actual, scheduled: totals.scheduled, unconfirmed: totals.unconfirmed, refundedCount: totals.refundedCount, unknownAmountCount: totals.unknownAmountCount,
-        onsiteUnconfirmed: totals.onsiteUnconfirmed, onsiteUnconfirmedCount: totals.onsiteUnconfirmedCount, refundUnsettledCount: totals.refundUnsettledCount, retained: totals.retained,
+        onsiteUnconfirmed: totals.onsiteUnconfirmed, onsiteUnconfirmedCount: totals.onsiteUnconfirmedCount, refundUnsettledCount: totals.refundUnsettledCount, retained: totals.retained, settlementPendingCount: totals.settlementPendingCount,
         studioByService: byService, options: optionsTotal, members: membersTotal },
       goals: goals,
       forecast: forecast,

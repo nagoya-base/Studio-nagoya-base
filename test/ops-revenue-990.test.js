@@ -30,9 +30,9 @@ var SB = load();
 
 function jst(y, m, d, hh, mm) { return new Date(Date.UTC(y, m - 1, d, hh - 9, mm)); }
 var CARD = 'オンラインクレジットカード';
-var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name', 'paymentMethod', 'refundDecision', 'refundAmount'];
+var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name', 'paymentMethod', 'refundDecision', 'refundAmount', 'feePaidAmount', 'feeRefundedAmount', 'feeSettlementState'];
 function booking(id, over) {
-  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME', paymentMethod: CARD, refundDecision: '', refundAmount: '' }, over || {});
+  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME', paymentMethod: CARD, refundDecision: '', refundAmount: '', feePaidAmount: '', feeRefundedAmount: '', feeSettlementState: '' }, over || {});
   return HEADER.map(function (h) { return b[h]; });
 }
 function ledger(rows) { return { values: [HEADER].concat(rows) }; }
@@ -361,4 +361,38 @@ test('P1: 画面は実績を「確認済み額の部分計」と表示し、達�
   assert.ok(/現地払い・受領記録なし/.test(html) && /¥10,000/.test(html) && /2件/.test(html));
   assert.ok(/返金処理中・結果不明/.test(html) && /3件/.test(html));
   assert.ok(/SNBC/.test(html) && /未接続ソースあり/.test(html));
+});
+
+/* ---------- Codex P1(#992): 日程変更後の受領額 ---------- */
+test('P1(Codex): 日程変更で料金が上がっても、精算が未了なら見積り額を実績にしない（確認済みの入出金累計だけ）', function () {
+  var res = call([
+    booking('S1', { priceAmount: 6000, priceOverrideAmount: 10000, priceOverrideAt: jst(2026, 11, 9, 9, 0), feePaidAmount: 6000, feeRefundedAmount: 0, feeSettlementState: 'PENDING_CHARGE' }), /* 6,000受領・10,000に変更・追加請求待ち */
+    booking('S2', { priceAmount: 6000, priceOverrideAmount: 10000, priceOverrideAt: jst(2026, 11, 9, 9, 0), feeSettlementState: 'PENDING_CHARGE' }),                          /* 受領の記録なし → 金額に含めない */
+    booking('S3', { priceAmount: 10000, priceOverrideAmount: 4000, priceOverrideAt: jst(2026, 11, 9, 9, 0), feePaidAmount: 10000, feeRefundedAmount: 0, feeSettlementState: 'PENDING_REFUND' }), /* 値下げ・返金待ち：受領10,000のまま */
+    booking('S4', { priceAmount: 6000, priceOverrideAmount: 10000, priceOverrideAt: jst(2026, 11, 9, 9, 0), feePaidAmount: 10000, feeRefundedAmount: 0, feeSettlementState: 'SETTLED' }),     /* 追加分も受領・精算済み → 記録の10,000 */
+    booking('S5', { priceAmount: 6000, feeSettlementState: 'SETTLED' })                                                                                                                  /* 精算済み・累計の記録なし → 料金 */
+  ]);
+  var t = res.revenue.totals;
+  assert.strictEqual(t.actual, 6000 + 0 + 10000 + 10000 + 6000);
+  assert.strictEqual(t.settlementPendingCount, 3, 'S1・S2・S3');
+  assert.ok(res.revenue.partial.reasons.indexOf('SETTLEMENT_PENDING') !== -1);
+});
+
+test('P1(Codex): 取消の返金で、日程変更の精算が絡む予約は2つの返金記録を突き合わせられないので確定しない', function () {
+  var res = call([
+    booking('X1', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, priceOverrideAmount: 10000, priceOverrideAt: jst(2026, 11, 9, 9, 0), refundDecision: 'PARTIAL', refundAmount: 2000, feePaidAmount: 6000, feeSettlementState: 'PENDING_CHARGE' }),
+    booking('X2', { status: 'CANCELLED', paymentStatus: 'paid', priceAmount: 6000, refundDecision: 'NONE', refundAmount: 0, feePaidAmount: 6000, feeSettlementState: 'SETTLED' }),
+    booking('X3', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 6000, refundDecision: 'PARTIAL', refundAmount: 2000 }) /* 精算の関与なし → 4,000 */
+  ]);
+  var t = res.revenue.totals;
+  assert.strictEqual(t.actual, 4000);
+  assert.strictEqual(t.refundUnsettledCount, 2);
+});
+
+test('P1(Codex): 画面は精算未了の件数と、部分計の理由を表示する', function () {
+  var d = resp();
+  d.revenue.totals.settlementPendingCount = 2;
+  d.revenue.partial = { isPartial: true, reasons: ['SNBC_NOT_CONNECTED', 'SETTLEMENT_PENDING'] };
+  var html = R.renderRevenue(stateOf(d));
+  assert.ok(/日程・人数変更の精算が未了/.test(html) && /2件/.test(html) && /受領額の差額が確定していない/.test(html));
 });
