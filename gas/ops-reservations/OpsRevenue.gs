@@ -66,13 +66,14 @@ var OpsRevenue = (function () {
       var passed = endOrStart <= nowMs;
       usage[r.bookingId] = { passed: passed, ym: ym, status: r.status };
       if (ym.y !== year) { notes.bookingsOutOfYear++; return; }
-      if (r.status === 'PENDING') { notes.pendingCount++; return; }
-      if (r.status !== 'CONFIRMED') return; /* キャンセル・失効・不明は売上にしない */
       var svc = STUDIO_SERVICES.indexOf(r.service) !== -1 ? r.service : 'unclassified';
       var cell = months[ym.m - 1].studio[svc];
-      var price = num_(r.effectivePriceAmount);
       var kind = paymentKind_(r.paymentStatus);
+      /* 返金は予約の状態に関わらず件数に数える（管理画面の返金はキャンセル後に返金状態になるため）。金額は合算しない。 */
       if (kind === 'refund') { cell.refundedCount++; return; }
+      if (r.status === 'PENDING') { notes.pendingCount++; return; }
+      if (r.status !== 'CONFIRMED') return; /* キャンセル・失効・不明は売上にしない */
+      var price = num_(r.effectivePriceAmount);
       if (price === null) { cell.unknownAmountCount++; return; }
       if (passed && kind === 'paid') { cell.actual += price; cell.actualCount++; }
       else if (passed) cell.unconfirmed += price; /* 利用済み・入金未確認（実績に入れない） */

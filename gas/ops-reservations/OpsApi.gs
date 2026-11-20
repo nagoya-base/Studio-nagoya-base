@@ -259,7 +259,7 @@ var OpsApi = (function () {
             spreadsheetId: id,
             fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
             getToken: function () { return ScriptApp.getOAuthToken(); }
-          }, { sheetName: specs[i].sheet, columns: specs[i].columns, dateColumns: specs[i].dates }));
+          }, { sheetName: specs[i].sheet, columns: specs[i].columns, dateColumns: specs[i].dates, required: specs[i].columns }));
         } catch (e) {
           return { state: e && e.opsCode === 'SHEET_NOT_FOUND' ? 'not_connected' : 'error' };
         }

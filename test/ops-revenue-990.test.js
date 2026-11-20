@@ -252,3 +252,45 @@ test('制御: 年の切替は古い応答を破棄し、権限なしでは表示
   assert.strictEqual(c.state.phase, 'denied');
   assert.strictEqual(c.state.data, null);
 });
+
+test('レビュー対応(#992): キャンセル後に返金状態になった予約も返金件数に数える（金額は合算しない）', function () {
+  var res = call([
+    booking('R1', { status: 'CANCELLED', paymentStatus: 'refunded', priceAmount: 9000 }),
+    booking('R2', { status: 'CANCELLED', paymentStatus: 'refund_pending', priceAmount: 9000 }),
+    booking('R3', { status: 'CANCELLED', paymentStatus: 'not_started', priceAmount: 9000 })
+  ]);
+  assert.strictEqual(res.revenue.totals.refundedCount, 2);
+  assert.strictEqual(res.revenue.totals.actual, 0);
+  assert.strictEqual(res.revenue.totals.unconfirmed, 0);
+});
+
+test('レビュー対応(#992): 必須列が欠けた追加シートは ready にせず、0円・不完全でなくエラー状態にする', function () {
+  function sheetWith(header) {
+    return function (url) {
+      var u = decodeURIComponent(url);
+      var ok = function (o) { return { getResponseCode: function () { return 200; }, getContentText: function () { return JSON.stringify(o); } }; };
+      if (/fields=/.test(u)) return ok({ properties: { timeZone: 'Asia/Tokyo' }, sheets: [{ properties: { title: 'OptionOrders' } }] });
+      if (/!1:1/.test(u)) return ok({ values: [header] });
+      return ok({ valueRanges: [] });
+    };
+  }
+  var spec = { sheetName: 'OptionOrders', columns: ['bookingId', 'amountJpy', 'paymentStatus', 'status'], dateColumns: [], required: ['bookingId', 'amountJpy', 'paymentStatus', 'status'] };
+  var deps = function (header) { return { spreadsheetId: 'FAKE', getToken: function () { return 'T'; }, fetch: sheetWith(header) }; };
+  assert.throws(function () { SB.OpsSource.readSheet(deps(['bookingId', 'amountJpy', 'status']), spec); }, function (e) { return e.opsCode === 'SCHEMA_MISMATCH'; });
+  assert.doesNotThrow(function () { SB.OpsSource.readSheet(deps(['bookingId', 'amountJpy', 'paymentStatus', 'status']), spec); });
+  var api = fs.readFileSync(path.join(DIR, 'OpsApi.gs'), 'utf8');
+  assert.ok(/required: specs\[i\]\.columns/.test(api), '売上の追加シートは全列を必須にする');
+});
+
+test('レビュー対応(#992): ホームの再取得は売上も一緒に更新する', function () {
+  var H = require(path.join(FRONT, 'home-client.js'));
+  var els = {};
+  function el(id) { if (!els[id]) els[id] = { id: id, value: '', hidden: false, innerHTML: '', textContent: '', _l: {}, addEventListener: function (t, f) { (this._l[t] = this._l[t] || []).push(f); }, setAttribute: function () {}, getAttribute: function () { return null; }, click: function () {} }; return els[id]; }
+  var calls = [];
+  var res = { state: {}, getFilters: function () { return { service: 'all', status: 'active', scope: 'custom', from: '2026-11-01', to: '2026-11-30' }; }, setFilters: function () {}, reload: function () { calls.push('res'); }, closeDetail: function () {} };
+  var tasks = { state: {}, load: function () { calls.push('tasks'); } };
+  H.mount({ getElementById: el }, { res: res, tasks: tasks, revenue: { load: function () { calls.push('revenue'); } }, now: function () { return NOW; } });
+  calls.length = 0;
+  el('home-reload')._l.click[0]({});
+  assert.deepStrictEqual(calls.sort(), ['res', 'revenue', 'tasks']);
+});

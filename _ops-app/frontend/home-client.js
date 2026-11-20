@@ -251,13 +251,13 @@
   }
 
   /*
-   * DOMへの結線（ブラウザーでのみ呼ぶ）。deps: { res: 予約コントローラー, tasks: メモコントローラー, now(): ms, mock }
+   * DOMへの結線（ブラウザーでのみ呼ぶ）。deps: { res: 予約コントローラー, tasks: メモコントローラー, revenue?: 売上コントローラー（再取得で一緒に更新）, now(): ms, mock }
    * 予約コントローラーは getFilters / setFilters / reload / openDetail、メモコントローラーは load / openTask を使う。
    */
   function mount(doc, deps) {
     function $(id) { return doc.getElementById(id); }
     var now = deps.now || function () { return Date.now(); };
-    var res = deps.res, tasks = deps.tasks;
+    var res = deps.res, tasks = deps.tasks, revenue = deps.revenue || null;
     var model = { month: jstMonth(now()), service: 'all' };
     var selected = ['home', 'res', 'tasks'];
 
@@ -305,7 +305,7 @@
 
     $('home-month').addEventListener('change', function () { model.month = $('home-month').value; sync(); render(); });
     $('home-service').addEventListener('change', function () { model.service = $('home-service').value; sync(); render(); });
-    $('home-reload').addEventListener('click', function () { res.reload(); tasks.load(); });
+    $('home-reload').addEventListener('click', function () { res.reload(); tasks.load(); if (revenue) revenue.load(); });
     $('home-add').addEventListener('click', function () { go('tasks'); $('t-new').click(); });
 
     $('home-view').addEventListener('click', function (e) {

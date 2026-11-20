@@ -240,8 +240,8 @@
       var resCtl = OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }),
         { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });
       var tasksCtl = OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }), { onChange: function () { if (home) home.render(); } });
-      home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl });
-      OpsRevenueClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }), { onDrill: function (d) { home.drill(d.month); } });
+      var revCtl = OpsRevenueClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }), { onDrill: function (d) { home.drill(d.month); } });
+      home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl, revenue: revCtl });
     })();
   </script>
   <!--/OPS:SCRIPTS-->

@@ -130,7 +130,7 @@ var OpsSource = (function () {
   /*
    * 収益集計（Issue #990 PR-B）用に、同じ台帳ファイルの別シートを「列の許可リスト」だけ読む（金額・日付・識別子のみ。
    * メール・氏名・Stripe IDなどの列は取得しない）。仕組みは readBookings と同一（Sheets API v4 の GET のみ）。
-   * spec: { sheetName, columns: [列名...], dateColumns: [列名...] }
+   * spec: { sheetName, columns: [列名...], dateColumns: [列名...], required?: [列名...]（無ければ SCHEMA_MISMATCH） }
    */
   function readSheet(deps, spec) {
     var SHEET_NAME = spec.sheetName;
@@ -169,6 +169,9 @@ var OpsSource = (function () {
       dup.opsColumns = duplicated;
       throw dup;
     }
+    /* 集計に必須の列が無いシートは「読めた」と扱わない（列欠落を黙って0円にしない）。 */
+    var missing = (spec.required || []).filter(function (name) { return header.indexOf(name) === -1; });
+    if (missing.length) throw fail_('SCHEMA_MISMATCH');
     var wanted = [];
     spec.columns.forEach(function (name) {
       var i = header.indexOf(name);

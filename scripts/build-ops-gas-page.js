@@ -48,8 +48,8 @@ function build() {
     '      var resCtl = OpsClient.mount(document, OpsGasAdapter.createGasApi(google.script.run),\n' +
     "        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });\n" +
     '      var tasksCtl = OpsTasksClient.mount(document, OpsGasAdapter.createGasTasksApi(google.script.run), { onChange: function () { if (home) home.render(); } });\n' +
-    '      home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl });\n' +
-    '      OpsRevenueClient.mount(document, OpsGasAdapter.createGasApi(google.script.run), { onDrill: function (d) { home.drill(d.month); } });\n' +
+    '      var revCtl = OpsRevenueClient.mount(document, OpsGasAdapter.createGasApi(google.script.run), { onDrill: function (d) { home.drill(d.month); } });\n' +
+    '      home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl, revenue: revCtl });\n' +
     '    })();\n  </script>' +
     html.slice(scripts.end);
   html = html.replace('<title>SNB Operations（モック）</title>', '<title>SNB Operations</title>')
