@@ -57,6 +57,15 @@
     var d = jstDate(ms);
     return p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes());
   }
+  /* 終了表示。JSTで開始と終了の日付が違う（日またぎ・複数日）ときは終了日も併記する。 */
+  function endText(startAt, endAt) {
+    var e = Date.parse(endAt), st = Date.parse(startAt);
+    if (typeof endAt !== 'string' || isNaN(e)) return null;
+    var de = jstDate(e), ds = isNaN(st) ? null : jstDate(st);
+    var t = p2(de.getUTCHours()) + ':' + p2(de.getUTCMinutes());
+    if (ds && (ds.getUTCFullYear() !== de.getUTCFullYear() || ds.getUTCMonth() !== de.getUTCMonth() || ds.getUTCDate() !== de.getUTCDate())) return (de.getUTCMonth() + 1) + '/' + de.getUTCDate() + ' ' + t;
+    return t;
+  }
   function dayLabel(dateText) {
     var m = /^\d{4}-(\d{2})-(\d{2})$/.exec(dateText || '');
     return m ? (+m[1]) + '/' + (+m[2]) : (dateText || '');
@@ -105,7 +114,9 @@
     var fits = !!a && a.status === 'active' && a.from === want.from && a.to === want.to && (a.service === undefined || a.service === want.service);
     if (d && fits && (res.phase === 'ready' || res.phase === 'error' || res.phase === 'not_connected' || res.phase === 'loading')) {
       if (d.notConnectedSelected) return { kind: 'not_connected', data: d };
-      return { kind: 'ready', data: d, stale: res.phase === 'error' || res.phase === 'not_connected', refreshing: res.phase === 'loading' };
+      /* 台帳の読めない行（重複ID・必須項目不正など）は一覧から除外されている。件数・予定は不完全。 */
+      var excluded = (d.issues || []).filter(function (x) { return x.severity === 'error'; }).length;
+      return { kind: 'ready', data: d, stale: res.phase === 'error' || res.phase === 'not_connected', refreshing: res.phase === 'loading', excluded: excluded, incomplete: excluded > 0 };
     }
     if (res.phase === 'error' || res.phase === 'not_connected') return { kind: 'error', error: res.error };
     return { kind: 'loading' };
@@ -138,7 +149,7 @@
     var s = c.st, body, clickable = false;
     if (s.kind === 'ready') {
       clickable = true;
-      body = '<span class="v">' + esc(c.value) + '<small>件</small></span>' + (s.incomplete ? '<span class="sub warn">一覧は不完全（読込不可行あり）</span>' : s.stale ? '<span class="sub warn">古い内容の可能性</span>' : '<span class="sub">' + esc(c.note) + '</span>');
+      body = '<span class="v">' + esc(c.value) + '<small>件</small></span>' + (s.incomplete ? '<span class="sub warn">不完全（読めない行を除外）</span>' : s.stale ? '<span class="sub warn">古い内容の可能性</span>' : '<span class="sub">' + esc(c.note) + '</span>');
     } else if (s.kind === 'loading') {
       body = '<span class="v dim">…</span><span class="sub">取得中</span>';
     } else if (s.kind === 'not_connected') {
@@ -199,10 +210,11 @@
     }
     var u = selectUpcoming(rs.data.items, 5);
     var html = head;
+    if (rs.incomplete) html += '<div class="banner err" role="alert">台帳の ' + esc(rs.excluded) + ' 件が読み込めず一覧から除外されています。件数・予定は不完全です（予約タブの「確認が必要な行」を確認してください）。</div>';
     if (rs.stale) html += '<div class="banner stale">予約の最新取得に失敗しました。古い内容を表示しています。</div>';
-    if (!u.items.length) return html + '<div class="banner">表示月にこれからの有効な予約はありません（取得は正常に完了しています）。</div>';
+    if (!u.items.length) return html + (rs.incomplete ? '<div class="banner stale">表示できるこれからの予約はありません（ただし除外された行があるため、予約がないとは限りません）。</div>' : '<div class="banner">表示月にこれからの有効な予約はありません（取得は正常に完了しています）。</div>');
     html += '<div class="uphead" aria-hidden="true"><span>利用日</span><span>サービス</span><span>人数</span><span>状態</span></div><ul class="uplist">' + u.items.map(function (i) {
-      var end = clock(i.endAt);
+      var end = endText(i.startAt, i.endAt);
       return '<li><button type="button" class="uprow" data-home="res" data-id="' + esc(i.bookingId) + '">' +
         '<span class="c-when"><strong>' + esc(dayLabel(i.date)) + '</strong> ' + esc(clock(i.startAt) || '') + (end ? '〜' + esc(end) : '') + '</span>' +
         '<span class="c-svc">' + esc(i.serviceLabel) + '</span>' +
@@ -309,6 +321,7 @@
           else if (act === 'res') { go('res'); res.openDetail(id); }
           else if (act === 'card') {
             var target = node.getAttribute('data-target');
+            if (target === 'res' || target === 'res-pending') res.closeDetail(); /* 開いたままの詳細が一覧の代わりに出ないようにする */
             if (target === 'res-pending') { var f = res.getFilters(); f.status = 'PENDING'; res.setFilters(f); res.reload(); go('res'); }
             else go(target);
           }

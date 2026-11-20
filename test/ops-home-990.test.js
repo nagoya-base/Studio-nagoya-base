@@ -268,3 +268,27 @@ test('配布物: 生成物に画面版の印・ホーム・ナビがあり、鍵
   assert.ok(!/売上予定|参加予定|<img/.test(body));
   assert.strictEqual(fs.readFileSync(builder.OUT, 'utf8'), page, '生成物が正本と一致');
 });
+
+test('レビュー対応(#992): 日またぎの終了日表示・除外行の不完全警告・一覧へ移る前に詳細を閉じる', async function () {
+  var night = item('BN', { startAt: '2026-11-25T22:00:00+09:00', endAt: '2026-11-26T01:00:00+09:00' });
+  var res = resState(); res.data.items = [night];
+  var html = H.renderHome(res, taskState(), CTX);
+  assert.ok(/22:00〜11\/26 01:00/.test(html), '終了日を併記');
+  var bad = resState(); bad.data.issues = [{ row: 3, severity: 'error', reasons: ['x'] }]; bad.data.items = [];
+  var h2 = H.renderHome(bad, taskState(), CTX);
+  assert.ok(/1 件が読み込めず/.test(h2) && /とは限りません/.test(h2) && /不完全/.test(h2));
+  assert.ok(!/これからの有効な予約はありません（取得は正常/.test(h2));
+  var b = boot(); await tick();
+  var up = H.selectUpcoming(b.res.state.data.items).items[0];
+  if (!up) return;
+  clickIn(b.doc, 'home-view', { 'data-home': 'res', 'data-id': up.bookingId }); await tick();
+  assert.ok(b.res.state.detailId);
+  b.doc.getElementById('tab-home').click(); await tick();
+  clickIn(b.doc, 'home-view', { 'data-home': 'card', 'data-target': 'res-pending' }); await tick();
+  assert.strictEqual(b.res.state.detailId, null, '詳細が残らない');
+  b.doc.getElementById('tab-home').click(); await tick();
+  clickIn(b.doc, 'home-view', { 'data-home': 'res', 'data-id': up.bookingId }); await tick();
+  b.doc.getElementById('tab-home').click(); await tick();
+  clickIn(b.doc, 'home-view', { 'data-home': 'card', 'data-target': 'res' });
+  assert.strictEqual(b.res.state.detailId, null);
+});
