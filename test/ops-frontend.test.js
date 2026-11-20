@@ -257,9 +257,9 @@ test('画面: 入力は契約の一覧要求へ変換される', function () {
   assert.deepStrictEqual(plain(C.paramsFromInputs({ service: 'snb', status: 'all', scope: 'custom', from: '2026-12-01', to: '2026-12-05' })), { service: 'snb', status: 'all', scope: 'upcoming', from: '2026-12-01', to: '2026-12-05' });
 });
 
-test('画面: 初期の状態はキャンセル除外。キャンセル除外では外し、「キャンセル」「すべて」では履歴を確認できる', async function () {
+test('画面: 初期の状態はキャンセル・失効を除外。通常表示では外し、「キャンセル」「失効」「すべて」では履歴を確認できる', async function () {
   assert.strictEqual(C.STATUSES[0][0], 'active');
-  var res = okList([item({ bookingId: 'A', status: 'CONFIRMED' }), item({ bookingId: 'B', status: 'CANCELLED', statusLabel: 'キャンセル' })]);
+  var res = okList([item({ bookingId: 'A', status: 'CONFIRMED' }), item({ bookingId: 'B', status: 'CANCELLED', statusLabel: 'キャンセル' }), item({ bookingId: 'C', status: 'PENDING' }), item({ bookingId: 'D', status: 'EXPIRED', statusLabel: '失効' })]);
   async function run(status) {
     var sent = null;
     var ctl = C.createController({ list: function (p, ok) { sent = p; ok(res); }, detail: function () {} }, function () {});
@@ -268,12 +268,13 @@ test('画面: 初期の状態はキャンセル除外。キャンセル除外で
   }
   var active = await run('active');
   assert.strictEqual(active.sent.status, 'all');
-  assert.deepStrictEqual(active.state.data.items.map(function (i) { return i.bookingId; }), ['A']);
-  assert.strictEqual(active.state.data.counts.matched, 1);
-  assert.strictEqual(active.state.data.counts.sheetRows, 2);
+  assert.deepStrictEqual(active.state.data.items.map(function (i) { return i.bookingId; }), ['A', 'C']);
+  assert.strictEqual(active.state.data.counts.matched, 2);
+  assert.strictEqual(active.state.data.counts.sheetRows, 4);
   var all = await run('all');
-  assert.strictEqual(all.state.data.items.length, 2);
+  assert.strictEqual(all.state.data.items.length, 4);
   assert.strictEqual((await run('CANCELLED')).sent.status, 'CANCELLED');
+  assert.strictEqual((await run('EXPIRED')).sent.status, 'EXPIRED');
 });
 
 /* ---- フロント×バックエンドの契約適合（同一プロセス内。実ネットワークではない） ---- */

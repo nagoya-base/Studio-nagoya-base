@@ -16,7 +16,7 @@
   'use strict';
 
   var SERVICES = [['all', 'すべて'], ['snb', 'SNB'], ['studio_x', 'Studio X'], ['snb_mens', 'SNB Mens'], ['snb_community', 'SNB Community（未接続）'], ['unclassified', '未分類']];
-  var STATUSES = [['active', 'キャンセル除外'], ['all', 'すべて（キャンセル含む）'], ['PENDING', '仮予約'], ['CONFIRMED', '確定'], ['CANCELLED', 'キャンセル'], ['EXPIRED', '失効'], ['UNKNOWN', '不明']];
+  var STATUSES = [['active', 'キャンセル・失効を除外'], ['all', 'すべて（キャンセル・失効含む）'], ['PENDING', '仮予約'], ['CONFIRMED', '確定'], ['CANCELLED', 'キャンセル'], ['EXPIRED', '失効'], ['UNKNOWN', '不明']];
   var PHASE_LABELS = { upcoming: 'これから', in_progress: '利用中', ended: '終了済み', unknown: '開始済み（終了不明）' };
   var DENIED_CODES = ['UNAUTHENTICATED', 'FORBIDDEN'];
   /* 運営枠（#1003。読み取り専用）の表示切替。予約の絞り込みではなく画面側だけの切替（再取得しない）。 */
@@ -78,10 +78,10 @@
         state.stale = !!state.data;
       }
     }
-    /* 状態「キャンセル除外」（初期表示）はバックエンドの絞り込み値ではない。台帳は従来どおり全件取得し、
-       キャンセル済みだけを画面側で外して、件数も表示結果に合わせる。履歴は消さず、状態「キャンセル」「すべて」で確認できる。 */
+    /* 状態「キャンセル・失効を除外」（初期表示）はバックエンドの絞り込み値ではない。台帳は従来どおり全件取得し、
+       キャンセル済み・失効（EXPIRED）だけを画面側で外して、件数も表示結果に合わせる。履歴は消さず、状態「キャンセル」「失効」「すべて」で確認できる。 */
     function withoutCancelled(res) {
-      var items = res.items.filter(function (i) { return i.status !== 'CANCELLED'; });
+      var items = res.items.filter(function (i) { return i.status !== 'CANCELLED' && i.status !== 'EXPIRED'; });
       return Object.assign({}, res, { items: items, counts: Object.assign({}, res.counts, { matched: items.length }), applied: Object.assign({}, res.applied, { status: 'active' }) });
     }
     /* 運営枠（#1003）は予約台帳とは別の要求。失敗しても予約一覧は壊さず、取得失敗として別に表示する（0件にしない）。 */

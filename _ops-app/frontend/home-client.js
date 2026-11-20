@@ -138,7 +138,7 @@
     var items = rs.kind === 'ready' ? rs.data.items : null;
     var tasks = ts.kind === 'ready' ? ts.data.items : null;
     return [
-      { key: 'reservations', label: '今月の予約', note: 'キャンセルを除く・表示月', st: rs, value: items ? items.length : null, target: 'res' },
+      { key: 'reservations', label: '今月の予約', note: 'キャンセル・失効を除く・表示月', st: rs, value: items ? items.length : null, target: 'res' },
       { key: 'pending', label: '仮予約', note: '確定前の予約・表示月', st: rs, value: items ? items.filter(function (i) { return i.status === 'PENDING'; }).length : null, target: 'res-pending' },
       { key: 'tasks', label: '未対応メモ', note: '未対応＋対応中（完了を除く）', st: ts, value: tasks ? tasks.filter(function (t) { return t.status !== 'done'; }).length : null, target: 'tasks' },
       { key: 'overdue', label: '期限超過メモ', note: '期限を過ぎた未完了メモ', st: ts, value: tasks ? tasks.filter(function (t) { return t.overdue; }).length : null, target: 'tasks' }
