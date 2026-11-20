@@ -118,7 +118,9 @@ var OpsRevenue = (function () {
     var usage = {}; /* bookingId → { passed, ym }（オプションの紐づけ用） */
     var notes = { pendingCount: 0, bookingsOutOfYear: 0, optionUnmatchedCount: 0, cancelMonthUnknownCount: 0, optionInactiveCount: 0 };
 
+    var excluded = {}; /* #996: テスト・アタルの bookingId。売上（予約・キャンセル料・オプション）から除外する。 */
     (input.bookings || []).forEach(function (r) {
+      if (OpsNormalizer.isTestBooking(r) || OpsNormalizer.isAtaruBooking(r)) { excluded[r.bookingId] = true; return; }
       var ym = ymOfDate_(r.date);
       if (!ym) return;
       var endOrStart = r.endMs !== null && r.endMs !== undefined && r.endMs > r.startMs ? r.endMs : r.startMs;
@@ -182,7 +184,9 @@ var OpsRevenue = (function () {
         if (String(o.paymentStatus || '').trim() !== 'PAID' || String(o.status || '').trim() !== 'CONFIRMED') return;
         var amount = num_(o.amountJpy);
         if (amount === null || amount === 0) return;
-        var u = usage[String(o.bookingId || '').trim()];
+        var oid = String(o.bookingId || '').trim();
+        if (excluded[oid]) return; /* 除外予約のオプション。未確認警告にも出さない */
+        var u = usage[oid];
         if (!u) { notes.optionUnmatchedCount++; return; }
         if (u.ym.y !== year) return;
         /* 取消・失効・仮予約に紐づく支払い済みオプション（返金判断が必要な状態）。実績に入れず、件数で警告する。 */

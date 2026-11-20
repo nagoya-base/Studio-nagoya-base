@@ -150,6 +150,9 @@ var OpsApi = (function () {
     var loaded = load_(ctx);
     if (!loaded.ok) return loaded;
     var n = loaded.normalized;
+    /* #996: テスト予約は一覧・件数・サービス状態の対象外（台帳は変更しない）。アタルは表示する。 */
+    var visible = n.records.filter(function (r) { return !OpsNormalizer.isTestBooking(r); });
+    n = Object.assign({}, n, { records: visible });
     var rows = OpsQuery.select(n.records, criteria);
     Logger.log('ops list rows=' + n.totalRows + ' valid=' + n.records.length + ' matched=' + rows.length + ' issues=' + n.issues.length);
     var selected = OpsContract.serviceById(criteria.service);

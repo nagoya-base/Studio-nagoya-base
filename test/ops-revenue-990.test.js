@@ -521,3 +521,34 @@ test('レビュー対応(#992): 受領記録のある現地払いの取消は、
   assert.strictEqual(res.revenue.totals.refundUnsettledCount, 1);
   assert.strictEqual(res.revenue.totals.actual, 0);
 });
+
+/* ---- Issue #996: テスト・アタルの除外 ---- */
+test('#996 売上: テスト(TEST含む)・アタルは予約・キャンセル料・オプションから除外。テスト太郎/testは対象外。警告も出ない', function () {
+  var cancelled = { status: 'CANCELLED', paymentStatus: 'paid', refundDecision: 'NONE', priceAmount: 3000 };
+  var res = call([
+    booking('T1', { name: 'TEST' }), booking('T2', { name: ' テスト ' }),
+    booking('T3', Object.assign({ name: 'Test' }, cancelled)),
+    booking('AT', { name: 'アタル', priceAmount: 4000 }),
+    booking('N1', { name: 'テスト太郎', priceAmount: 1000 }), booking('N2', { name: 'test', priceAmount: 2000 })
+  ], {
+    options: { state: 'ready', rows: [
+      { bookingId: 'T1', amountJpy: 500, paymentStatus: 'PAID', status: 'CONFIRMED' },
+      { bookingId: 'AT', amountJpy: 700, paymentStatus: 'PAID', status: 'CONFIRMED' }
+    ] }, members: { state: 'not_connected' }
+  });
+  var r = res.revenue;
+  assert.strictEqual(r.totals.actual, 1000 + 2000, '一般の2件のみ');
+  assert.strictEqual(r.totals.options, 0);
+  assert.strictEqual(r.notes.optionUnmatchedCount, 0, '除外予約のオプションは未確認警告にしない');
+  assert.strictEqual(r.totals.refundUnsettledCount, 0);
+});
+
+test('#996 一覧: テストは非表示、アタルは表示、台帳は変更しない', function () {
+  var rows = [booking('T1', { name: 'TEST' }), booking('T2', { name: 'ぬし' }), booking('AT', { name: 'アタル' }), booking('N1', { name: 'test' })];
+  var ctx = { authenticate: function () { return { ok: true }; }, nowMs: NOW, readLedger: function () { return ledger(rows); } };
+  var res = JSON.parse(JSON.stringify(SB.OpsApi.handle({ op: 'list', params: { from: '2026-11-01', to: '2026-11-30' } }, ctx)));
+  assert.strictEqual(res.ok, true);
+  var ids = res.items.map(function (i) { return i.bookingId; }).sort();
+  assert.deepStrictEqual(ids, ['AT', 'N1']);
+  assert.strictEqual(res.counts.valid, 2);
+});
