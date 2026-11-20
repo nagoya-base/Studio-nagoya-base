@@ -131,8 +131,9 @@
       #appnav .brand { display:block; color:#fff; font-weight:700; font-size:1.1rem; padding:4px 10px 16px; }
       #appnav button { flex-direction:row; justify-content:flex-start; gap:10px; min-height:44px; border-radius:8px; font-size:.95rem; padding:6px 12px; }
       #appnav button[aria-selected="true"] { box-shadow:inset 3px 0 0 var(--blue); }
-      .hctl { grid-template-columns:200px auto; }
-      .hctl .full, .svcsel { display:none; }
+      .hctl { grid-template-columns:200px 120px; align-items:end; }
+      .hctl .full { grid-column:auto; }
+      .svcsel { display:none; }
       .kpis { grid-template-columns:repeat(4, 1fr); }
       .chips { display:flex; }
       .uphead, .uprow { display:grid; grid-template-columns:1.2fr 1fr .7fr 1fr 24px; align-items:center; gap:8px; }

@@ -292,3 +292,9 @@ test('レビュー対応(#992): 日またぎの終了日表示・除外行の不
   clickIn(b.doc, 'home-view', { 'data-home': 'card', 'data-target': 'res' });
   assert.strictEqual(b.res.state.detailId, null);
 });
+
+test('レビュー対応(#992): PC幅でも再取得ボタンを隠さない', function () {
+  var css = fs.readFileSync(path.join(FRONT, 'index.html'), 'utf8');
+  var pc = css.slice(css.indexOf('@media (min-width: 900px) {\n      body'));
+  assert.ok(!/\.hctl \.full[^{]*\{[^}]*display:\s*none/.test(pc), 'home-reload を含む .full をPCで非表示にしない');
+});
