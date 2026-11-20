@@ -294,3 +294,11 @@ test('レビュー対応(#992): ホームの再取得は売上も一緒に更新
   el('home-reload')._l.click[0]({});
   assert.deepStrictEqual(calls.sort(), ['res', 'revenue', 'tasks']);
 });
+
+test('レビュー対応(#992): 紐づく予約のない支払い済みオプションは「実績は不完全です」で件数を示す', function () {
+  var d = resp(); d.revenue.notes.optionUnmatchedCount = 2;
+  var html = R.renderRevenue(stateOf(d));
+  assert.ok(/実績は不完全です/.test(html) && /紐づく予約が見つからない支払い済みオプションが 2 件/.test(html));
+  var clean = R.renderRevenue(stateOf(resp()));
+  assert.ok(!/紐づく予約が見つからない/.test(clean));
+});

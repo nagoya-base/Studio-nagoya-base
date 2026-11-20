@@ -1365,6 +1365,7 @@
     var n1 = sourceNote('会員費', rev.sources.members), n2 = sourceNote('有料オプション', rev.sources.options);
     if (n1) incomplete.push(n1); if (n2) incomplete.push(n2);
     if (d.excludedRows > 0) incomplete.push('台帳の ' + d.excludedRows + ' 件が読み込めず一覧から除外されています');
+    if (rev.notes && rev.notes.optionUnmatchedCount > 0) incomplete.push('紐づく予約が見つからない支払い済みオプションが ' + rev.notes.optionUnmatchedCount + ' 件あります（金額に含めていません）');
     if (t.unknownAmountCount > 0) incomplete.push('金額が読めない確定予約が ' + t.unknownAmountCount + ' 件あります（金額に含めていません）');
     if (incomplete.length) html += '<div class="banner stale" role="alert"><strong>実績は不完全です：</strong>' + incomplete.map(esc).join(' ／ ') + '</div>';
 
