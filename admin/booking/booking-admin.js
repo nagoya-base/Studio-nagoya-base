@@ -3739,7 +3739,7 @@ document.getElementById('modal-overlay').addEventListener('click', function (eve
  * 認可・衝突判定・通知はすべてサーバー側（InternalSlots.gs）。ここは表示と呼び出しだけ。
  */
 var internalSlotUi_ = { panel: null, listEl: null, form: null, editingId: '' };
-var INTERNAL_SLOT_TYPES_ = [['snbc_event', 'SNBCイベント'], ['setup', '設営・片付け'], ['cleaning', '清掃・メンテナンス'], ['other', 'その他の運営確保枠']];
+var INTERNAL_SLOT_TYPES_ = [['snbc_event', 'SNBCイベント'], ['kinbaku_event', '緊縛イベント'], ['setup', '設営・片付け'], ['cleaning', '清掃・メンテナンス'], ['other', 'その他の運営確保枠']];
 var INTERNAL_SLOT_PLACES_ = [['snb', 'SNB'], ['mens', 'SNB mens'], ['studio_x', 'Studio X']];
 
 function internalSlotOptions_(pairs) {
@@ -3828,6 +3828,8 @@ function internalSlotSubmit_() {
   var btn = internalSlotField_('submit');
   var values = internalSlotFormValues_();
   var id = internalSlotUi_.editingId;
+  /* 端末によっては自由入力できるため、送信前にも確認する（正はサーバー側の検証）。 */
+  if (!/:(00|30)$/.test(values.startTime) || !/:(00|30)$/.test(values.endTime)) { alert('開始・終了は00分か30分で入力してください。'); return; }
   btn.disabled = true;
   var done = function (r) {
     btn.disabled = false;
@@ -3855,7 +3857,7 @@ function initInternalSlotUi_() {
     '<select id="internal-slot-place">' + internalSlotOptions_(INTERNAL_SLOT_PLACES_) + '</select> ' +
     '<input id="internal-slot-title" type="text" maxlength="60" placeholder="件名"> ' +
     '<input id="internal-slot-date" type="date"> ' +
-    '<input id="internal-slot-start" type="time" step="900"> 〜 <input id="internal-slot-end" type="time" step="900"> ' +
+    '<input id="internal-slot-start" type="time" step="1800"> 〜 <input id="internal-slot-end" type="time" step="1800"> ' +
     '<textarea id="internal-slot-memo" maxlength="500" placeholder="メモ（任意）"></textarea> ' +
     '<button type="button" id="internal-slot-submit">登録</button> ' +
     '<button type="button" id="internal-slot-cancel-edit" class="hidden">編集をやめる</button>' +

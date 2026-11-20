@@ -163,3 +163,17 @@ test('通知メールが失敗しても保存・取消は成功し、notifyFaile
   assert.strictEqual(failed.error.code, 'SAVE_FAILED');
   assert.ok(t2.calendar.events.every(function (e) { return e.isDeleted(); }), 'タグのない占有イベントを残さない');
 });
+
+test('開始・終了は00/30分のみ許可し、15/45分はサーバーで拒否。緊縛イベント種別も登録できる（#1004）', function () {
+  var t = setup(OWNER);
+  var ok = t.s.adminInternalSlotCreate(input({ type: 'kinbaku_event', startTime: '13:30', endTime: '15:00' }));
+  assert.strictEqual(ok.success, true);
+  assert.strictEqual(ok.slot.typeLabel, '緊縛イベント');
+  assert.ok(/緊縛イベント/.test(t.calendar.events[0].getTitle()));
+  ['13:15', '13:45'].forEach(function (bad) {
+    assert.strictEqual(t.s.adminInternalSlotCreate(input({ startTime: bad, endTime: '18:00' })).error.code, 'INVALID_TIME');
+    assert.strictEqual(t.s.adminInternalSlotCreate(input({ startTime: '16:00', endTime: bad })).error.code, 'INVALID_TIME');
+    assert.strictEqual(t.s.adminInternalSlotUpdate(ok.slot.id, input({ startTime: '13:00', endTime: bad })).error.code, 'INVALID_TIME');
+  });
+  assert.strictEqual(t.calendar.events.length, 1);
+});
