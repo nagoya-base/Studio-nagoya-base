@@ -50,13 +50,14 @@ test('運営枠①: internalSlot=1 の正しいタグだけを最小項目で返
     ev('late', { internalSlot: '1', slotType: 'cleaning', slotPlace: 'studio_x', remindedAt: '2026-12-02T09:00:00Z' }, '2026-12-03 15:00', '2026-12-03 17:00', '[運営 清掃・メンテナンス] 床清掃'),
     ev('early', OK_TAGS, '2026-12-02 18:00', '2026-12-02 21:00', '[運営 SNBCイベント] 交流会'),
     ev('general-1', {}, '2026-12-02 10:00', '2026-12-02 12:00', '一般のカレンダー予定（他人の予定）'),
+    ev('kinbaku', { internalSlot: '1', slotType: 'kinbaku_event', slotPlace: 'snb' }, '2026-12-02 19:15', '2026-12-02 20:45', '[運営 緊縛イベント] 練習会'),
     ev('flag-off', { internalSlot: '0', slotType: 'snbc_event', slotPlace: 'snb' }, '2026-12-02 10:00', '2026-12-02 12:00', '対象外'),
     ev('bad-tag', { internalSlot: '1', slotType: 'unknown_type', slotPlace: 'snb' }, '2026-12-04 10:00', '2026-12-04 11:00', '種類が読めない')
   ]);
   var view = be.OpsInternalSlots.read(depsOf(calendar), NOW);
   assert.strictEqual(view.state, 'ready');
   assert.strictEqual(view.invalid, 1, 'タグ不一致は黙って捨てず件数で示す');
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(view.slots.map(function (s) { return s.id; }))), ['internal:early', 'internal:late'], '開始順・台帳の予約IDと衝突しない名前空間');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(view.slots.map(function (s) { return s.id; }))), ['internal:early', 'internal:kinbaku', 'internal:late'], '開始順・台帳の予約IDと衝突しない名前空間');
   var first = view.slots[0];
   assert.deepStrictEqual(JSON.parse(JSON.stringify(Object.keys(first).sort())), ['date', 'endAt', 'id', 'placeLabel', 'reminded', 'service', 'startAt', 'title', 'type', 'typeLabel']);
   assert.strictEqual(first.title, '交流会', '[運営 …] の接頭辞は外す');
@@ -65,7 +66,8 @@ test('運営枠①: internalSlot=1 の正しいタグだけを最小項目で返
   assert.strictEqual(first.typeLabel, 'SNBCイベント');
   assert.strictEqual(first.placeLabel, 'SNB');
   assert.strictEqual(first.reminded, false);
-  assert.strictEqual(view.slots[1].reminded, true);
+  assert.strictEqual(view.slots[2].reminded, true);
+  assert.strictEqual(view.slots[1].typeLabel, '緊縛イベント', '#1005 で追加された種別も invalid にせず表示する');
   assert.ok(!/general-1|一般のカレンダー/.test(JSON.stringify(view)));
 });
 
@@ -180,6 +182,21 @@ test('運営枠④: 取得できない理由を区別し、失敗を「0件」�
   failedLedger.load({ service: 'snb', status: 'all', scope: 'custom', from: '2026-12-01', to: '2026-12-05' });
   var onlySlots = Client.renderView(failedLedger.state);
   assert.ok(/範囲内/.test(onlySlots) && !/範囲外|別サービス/.test(onlySlots));
+  /* 1回成功 → 条件変更 → 台帳だけ失敗・Calendar成功: 古い条件（成功時のすべて・12月）ではなく、最新の条件（SNB・1/19〜1/21）で絞る。 */
+  var calls = 0;
+  var changing = Client.createController({
+    list: function (p, ok) {
+      calls++;
+      if (calls > 1) return ok({ ok: false, error: { code: 'FETCH_FAILED', message: '失敗' } });
+      ok({ ok: true, fetchedAt: '2026-12-01T11:00:00+09:00', applied: { scope: 'upcoming', service: 'all', status: 'all', from: '2026-12-01', to: '2026-12-30', order: 'asc' }, counts: { sheetRows: 0, valid: 0, matched: 0, issues: 0 }, serviceStates: [], notConnectedSelected: false, issues: [], items: [] });
+    },
+    detail: function () {}, internalSlots: function (ok) { ok({ ok: true, internalSlots: farSlots }); }
+  }, function () {});
+  changing.load({ service: 'all', status: 'all', scope: 'custom', from: '2026-12-01', to: '2026-12-30' });
+  changing.load({ service: 'snb', status: 'all', scope: 'custom', from: '2027-01-19', to: '2027-01-21' });
+  assert.strictEqual(changing.state.phase, 'error');
+  var latest = Client.renderView(changing.state);
+  assert.ok(/範囲外/.test(latest) && !/範囲内|別サービス/.test(latest), '古い条件の運営枠は出さない');
   var rejected = render(function (ok, ng) { ng(new Error('net')); });
   assert.ok(/FAKE-1/.test(rejected) && /運営枠が0件という意味ではありません/.test(rejected));
   var empty = render(function (ok) { ok({ ok: true, internalSlots: { state: 'ready', slots: [], invalid: 0 } }); });

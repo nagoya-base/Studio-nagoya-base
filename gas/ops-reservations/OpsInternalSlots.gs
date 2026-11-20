@@ -26,9 +26,10 @@ var OpsInternalSlots = (function () {
   var LIST_DAYS = 90;
   var ID_PREFIX = 'internal:';
 
-  /* Booking Admin（InternalSlots.gs の TYPES_）と同じ種別。Booking Admin のコードは別デプロイのため参照できず、表示用に複製する。 */
+  /* Booking Admin（InternalSlots.gs の TYPES_。#1005 の kinbaku_event を含む5種）と同じ種別。Booking Admin のコードは別デプロイのため参照できず、表示用に複製する。 */
   var TYPES = {
     snbc_event: 'SNBCイベント',
+    kinbaku_event: '緊縛イベント',
     setup: '設営・片付け',
     cleaning: '清掃・メンテナンス',
     other: 'その他の運営確保枠'

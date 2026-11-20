@@ -471,7 +471,9 @@
   function visibleSlots(state) {
     var s = state.slots;
     if (!s || s.phase !== 'ready' || !s.data || s.data.state !== 'ready') return null;
-    var a = (state.data && state.data.applied) || requestedRange(state.request);
+    /* 台帳の応答が最新の要求に対するもの（ready）のときだけ、その正規化済み applied を使う。再取得中・失敗後に残る前回の応答（古い条件）は使わず、
+       画面で要求した最新の条件から絞る（予約一覧を古いデータとして残す挙動は変えない）。 */
+    var a = state.phase === 'ready' && state.data && state.data.applied ? state.data.applied : requestedRange(state.request);
     /* 運営枠に「確定・仮予約」などの状態は無い。個別の状態で絞っているときは運営枠を出さない（0件とも言わない）。 */
     if (a && a.status !== 'active' && a.status !== 'all') return { items: [], statusHidden: true };
     var items = (s.data.slots || []).filter(function (x) {
