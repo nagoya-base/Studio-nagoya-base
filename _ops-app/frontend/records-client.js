@@ -192,11 +192,11 @@
       var d = opsState && opsState.detailPhase === 'ready' ? opsState.detail : null;
       var eligible = d && String(d.paymentMethod || '').trim() !== CARD_METHOD;
       if (!eligible) {
-        if (state.bookingId !== null) { seq++; state.bookingId = null; state.ref = null; state.phase = 'idle'; state.data = null; state.message = null; state.formError = null; state.confirmDelete = false; state.form = emptyOnsiteForm(); }
+        if (state.bookingId !== null) { seq++; state.bookingId = null; state.ref = null; state.phase = 'idle'; state.data = null; state.message = null; state.formError = null; state.confirmDelete = false; state.saving = false; state.form = emptyOnsiteForm(); }
         return;
       }
-      state.ref = { bookingId: d.bookingId, date: d.date, serviceLabel: d.serviceLabel, price: d.effectivePriceAmount };
-      if (state.bookingId !== d.bookingId) { state.bookingId = d.bookingId; state.data = null; state.message = null; state.formError = null; state.confirmDelete = false; state.form = emptyOnsiteForm(); load(); }
+      state.ref = { bookingId: d.bookingId, date: d.date, serviceLabel: d.serviceLabel, price: d.effectivePriceAmount, cancelled: d.status === 'CANCELLED' };
+      if (state.bookingId !== d.bookingId) { state.saving = false; state.bookingId = d.bookingId; state.data = null; state.message = null; state.formError = null; state.confirmDelete = false; state.form = emptyOnsiteForm(); load(); }
     }
     function setField(k, v) { if (Object.prototype.hasOwnProperty.call(state.form, k)) state.form[k] = v; }
     function save() {
@@ -209,22 +209,27 @@
       if (err) { state.formError = err; emit(); return; }
       state.saving = true; state.formError = null; state.message = null; emit();
       var rev = state.data && state.data.record ? state.data.record.revision : null;
-      api.onsiteSave({ input: { bookingId: state.bookingId, receivedJpy: rec, refundedJpy: ref, method: f.method, receivedOn: String(f.receivedOn).trim() }, expectedRevision: rev }, function (res) {
+      var id = state.bookingId; /* 送信時の予約。応答が戻ったときに別の予約を開いていたら、その予約の入力・表示には触れない。 */
+      /* 取消済みの予約での保存は、返金結果の再確認（金額が同じでも確認日時を進める）としてサーバーへ明示する。 */
+      api.onsiteSave({ input: { bookingId: id, receivedJpy: rec, refundedJpy: ref, method: f.method, receivedOn: String(f.receivedOn).trim() }, expectedRevision: rev, reconfirm: !!(state.ref && state.ref.cancelled) }, function (res) {
+        if (id !== state.bookingId) { if (res && res.ok && opts.onSaved) opts.onSaved(); return; }
         state.saving = false;
         if (res && res.ok) { state.message = res.replayed ? '保存済みです（同じ内容の再送でした。金額は重ねていません）。' : '受領を記録しました。利用終了後に年商へ反映します。'; load(true); if (opts.onSaved) opts.onSaved(); }
         else { var e = res && res.error ? res.error : { message: UNCONFIRMED }; state.formError = withHint(e); if (e.code === 'CONFLICT') load(); emit(); }
-      }, function () { state.saving = false; state.formError = UNCONFIRMED; emit(); });
+      }, function () { if (id !== state.bookingId) return; state.saving = false; state.formError = UNCONFIRMED; emit(); });
     }
     function askDelete() { state.confirmDelete = true; emit(); }
     function cancelDelete() { state.confirmDelete = false; emit(); }
     function confirmDelete() {
       if (state.saving || !state.data || !state.data.record) return;
       state.saving = true; state.formError = null; emit();
-      api.onsiteDelete({ bookingId: state.bookingId, expectedRevision: state.data.record.revision }, function (res) {
+      var id = state.bookingId;
+      api.onsiteDelete({ bookingId: id, expectedRevision: state.data.record.revision }, function (res) {
+        if (id !== state.bookingId) { if (res && res.ok && opts.onSaved) opts.onSaved(); return; }
         state.saving = false; state.confirmDelete = false;
         if (res && res.ok) { state.message = '記録を削除しました。'; load(true); if (opts.onSaved) opts.onSaved(); }
         else { state.formError = withHint(res && res.error ? res.error : { message: UNCONFIRMED }); if (res && res.error && res.error.code === 'CONFLICT') load(); emit(); }
-      }, function () { state.saving = false; state.confirmDelete = false; state.formError = UNCONFIRMED; emit(); });
+      }, function () { if (id !== state.bookingId) return; state.saving = false; state.confirmDelete = false; state.formError = UNCONFIRMED; emit(); });
     }
     return { state: state, sync: sync, load: load, setField: setField, save: save, askDelete: askDelete, cancelDelete: cancelDelete, confirmDelete: confirmDelete };
   }
@@ -260,7 +265,7 @@
     if (state.confirmDelete) {
       html += '<div class="banner stale" role="alert"><strong>この予約の受領記録を削除しますか？</strong></div><div class="formbtns"><button type="button" data-rec="onsite-delete-yes"' + (state.saving ? ' disabled' : '') + '>削除する</button><button type="button" data-rec="onsite-delete-no">やめる</button></div>';
     } else {
-      html += '<div class="formbtns"><button type="submit" id="rec-onsite-submit"' + (state.saving ? ' disabled' : '') + '>' + (state.saving ? '保存中…' : rec ? '訂正して保存' : '受領を記録') + '</button>' +
+      html += '<div class="formbtns"><button type="submit" id="rec-onsite-submit"' + (state.saving ? ' disabled' : '') + '>' + (state.saving ? '保存中…' : r.cancelled && rec ? '取消後の返金結果を再確認して保存' : rec ? '訂正して保存' : '受領を記録') + '</button>' +
         (rec ? '<button type="button" data-rec="onsite-delete">誤登録として削除…</button>' : '') + '</div>';
     }
     return html + '</form>';

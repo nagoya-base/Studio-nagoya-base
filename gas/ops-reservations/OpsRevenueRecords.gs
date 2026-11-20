@@ -261,7 +261,13 @@ var OpsRevenueRecords = (function () {
             if (existing.revision === expected + 1 && sameContent_(kind, existing, input)) return { ok: true, record: toPublic_(kind, existing), replayed: true };
             return error_('CONFLICT', MESSAGES.CONFLICT, { current: toPublic_(kind, existing) });
           }
-          if (sameContent_(kind, existing, input)) return { ok: true, record: toPublic_(kind, existing), unchanged: true };
+          /*
+           * 内容が同じ再保存は「変更なし」。ただし、取消済みの現地払いで、オーナーが明示的に「返金結果の再確認」を指定した場合
+           * （request.reconfirm === true。サーバーが予約台帳で取消済みと確認できたときだけ）は、金額が同じでも確認日時（updatedAt）と版を進める。
+           * 取消確定日時より後の確認として売上に反映するため。同じ再送（版が1つ進み内容が同じ）は上の分岐で冪等に成功する。
+           */
+          var reconfirm = kind === 'onsite' && request.reconfirm === true && !!(deps.booking && deps.booking.cancelled);
+          if (sameContent_(kind, existing, input) && !reconfirm) return { ok: true, record: toPublic_(kind, existing), unchanged: true };
           saved = Object.assign({}, input, { updatedAt: now, revision: existing.revision + 1 });
           deps.store.updateRow(kind, existing.rowNumber, toRow_(kind, saved));
         }

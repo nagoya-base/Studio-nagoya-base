@@ -169,3 +169,39 @@ test('⑤ 安全: 所有者以外は全操作が拒否され保存先に触れ�
   assert.strictEqual(run({ op: 'snbc_save', input: snbcInput({ receivedJpy: '21000' }) }, [], store).ok, false);
   assert.ok(!LOGS.some(function (l) { return /21000|17500|B-ONSITE|E-abcdef/.test(l); }), 'ログに金額・IDを出さない');
 });
+
+test('レビュー修正: 取消後の返金なし再確認は金額が同じでも確認日時を進め取消確定月に1回だけ計上／予約A保存中にBを開いてもBの入力は消えない', function () {
+  /* 利用時に6,000円受領を記録 → 後日取消（返金なし）。同じ内容の再保存は通常「変更なし」。 */
+  var cancelled = [booking('B-RECONF-1', { status: 'CANCELLED', cancelledAt: jst(2026, 11, 12, 9, 0) })];
+  var store = fakeStore({ onsite: [['B-RECONF-1', 6000, 0, 'cash', '2026-11-10', '2026-11-10T20:00:00+09:00', 1]] });
+  assert.strictEqual(revenue(cancelled, store).totals.actual, 0, '取消前の記録は確定しない');
+  assert.strictEqual(run({ op: 'onsite_save', input: onsiteInput('B-RECONF-1'), expectedRevision: 1 }, cancelled, store).unchanged, true, 'フラグ無しは従来どおり変更なし');
+  var re = run({ op: 'onsite_save', input: onsiteInput('B-RECONF-1'), expectedRevision: 1, reconfirm: true }, cancelled, store);
+  assert.strictEqual(re.ok, true); assert.strictEqual(re.record.revision, 2);
+  var dupSend = run({ op: 'onsite_save', input: onsiteInput('B-RECONF-1'), expectedRevision: 1, reconfirm: true }, cancelled, store); /* 二重クリック */
+  assert.strictEqual(dupSend.replayed, true); assert.strictEqual(store.tabs.onsite.rows[0][6], 2);
+  var rev = revenue(cancelled, store);
+  assert.strictEqual(rev.totals.actual, 6000); assert.strictEqual(rev.months[10].actual, 6000, '取消確定月（11月）に1回だけ');
+  /* 取消でない予約には reconfirm は効かない（版を進めない）。 */
+  var normal = [booking('B-RECONF-2')]; var s2 = fakeStore({ onsite: [['B-RECONF-2', 6000, 0, 'cash', '2026-11-10', '2026-11-10T20:00:00+09:00', 1]] });
+  assert.strictEqual(run({ op: 'onsite_save', input: onsiteInput('B-RECONF-2'), expectedRevision: 1, reconfirm: true }, normal, s2).unchanged, true);
+
+  /* フロント: A の保存応答が遅れて戻る間に B を開く。 */
+  var Rc = require('../_ops-app/frontend/records-client.js');
+  var pending = [];
+  var api = {
+    onsiteGet: function (id, ok) { ok({ ok: true, storeReady: true, ledgerReceipt: false, todayJst: '2026-11-20', record: null }); },
+    onsiteSave: function (p, ok) { pending.push(ok); },
+    onsiteDelete: function () {}
+  };
+  var saved = 0;
+  var ctl = Rc.createOnsiteController(api, function () {}, { onSaved: function () { saved++; } });
+  function detail(id) { return { detailPhase: 'ready', detail: { bookingId: id, paymentMethod: '現金', date: '2026-11-10', serviceLabel: 'SNB', effectivePriceAmount: 6000, status: 'CONFIRMED' } }; }
+  ctl.sync(detail('B-A')); ctl.setField('receivedJpy', '6000'); ctl.setField('receivedOn', '2026-11-10'); ctl.save();
+  ctl.sync(detail('B-B')); ctl.setField('receivedJpy', '1234'); ctl.setField('receivedOn', '2026-11-11');
+  pending[0]({ ok: true, record: { revision: 1 } }); /* A の完了通知が遅れて届く */
+  assert.strictEqual(ctl.state.form.receivedJpy, '1234', 'B の入力が消えない');
+  assert.strictEqual(ctl.state.message, null, 'A の成功メッセージを B に出さない');
+  assert.strictEqual(saved, 1, '年商の再取得だけは妨げない');
+  assert.strictEqual(ctl.state.saving, false, 'B はそのまま保存できる');
+});

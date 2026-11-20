@@ -140,7 +140,7 @@ var OpsApi = (function () {
       if (n.duplicateIds.indexOf(key) !== -1) booking = { code: 'DUPLICATE_ID' };
       else if (found.length !== 1) booking = { code: 'NOT_FOUND' };
       else if (String(found[0].paymentMethod || '').trim() === OpsRevenue.CARD_METHOD) booking = { code: 'NOT_ONSITE' };
-      else booking = { code: 'OK', ledgerReceipt: OpsRevenue.hasLedgerReceipt(found[0]) };
+      else booking = { code: 'OK', ledgerReceipt: OpsRevenue.hasLedgerReceipt(found[0]), cancelled: found[0].status === 'CANCELLED' };
       deps = Object.assign({}, deps, { booking: booking });
     }
     return OpsRevenueRecords.handle(request, deps, nowMs);
@@ -478,7 +478,7 @@ function opsDeleteSnbc(payload) {
 function opsGetOnsite(bookingId) { return OpsApi.handle({ op: 'onsite_get', bookingId: bookingId }); }
 function opsSaveOnsite(payload) {
   var p = payload && typeof payload === 'object' ? payload : {};
-  return OpsApi.handle({ op: 'onsite_save', input: p.input, expectedRevision: p.expectedRevision });
+  return OpsApi.handle({ op: 'onsite_save', input: p.input, expectedRevision: p.expectedRevision, reconfirm: p.reconfirm === true });
 }
 function opsDeleteOnsite(payload) {
   var p = payload && typeof payload === 'object' ? payload : {};
