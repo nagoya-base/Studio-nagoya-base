@@ -223,11 +223,12 @@ var InternalSlots = (function () {
       if (findConflict_(calendar, startAt, endAt, event.getId())) return err_('SLOT_CONFLICT', '変更先の時間帯は予約済みか、すでに枠が入っています。');
       var timeChanged = startAt.getTime() !== oldStart.getTime() || endAt.getTime() !== oldEnd.getTime();
       if (timeChanged) event.setTime(startAt, endAt);
-      applyFields_(event, v);
       if (timeChanged && findConflict_(calendar, startAt, endAt, event.getId())) {
         event.setTime(oldStart, oldEnd);
         return err_('SLOT_CONFLICT', '変更の直前に別の予約が入りました。元の時間に戻しました。');
       }
+      /* 件名・種別などは再照会に成功してから反映する（失敗時に元の枠を一部だけ変えない）。 */
+      applyFields_(event, v);
       /* 日時が変わったら通知状態を戻し、最終の日時で改めて前日リマインドの対象にする。 */
       if (timeChanged) event.deleteTag(TAG_REMINDED_);
       var slot = toSlot_(event, timezone);

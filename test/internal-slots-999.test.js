@@ -125,3 +125,16 @@ test('前日18時以降に登録した翌日枠は登録直後に通知し、そ
   assert.strictEqual(t.s.InternalSlots.sendReminders(tomorrow, now).sentCount, 0);
   assert.strictEqual(t.mail._sentEmails.length, 1);
 });
+
+test('変更の直前に別の予約が割り込んだら、時間もメタデータも元に戻る', function () {
+  var t = setup(OWNER);
+  var created = t.s.adminInternalSlotCreate(input());
+  var ev = t.calendar.events[0];
+  var origSetTime = ev.setTime;
+  ev.setTime = function (s, e) { origSetTime(s, e); makeEvent(t.calendar, '[SNB 確定] SNB-2', s, e); };
+  var r = t.s.adminInternalSlotUpdate(created.slot.id, input({ startTime: '16:00', endTime: '17:00', title: '変更後' }));
+  ev.setTime = function (s, e) { origSetTime(s, e); };
+  assert.strictEqual(r.error.code, 'SLOT_CONFLICT');
+  assert.strictEqual(ev.getTitle(), '[運営 SNBCイベント] SNBC定例');
+  assert.strictEqual(ev.getStartTime().getTime(), at(DATE, '13:00').getTime());
+});
