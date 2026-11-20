@@ -28,7 +28,9 @@
       list: function (params, ok, ng) { call('opsListReservations', params, ok, ng); },
       detail: function (id, ok, ng) { call('opsGetReservation', id, ok, ng); },
       /* 鍵・案内の状況（#942）。読み取り専用。接続先・トークンは画面に渡らない。 */
-      keyStatus: function (id, ok, ng) { call('opsGetKeyStatus', id, ok, ng); }
+      keyStatus: function (id, ok, ng) { call('opsGetKeyStatus', id, ok, ng); },
+      /* 年商・月次の売上集計（#990 PR-B）。読み取り専用。 */
+      revenue: function (params, ok, ng) { call('opsGetRevenue', params, ok, ng); }
     };
   }
 

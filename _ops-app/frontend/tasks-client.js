@@ -165,13 +165,15 @@
     function setStatus(task, status, done) { return save(contentOf(task, status), task.revision, done); }
     function toggleDone() { state.showDone = !state.showDone; emit(); }
     function toggleOpen(id) { state.expanded[id] = !state.expanded[id]; emit(); }
+    /* ホームの優先メモから対象を直接開く（トグルではなく、必ず展開する）。 */
+    function openTask(id) { state.expanded[id] = true; emit(); }
     function find(id) {
       var hit = null;
       ((state.data && state.data.items) || []).forEach(function (t) { if (t.taskId === id) hit = t; });
       return hit;
     }
 
-    return { state: state, load: load, save: save, remove: remove, setStatus: setStatus, toggleDone: toggleDone, toggleOpen: toggleOpen, find: find };
+    return { state: state, load: load, save: save, remove: remove, setStatus: setStatus, toggleDone: toggleDone, toggleOpen: toggleOpen, openTask: openTask, find: find };
   }
 
   function renderBanner(state) {
@@ -276,6 +278,7 @@
       $('tasks-banner').innerHTML = renderBanner(state);
       $('tasks-summary').innerHTML = renderSummary(state);
       $('tasks-view').innerHTML = renderList(state);
+      if (opts.onChange) opts.onChange(state);
       $('t-submit').disabled = state.save.phase === 'saving';
       $('t-submit').textContent = state.save.phase === 'saving' ? '保存中…' : '保存';
       setBusy(state.save.phase === 'saving');
