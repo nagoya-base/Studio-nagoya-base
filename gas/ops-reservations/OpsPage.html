@@ -292,7 +292,7 @@
 
   /* 手動再取得・連続操作で、遅れて返った古い応答が最新結果を上書きしないようにする。 */
   function createController(api, onChange) {
-    var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null, key: { phase: 'idle', data: null, error: null, fetchedAt: null }, mock: api && api.kind === 'mock', slots: IDLE_SLOTS, kind: 'all' };
+    var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null, key: { phase: 'idle', data: null, error: null, fetchedAt: null }, mock: api && api.kind === 'mock', slots: IDLE_SLOTS, kind: 'all', request: null };
     var listSeq = 0, detailSeq = 0, keySeq = 0, slotSeq = 0;
     function emit() { if (onChange) onChange(state); }
     function fail(err) {
@@ -340,6 +340,8 @@
     }
     function load(params) {
       var mine = ++listSeq;
+      /* 要求した条件を保持する。台帳の取得に失敗しても、運営枠へ同じ期間・サービスの絞り込みをかけるため（#1003）。 */
+      state.request = { service: params.service || 'all', status: params.status || 'all', scope: params.scope || 'upcoming', from: params.from || '', to: params.to || '' };
       var hideCancelled = params.status === 'active';
       if (hideCancelled) params = Object.assign({}, params, { status: 'all' });
       /* 詳細を開いたまま再取得した場合も、詳細を最新の台帳から取り直す。 */
@@ -453,11 +455,23 @@
       '<div class="note">運営枠（閲覧専用）。予約の件数・売上には含みません。</div></div></li>';
   }
 
+  /* 台帳の応答が無いときの代替。要求した条件から期間を同じ定義（今日から30日／過去30日、JST）で求める。 */
+  function requestedRange(req) {
+    if (!req) return null;
+    function day(ms) { return new Date(ms).toISOString().slice(0, 10); }
+    var DAY = 24 * 3600 * 1000;
+    var today = Date.parse(day(Date.now() + 9 * 3600 * 1000));
+    var from = req.from, to = req.to;
+    if (req.scope === 'past') { to = to || day(today - DAY); from = from || day(Date.parse(to) - 29 * DAY); }
+    else { from = from || day(today); to = to || day(Date.parse(from) + 29 * DAY); }
+    return { service: req.service, status: req.status, from: from, to: to };
+  }
+
   /* 取得に成功した運営枠だけを、予約と同じ条件（期間・サービス・状態）で絞る。取得失敗は null（0件と区別する）。 */
   function visibleSlots(state) {
     var s = state.slots;
     if (!s || s.phase !== 'ready' || !s.data || s.data.state !== 'ready') return null;
-    var a = state.data && state.data.applied;
+    var a = (state.data && state.data.applied) || requestedRange(state.request);
     /* 運営枠に「確定・仮予約」などの状態は無い。個別の状態で絞っているときは運営枠を出さない（0件とも言わない）。 */
     if (a && a.status !== 'active' && a.status !== 'all') return { items: [], statusHidden: true };
     var items = (s.data.slots || []).filter(function (x) {

@@ -171,6 +171,15 @@ test('運営枠④: 取得できない理由を区別し、失敗を「0件」�
     assert.ok(/運営枠が0件という意味ではありません/.test(html), state);
     assert.ok(!/運営枠は0件です|該当する運営枠は0件/.test(html), state);
   });
+  /* 台帳が失敗してカレンダーだけ成功しても、要求した期間・サービスで運営枠を絞る（Codex指摘）。 */
+  var farSlots = { state: 'ready', invalid: 0, slots: [
+    { id: 'internal:in', typeLabel: 'SNBCイベント', service: 'snb', placeLabel: 'SNB', title: '範囲内', date: '2026-12-02', startAt: '2026-12-02T18:00:00+09:00', endAt: '2026-12-02T21:00:00+09:00', reminded: false },
+    { id: 'internal:far', typeLabel: 'SNBCイベント', service: 'snb', placeLabel: 'SNB', title: '範囲外', date: '2027-01-20', startAt: '2027-01-20T18:00:00+09:00', endAt: '2027-01-20T21:00:00+09:00', reminded: false },
+    { id: 'internal:other', typeLabel: '清掃', service: 'studio_x', placeLabel: 'Studio X', title: '別サービス', date: '2026-12-02', startAt: '2026-12-02T10:00:00+09:00', endAt: '2026-12-02T11:00:00+09:00', reminded: false }] };
+  var failedLedger = Client.createController({ list: function (p, ok) { ok({ ok: false, error: { code: 'FETCH_FAILED', message: '失敗' } }); }, detail: function () {}, internalSlots: function (ok) { ok({ ok: true, internalSlots: farSlots }); } }, function () {});
+  failedLedger.load({ service: 'snb', status: 'all', scope: 'custom', from: '2026-12-01', to: '2026-12-05' });
+  var onlySlots = Client.renderView(failedLedger.state);
+  assert.ok(/範囲内/.test(onlySlots) && !/範囲外|別サービス/.test(onlySlots));
   var rejected = render(function (ok, ng) { ng(new Error('net')); });
   assert.ok(/FAKE-1/.test(rejected) && /運営枠が0件という意味ではありません/.test(rejected));
   var empty = render(function (ok) { ok({ ok: true, internalSlots: { state: 'ready', slots: [], invalid: 0 } }); });
