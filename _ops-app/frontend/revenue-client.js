@@ -59,7 +59,16 @@
   }
 
   var PARTIAL_TEXT = {
-    SNBC_NOT_CONNECTED: 'SNBCイベント収益が未接続（正本が未実装）',
+    SNBC_NOT_CONNECTED: 'SNBCイベント収益が未接続（保存先が未設定）',
+    SNBC_UNAVAILABLE: 'SNBCイベント記録を取得できていない（金額に含めていません）',
+    SNBC_NO_RECORDS: 'SNBC未入力・要確認（この年のSNBC記録がありません。0円とは限りません）',
+    SNBC_RECORDED_ONLY: 'SNBCは記録済みのイベントだけの合計（未入力の旧イベントが残っている可能性があります）',
+    SNBC_ROWS_SKIPPED: 'SNBC記録に読み込めない行がある',
+    SNBC_FUTURE_ROWS: 'SNBC記録に未来の開催日の行がある（金額に含めていません）',
+    ONSITE_RECORDS_UNAVAILABLE: '現地払いの受領記録を取得できていない（金額に含めていません）',
+    ONSITE_ROWS_SKIPPED: '現地払いの受領記録に読み込めない行がある',
+    ONSITE_RECEIPT_DUPLICATE: '台帳に受領記録がある（またはカード決済の）予約に、手入力の受領記録も重複している（台帳を優先し、手入力は加算していません）',
+    ONSITE_RECEIPT_UNMATCHED: '台帳の予約と一意に突合できない手入力の受領記録がある（金額に含めていません）',
     ONSITE_PAYMENT_UNCONFIRMED: '現地払い（現金・PayPay）の受領記録が台帳にない予約がある',
     REFUND_UNSETTLED: '返金処理中または返金方法が不明な取消がある',
     CANCEL_MONTH_UNKNOWN: '取消確定日時が不明で、キャンセル料の計上月を判断できない取消がある（利用予定月へは振り替えず除外）',
@@ -134,7 +143,12 @@
     if (t.studioByService.unclassified > 0) html += '<li><span>' + esc(SERVICE_LABELS.unclassified) + '</span><b>' + esc(yen(t.studioByService.unclassified)) + '</b></li>';
     html += '<li><span>会員費（入金日基準）</span>' + (rev.sources.members.state === 'ready' ? '<b>' + esc(yen(t.members)) + '</b>' : '<b class="dim">' + (rev.sources.members.state === 'error' ? '取得失敗' : '未接続') + '</b>') + '</li>';
     html += '<li><span>有料オプション</span>' + (rev.sources.options.state === 'ready' ? '<b>' + esc(yen(t.options)) + '</b>' : '<b class="dim">' + (rev.sources.options.state === 'error' ? '取得失敗' : '未接続') + '</b>') + '</li>';
-    html += '<li><span>SNBC イベント収益</span><b class="dim">未接続（正本が未実装）</b></li></ul>';
+    var sn = rev.sources.snbc || { state: 'not_connected' };
+    html += '<li><span>SNBC イベント収益</span>' + (sn.state === 'ready'
+      ? '<b>' + esc(yen(t.snbc || 0)) + '（開催月基準・記録済み ' + esc(t.snbcCount || 0) + '件）</b>'
+      : '<b class="dim">' + (sn.state === 'error' ? '取得失敗' : '未接続（保存先が未設定）') + '</b>') + '</li>';
+    html += '<li><span>うち現地払い（手入力の受領確認・台帳に記録がない分）</span><b>' + esc(yen(t.onsiteRecorded || 0)) + '（' + esc(t.onsiteRecordedCount || 0) + '件）</b></li></ul>';
+    html += '<p><button type="button" class="inline btn-primary" data-rev="snbc">SNBC売上を記録</button></p>';
 
     html += '<h3 class="sub3">実績に含めない項目（別枠）</h3><ul class="rbreak">' +
       '<li><span>予定（確定済み・利用がこれから）</span><b>' + esc(yen(t.scheduled)) + '</b></li>' +
@@ -145,6 +159,7 @@
       '<li><span>取消計上月不明（取消確定日時が不明・集計から除外）</span><b>' + esc(t.cancelMonthUnknownCount || 0) + '件</b></li>' +
       '<li><span>返金処理中・結果不明（差引額を確定できず金額に含めていません）</span><b>' + esc(t.refundUnsettledCount || 0) + '件</b></li>' +
       '<li><span>返金（件数のみ）</span><b>' + esc(t.refundedCount) + '件</b></li>' +
+      '<li><span>SNBC直接経費（参考・入力分。年商から引きません）</span><b>' + (sn.state === 'ready' ? esc(yen(t.snbcDirectCost || 0)) : '<span class="dim">—</span>') + '</b></li>' +
       '<li><span>経費・利益</span><b class="dim">未接続（売上達成率から差し引きません）</b></li></ul>';
     html += '<h3 class="sub3">月別の実績</h3>' + renderMonths(rev, goal.amount, rev.year);
     html += '<p class="note">計上基準: ' + esc(rev.basis) + ' 最終取得 ' + esc((d.fetchedAt || '').slice(0, 16).replace('T', ' ')) + '</p>';
@@ -170,6 +185,7 @@
         var act = node.getAttribute && node.getAttribute('data-rev');
         if (act === 'goal') { ctl.setGoal(node.getAttribute('data-goal')); return; }
         if (act === 'retry') { ctl.load(); return; }
+        if (act === 'snbc') { if (opts.onSnbc) opts.onSnbc(); return; }
         if (act === 'month') { if (opts.onDrill) opts.onDrill({ month: node.getAttribute('data-month') }); return; }
         node = node.parentNode;
       }

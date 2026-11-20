@@ -31,8 +31,9 @@ function build() {
   var tasks = fs.readFileSync(path.join(FRONT, 'tasks-client.js'), 'utf8');
   var home = fs.readFileSync(path.join(FRONT, 'home-client.js'), 'utf8');
   var revenue = fs.readFileSync(path.join(FRONT, 'revenue-client.js'), 'utf8');
+  var records = fs.readFileSync(path.join(FRONT, 'records-client.js'), 'utf8');
   var adapter = fs.readFileSync(path.join(FRONT, 'gas-adapter.js'), 'utf8');
-  if (/<\/script/i.test(client + tasks + home + revenue + adapter)) throw new Error('スクリプト内に </script を含められません');
+  if (/<\/script/i.test(client + tasks + home + revenue + records + adapter)) throw new Error('スクリプト内に </script を含められません');
 
   var html = index;
   var head = between(html, 'OPS:HEAD');
@@ -41,19 +42,21 @@ function build() {
     html.slice(head.end);
   var scripts = between(html, 'OPS:SCRIPTS');
   html = html.slice(0, scripts.start) +
-    '<script>\n' + client + '\n</script>\n  <script>\n' + tasks + '\n</script>\n  <script>\n' + home + '\n</script>\n  <script>\n' + revenue + '\n</script>\n  <script>\n' + adapter + '\n</script>\n  <script>\n' +
+    '<script>\n' + client + '\n</script>\n  <script>\n' + tasks + '\n</script>\n  <script>\n' + home + '\n</script>\n  <script>\n' + revenue + '\n</script>\n  <script>\n' + records + '\n</script>\n  <script>\n' + adapter + '\n</script>\n  <script>\n' +
     '    (function () {\n' +
     '      var range = OpsHomeClient.monthRange(OpsHomeClient.jstMonth(Date.now()));\n' +
     '      var home = null;\n' +
+    '      var rec = null, revCtl = null;\n' +
     '      var resCtl = OpsClient.mount(document, OpsGasAdapter.createGasApi(google.script.run),\n' +
-    "        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function () { if (home) home.render(); } });\n" +
+    "        { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function (s) { if (home) home.render(); if (rec) rec.syncOnsite(s); } });\n" +
     '      var tasksCtl = OpsTasksClient.mount(document, OpsGasAdapter.createGasTasksApi(google.script.run), { onChange: function () { if (home) home.render(); } });\n' +
-    '      var revCtl = OpsRevenueClient.mount(document, OpsGasAdapter.createGasApi(google.script.run), { onDrill: function (d) { home.drill(d.month); } });\n' +
+    '      rec = OpsRecordsClient.mount(document, OpsGasAdapter.createGasRecordsApi(google.script.run), { onSaved: function () { if (revCtl) revCtl.load(); } });\n' +
+    '      revCtl = OpsRevenueClient.mount(document, OpsGasAdapter.createGasApi(google.script.run), { onDrill: function (d) { home.drill(d.month); }, onSnbc: function () { rec.toggleSnbc(); } });\n' +
     '      home = OpsHomeClient.mount(document, { res: resCtl, tasks: tasksCtl, revenue: revCtl });\n' +
     '    })();\n  </script>' +
     html.slice(scripts.end);
   html = html.replace('<title>SNB Operations（モック）</title>', '<title>SNB Operations</title>')
-    .replace(/<!--[\s\S]*?-->\s*<html/, '<!--\n  OpsPage.html — 自動生成（scripts/build-ops-gas-page.js）。手で編集しない。\n  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / home-client.js / revenue-client.js / gas-adapter.js）。Issue #936 / #941 / #990。\n  予約は読み取り専用、メモは専用保存先のみ。google.script.run は gas-adapter.js のみ。応答はエスケープして描画する。\n-->\n<html');
+    .replace(/<!--[\s\S]*?-->\s*<html/, '<!--\n  OpsPage.html — 自動生成（scripts/build-ops-gas-page.js）。手で編集しない。\n  正本は _ops-app/frontend/（index.html / ops-client.js / tasks-client.js / home-client.js / revenue-client.js / records-client.js / gas-adapter.js）。Issue #936 / #941 / #990 / #995。\n  予約は読み取り専用、メモは専用保存先のみ。google.script.run は gas-adapter.js のみ。応答はエスケープして描画する。\n-->\n<html');
   return html;
 }
 

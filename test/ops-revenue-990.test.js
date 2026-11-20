@@ -21,7 +21,7 @@ var NOW = Date.UTC(2026, 10, 20, 3, 0, 0); /* 2026-11-20 12:00 JST */
 function load() {
   var sb = { Logger: { log: function () {} } };
   vm.createContext(sb);
-  ['OpsContract.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsSource.gs', 'OpsAuth.gs', 'OpsRevenue.gs', 'OpsApi.gs'].forEach(function (f) {
+  ['OpsContract.gs', 'OpsNormalizer.gs', 'OpsQuery.gs', 'OpsSource.gs', 'OpsAuth.gs', 'OpsRevenue.gs', 'OpsRevenueStore.gs', 'OpsRevenueRecords.gs', 'OpsApi.gs'].forEach(function (f) {
     vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), sb, { filename: f });
   });
   return sb;
@@ -39,11 +39,12 @@ function booking(id, over) {
 }
 function ledger(rows) { return { values: [HEADER].concat(rows) }; }
 
-function call(rows, extra, params) {
+function call(rows, extra, params, records) {
   var ctx = {
     authenticate: function () { return { ok: true }; }, nowMs: NOW,
     readLedger: function () { return ledger(rows); },
-    readRevenueSources: function () { return extra || { options: { state: 'not_connected' }, members: { state: 'not_connected' } }; }
+    readRevenueSources: function () { return extra || { options: { state: 'not_connected' }, members: { state: 'not_connected' } }; },
+    readRecords: function () { return records || { snbc: { state: 'not_connected' }, onsite: { state: 'not_connected' } }; } /* #995: 既定は保存先未設定 */
   };
   return JSON.parse(JSON.stringify(SB.OpsApi.handle({ op: 'revenue', params: params }, ctx)));
 }

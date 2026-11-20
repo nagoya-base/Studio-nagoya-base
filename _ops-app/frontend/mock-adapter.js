@@ -310,5 +310,31 @@
     };
   }
 
-  return { createMockApi: createMockApi, createMockTasksApi: createMockTasksApi };
+  /* SNBC売上・現地払い受領（#995）のモック。架空データのメモリ内保存（再読込で消える）。 */
+  function createMockRecordsApi() {
+    var snbc = [], onsite = {};
+    function defer(fn) { setTimeout(fn, 0); }
+    function today() { return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+    function view(r) { return Object.assign({}, r, { net: r.receivedJpy - r.refundedJpy }); }
+    return {
+      kind: 'mock',
+      snbcList: function (ok) { defer(function () { ok({ ok: true, storeReady: true, items: snbc.map(view).sort(function (a, b) { return a.eventDate < b.eventDate ? 1 : -1; }), skippedRows: 0, todayJst: today() }); }); },
+      snbcSave: function (p, ok) { defer(function () {
+        var i = p.input, ex = snbc.filter(function (x) { return x.eventId === i.eventId; })[0];
+        var rec = Object.assign({}, i, { updatedAt: new Date().toISOString(), revision: ex ? ex.revision + 1 : 1 });
+        if (ex) snbc[snbc.indexOf(ex)] = rec; else snbc.push(rec);
+        ok({ ok: true, record: view(rec) });
+      }); },
+      snbcDelete: function (p, ok) { defer(function () { snbc = snbc.filter(function (x) { return x.eventId !== p.eventId; }); ok({ ok: true, deleted: true }); }); },
+      onsiteGet: function (id, ok) { defer(function () { ok({ ok: true, storeReady: true, ledgerReceipt: false, todayJst: today(), record: onsite[id] ? view(onsite[id]) : null }); }); },
+      onsiteSave: function (p, ok) { defer(function () {
+        var i = p.input, ex = onsite[i.bookingId];
+        onsite[i.bookingId] = Object.assign({}, i, { updatedAt: new Date().toISOString(), revision: ex ? ex.revision + 1 : 1, methodLabel: i.method });
+        ok({ ok: true, record: view(onsite[i.bookingId]) });
+      }); },
+      onsiteDelete: function (p, ok) { defer(function () { delete onsite[p.bookingId]; ok({ ok: true, deleted: true }); }); }
+    };
+  }
+
+  return { createMockApi: createMockApi, createMockTasksApi: createMockTasksApi, createMockRecordsApi: createMockRecordsApi };
 });

@@ -101,6 +101,52 @@ var OpsApi = (function () {
   }
 
   /*
+   * SNBC実績・現地払い受領（Issue #995）の既定の保存先（GAS）。保存先IDは既存メモ保存先と同じ Script Property（OPS_TASKS_SPREADSHEET_ID）。
+   * 新しいScript Property・ファイルは作らない。固定2タブ（SNBCEvents / OnsiteReceipts）だけを読み書きする。
+   */
+  function recordsGas_() {
+    var props = PropertiesService.getScriptProperties();
+    return {
+      store: OpsRevenueStore.create({
+        getSpreadsheetId: function () { return props.getProperty('OPS_TASKS_SPREADSHEET_ID'); },
+        getLedgerId: function () { return props.getProperty('OPS_SPREADSHEET_ID'); },
+        fetch: function (url, options) { return UrlFetchApp.fetch(url, options); },
+        getToken: function () { return ScriptApp.getOAuthToken(); }
+      }),
+      withLock: function (fn) {
+        var lock = LockService.getScriptLock();
+        if (!lock.tryLock(15000)) return { busy: true };
+        try { return fn(); } finally { lock.releaseLock(); }
+      }
+    };
+  }
+  function readRecordsGas_() { return OpsRevenueRecords.readForRevenue(recordsGas_()); }
+
+  /*
+   * SNBC・現地払いの記録（#995）。現地払いの取得・保存は、予約台帳（読み取りのみ）で予約IDが1行に一意に決まり、現地払い（カード決済でない）で
+   * あることを確認してから行う。台帳に受領記録（paid／feePaidAmount）がある予約は ledgerReceipt=true（手入力で重ねない）。
+   */
+  function recordsOp_(request, ctx, nowMs) {
+    var deps = ctx.records();
+    if (request.op === 'onsite_get' || request.op === 'onsite_save') {
+      var raw = request.op === 'onsite_get' ? request.bookingId : (request.input && request.input.bookingId);
+      var key = typeof raw === 'string' ? raw.trim() : '';
+      if (!key) return error_('INVALID_PARAMS', '予約IDが指定されていません。');
+      var loaded = load_(ctx);
+      if (!loaded.ok) return loaded;
+      var n = loaded.normalized;
+      var found = n.records.filter(function (r) { return r.bookingId === key; });
+      var booking;
+      if (n.duplicateIds.indexOf(key) !== -1) booking = { code: 'DUPLICATE_ID' };
+      else if (found.length !== 1) booking = { code: 'NOT_FOUND' };
+      else if (String(found[0].paymentMethod || '').trim() === OpsRevenue.CARD_METHOD) booking = { code: 'NOT_ONSITE' };
+      else booking = { code: 'OK', ledgerReceipt: OpsRevenue.hasLedgerReceipt(found[0]), cancelled: found[0].status === 'CANCELLED' };
+      deps = Object.assign({}, deps, { booking: booking });
+    }
+    return OpsRevenueRecords.handle(request, deps, nowMs);
+  }
+
+  /*
    * 鍵状態（Issue #942）の接続設定（GAS）。接続先URLと共有トークンはサーバー側のScript Propertiesだけ。
    * どちらかが無ければ未接続（null）。値はログ・戻り値・画面へ出さない。
    */
@@ -281,8 +327,12 @@ var OpsApi = (function () {
     if (!loaded.ok) return loaded;
     var extra;
     try { extra = ctx.readRevenueSources(); } catch (e) { extra = { options: { state: 'error' }, members: { state: 'error' } }; }
-    var result = OpsRevenue.compute({ bookings: loaded.normalized.records, options: extra && extra.options, members: extra && extra.members }, year, nowMs);
-    Logger.log('ops revenue year=' + year + ' bookings=' + loaded.normalized.records.length + ' options=' + result.sources.options.state + ' members=' + result.sources.members.state);
+    /* SNBC実績・現地払い受領（#995）。読めなければ 'error'（0円として足さない）。 */
+    var recs;
+    try { recs = ctx.readRecords(); } catch (e2) { recs = { snbc: { state: 'error' }, onsite: { state: 'error' } }; }
+    var result = OpsRevenue.compute({ bookings: loaded.normalized.records, options: extra && extra.options, members: extra && extra.members,
+      snbc: recs && recs.snbc, onsite: recs && recs.onsite }, year, nowMs);
+    Logger.log('ops revenue year=' + year + ' bookings=' + loaded.normalized.records.length + ' options=' + result.sources.options.state + ' members=' + result.sources.members.state + ' snbc=' + result.sources.snbc.state + ' onsite=' + result.sources.onsite.state);
     return {
       ok: true, contractVersion: OpsContract.CONTRACT_VERSION, fetchedAt: OpsContract.toIso(nowMs), revenue: result,
       /* 台帳の読めない行（除外）があれば集計は不完全。件数のみ返す。 */
@@ -299,13 +349,18 @@ var OpsApi = (function () {
       var code = auth && auth.code === 'FORBIDDEN' ? 'FORBIDDEN' : 'UNAUTHENTICATED';
       return error_(code, AUTH_MESSAGES_[code]);
     }
-    var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_, accessConfig: context.accessConfig || accessConfigGas_, readRevenueSources: context.readRevenueSources || readRevenueSourcesGas_ };
+    var full = { authenticate: authenticate, readLedger: context.readLedger || readLedgerGas_, accessConfig: context.accessConfig || accessConfigGas_, readRevenueSources: context.readRevenueSources || readRevenueSourcesGas_,
+      readRecords: context.readRecords || readRecordsGas_, records: context.records || recordsGas_ };
     var nowMs = typeof context.nowMs === 'number' ? context.nowMs : Date.now();
     var op = request && request.op;
     if (op === 'list') return list_(request.params, full, nowMs);
     if (op === 'detail') return detail_(request.id, full, nowMs);
     if (op === 'key_status') return keyStatus_(request.id, full, nowMs);
     if (op === 'revenue') return revenue_(request.params, full, nowMs);
+    /* SNBC実績・現地払い受領（Issue #995）。認可は上で済み。書込み先は既存メモ保存先内の固定2タブだけ。 */
+    if (op === 'snbc_list' || op === 'snbc_save' || op === 'snbc_delete' || op === 'onsite_get' || op === 'onsite_save' || op === 'onsite_delete') {
+      return recordsOp_(request, full, nowMs);
+    }
     /* メモ（Issue #941）。認可は上で済み。予約台帳（readLedger）には触れず、専用の保存先だけを使う。 */
     if (op === 'tasks_list' || op === 'task_save' || op === 'task_delete') {
       return OpsTasks.handle(request, context.tasks || tasksGas_(), nowMs);
@@ -409,6 +464,26 @@ function opsGetKeyStatus(bookingId) { return OpsApi.handle({ op: 'key_status', i
 
 /* 年商・月次の売上集計（Issue #990 PR-B）。読み取り専用。所有者認可は handle で毎回。 */
 function opsGetRevenue(params) { return OpsApi.handle({ op: 'revenue', params: params }); }
+
+/* SNBC実績・現地払い受領の記録（Issue #995）。毎回、所有者認可を通す。保存先は既存メモ保存先内の SNBCEvents / OnsiteReceipts に固定。 */
+function opsListSnbc() { return OpsApi.handle({ op: 'snbc_list' }); }
+function opsSaveSnbc(payload) {
+  var p = payload && typeof payload === 'object' ? payload : {};
+  return OpsApi.handle({ op: 'snbc_save', input: p.input, expectedRevision: p.expectedRevision });
+}
+function opsDeleteSnbc(payload) {
+  var p = payload && typeof payload === 'object' ? payload : {};
+  return OpsApi.handle({ op: 'snbc_delete', eventId: p.eventId, expectedRevision: p.expectedRevision });
+}
+function opsGetOnsite(bookingId) { return OpsApi.handle({ op: 'onsite_get', bookingId: bookingId }); }
+function opsSaveOnsite(payload) {
+  var p = payload && typeof payload === 'object' ? payload : {};
+  return OpsApi.handle({ op: 'onsite_save', input: p.input, expectedRevision: p.expectedRevision, reconfirm: p.reconfirm === true });
+}
+function opsDeleteOnsite(payload) {
+  var p = payload && typeof payload === 'object' ? payload : {};
+  return OpsApi.handle({ op: 'onsite_delete', bookingId: p.bookingId, expectedRevision: p.expectedRevision });
+}
 
 /* 個別鍵の最終状態の保存（Issue #971 Phase 1）。管理者が Apps Script エディタから明示実行する（画面からは呼ばない・トリガーなし）。 */
 function opsSaveKeyFinalStatuses() { return OpsApi.runKeyFinalSave(); }
