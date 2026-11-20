@@ -980,5 +980,10 @@ button.action.option-review { background: #a14a00; border-color: #a14a00; color:
 .internal-slot-panel { margin: 8px 0; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
 .internal-slot-form select, .internal-slot-form input, .internal-slot-form textarea { margin: 2px 0; max-width: 100%; }
 .internal-slot-form textarea { display: block; width: 100%; box-sizing: border-box; }
+.internal-slot-time { display: inline-block; white-space: nowrap; }
+.internal-slot-min { position: relative; display: inline-block; }
+.internal-slot-min-list { position: absolute; top: 100%; left: 0; z-index: 10; display: flex; flex-direction: column; min-width: 100%; background: #fff; border: 1px solid #999; border-radius: 4px; }
+.internal-slot-min-list button { border: 0; background: none; padding: 8px 14px; font-size: 16px; text-align: left; }
+.internal-slot-min-btn { padding: 4px 8px; }
 .internal-slot-note, .internal-slot-empty { font-size: 12px; color: #666; margin-top: 4px; }
 .internal-slot-card { margin-top: 8px; padding: 6px; border-top: 1px dashed #ccc; font-size: 14px; }

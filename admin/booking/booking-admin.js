@@ -3746,14 +3746,61 @@ function internalSlotOptions_(pairs) {
   return pairs.map(function (p) { return '<option value="' + escapeHtml(p[0]) + '">' + escapeHtml(p[1]) + '</option>'; }).join('');
 }
 
-/* 開始・終了は00分/30分だけの選択肢（type=time は端末により15/45分も選べるため使わない。Issue #1004）。 */
-function internalSlotTimeOptions_() {
-  var html = '<option value="">--:--</option>';
-  for (var h = 0; h < 24; h++) {
-    var hh = (h < 10 ? '0' : '') + h;
-    html += '<option value="' + hh + ':00">' + hh + ':00</option><option value="' + hh + ':30">' + hh + ':30</option>';
-  }
+/* 開始・終了は「時（24時間のselect）＋分（00/30だけの小さなプルダウン）」。type=timeは端末により15/45分も選べ、
+   分のネイティブselectはiPhoneで回転ピッカーになるため、分だけ画面内に開く2択メニューを使う（Issue #1004）。 */
+function internalSlotHourOptions_() {
+  var html = '<option value="">--</option>';
+  for (var h = 0; h < 24; h++) { var hh = (h < 10 ? '0' : '') + h; html += '<option value="' + hh + '">' + hh + '</option>'; }
   return html;
+}
+
+function internalSlotTimeHtml_(id) {
+  return '<span class="internal-slot-time" id="internal-slot-' + id + '">' +
+    '<select class="internal-slot-hour" aria-label="時">' + internalSlotHourOptions_() + '</select>時 : ' +
+    '<span class="internal-slot-min">' +
+    '<button type="button" class="internal-slot-min-btn" data-min="" aria-haspopup="listbox" aria-label="分">-- ▼</button>' +
+    '<span class="internal-slot-min-list hidden" role="listbox">' +
+    '<button type="button" role="option" data-min="00">00</button><button type="button" role="option" data-min="30">30</button>' +
+    '</span></span>分</span>';
+}
+
+function internalSlotSetMin_(wrap, min) {
+  var btn = wrap.querySelector('.internal-slot-min-btn');
+  btn.setAttribute('data-min', min);
+  btn.textContent = (min || '--') + ' ▼';
+  wrap.querySelector('.internal-slot-min-list').classList.add('hidden');
+}
+
+function internalSlotGetTime_(id) {
+  var wrap = internalSlotField_(id);
+  var hour = wrap.querySelector('.internal-slot-hour').value;
+  var min = wrap.querySelector('.internal-slot-min-btn').getAttribute('data-min');
+  return hour && min ? hour + ':' + min : '';
+}
+
+/* 00/30以外（過去の15/45分枠）は分を未選択にして、選び直してもらう。 */
+function internalSlotSetTime_(id, hhmm) {
+  var wrap = internalSlotField_(id);
+  var m = /^(\d\d):(\d\d)$/.exec(hhmm || '');
+  wrap.querySelector('.internal-slot-hour').value = m ? m[1] : '';
+  internalSlotSetMin_(wrap, m && (m[2] === '00' || m[2] === '30') ? m[2] : '');
+}
+
+function internalSlotMinClick_(ev) {
+  var target = ev.target;
+  var open = document.querySelectorAll('.internal-slot-min-list:not(.hidden)');
+  if (target.classList && target.classList.contains('internal-slot-min-btn')) {
+    var list = target.parentNode.querySelector('.internal-slot-min-list');
+    var wasHidden = list.classList.contains('hidden');
+    Array.prototype.forEach.call(open, function (el) { el.classList.add('hidden'); });
+    if (wasHidden) list.classList.remove('hidden');
+    return;
+  }
+  if (target.getAttribute && target.getAttribute('role') === 'option' && target.getAttribute('data-min')) {
+    internalSlotSetMin_(target.closest('.internal-slot-min').parentNode, target.getAttribute('data-min'));
+    return;
+  }
+  Array.prototype.forEach.call(open, function (el) { el.classList.add('hidden'); });
 }
 
 function internalSlotField_(id) { return document.getElementById('internal-slot-' + id); }
@@ -3764,8 +3811,8 @@ function internalSlotFormValues_() {
     place: internalSlotField_('place').value,
     title: internalSlotField_('title').value,
     date: internalSlotField_('date').value,
-    startTime: internalSlotField_('start').value,
-    endTime: internalSlotField_('end').value,
+    startTime: internalSlotGetTime_('start'),
+    endTime: internalSlotGetTime_('end'),
     memo: internalSlotField_('memo').value
   };
 }
@@ -3814,10 +3861,10 @@ function internalSlotStartEdit_(slot) {
   internalSlotField_('place').value = slot.place;
   internalSlotField_('title').value = slot.title;
   internalSlotField_('date').value = slot.date;
-  /* 既存の15/45分枠は候補にないので未選択（--:--）になる。黙って別の時刻で更新せず、選び直しを求める。 */
-  internalSlotField_('start').value = slot.startTime;
-  internalSlotField_('end').value = slot.endTime;
-  if (!internalSlotField_('start').value || !internalSlotField_('end').value) {
+  /* 既存の15/45分枠は分が未選択（--）になる。黙って別の時刻で更新せず、選び直しを求める。 */
+  internalSlotSetTime_('start', slot.startTime);
+  internalSlotSetTime_('end', slot.endTime);
+  if (!internalSlotGetTime_('start') || !internalSlotGetTime_('end')) {
     alert('この枠は00分/30分以外の時刻です。保存するには開始・終了を00分か30分から選び直してください。');
   }
   internalSlotField_('memo').value = slot.memo;
@@ -3843,7 +3890,7 @@ function internalSlotSubmit_() {
   var values = internalSlotFormValues_();
   var id = internalSlotUi_.editingId;
   /* 端末によっては自由入力できるため、送信前にも確認する（正はサーバー側の検証）。 */
-  if (!/^\d\d:(00|30)$/.test(values.startTime) || !/^\d\d:(00|30)$/.test(values.endTime)) { alert('開始・終了を00分か30分の候補から選んでください。'); return; }
+  if (!/^\d\d:(00|30)$/.test(values.startTime) || !/^\d\d:(00|30)$/.test(values.endTime)) { alert('開始・終了の時と分（00か30）を選んでください。'); return; }
   btn.disabled = true;
   var done = function (r) {
     btn.disabled = false;
@@ -3871,7 +3918,7 @@ function initInternalSlotUi_() {
     '<select id="internal-slot-place">' + internalSlotOptions_(INTERNAL_SLOT_PLACES_) + '</select> ' +
     '<input id="internal-slot-title" type="text" maxlength="60" placeholder="件名"> ' +
     '<input id="internal-slot-date" type="date"> ' +
-    '<select id="internal-slot-start">' + internalSlotTimeOptions_() + '</select> 〜 <select id="internal-slot-end">' + internalSlotTimeOptions_() + '</select> ' +
+    '' + internalSlotTimeHtml_('start') + ' 〜 ' + internalSlotTimeHtml_('end') + ' ' +
     '<textarea id="internal-slot-memo" maxlength="500" placeholder="メモ（任意）"></textarea> ' +
     '<button type="button" id="internal-slot-submit">登録</button> ' +
     '<button type="button" id="internal-slot-cancel-edit" class="hidden">編集をやめる</button>' +
@@ -3880,6 +3927,8 @@ function initInternalSlotUi_() {
   main.insertBefore(panel, statusLine);
   internalSlotUi_.panel = panel;
   internalSlotUi_.listEl = document.getElementById('internal-slot-list');
+  panel.addEventListener('click', internalSlotMinClick_);
+  document.addEventListener('click', function (ev) { if (!panel.contains(ev.target)) internalSlotMinClick_(ev); });
   internalSlotField_('submit').addEventListener('click', internalSlotSubmit_);
   internalSlotField_('cancel-edit').addEventListener('click', internalSlotResetForm_);
   /* 開いたときだけ取得する（通常の予約一覧の読み込みに影響させない）。 */
