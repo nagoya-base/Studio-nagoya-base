@@ -12,14 +12,17 @@ const path = require('node:path');
 
 // 配布物（scripts/prepare-ops-reservations-gas-project.js の出力）。テストが prepare・gas/ops-reservations と一致を確認する。
 const BUNDLE_FILES = [
-  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsKeyFinal.gs', 'OpsKeyFinalStore.gs', 'OpsKeyStatus.gs', 'OpsNormalizer.gs', 'OpsPage.html', 'OpsQuery.gs', 'OpsRevenue.gs', 'OpsRevenueRecords.gs', 'OpsRevenueStore.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
+  'OpsApi.gs', 'OpsAuth.gs', 'OpsContract.gs', 'OpsInternalSlots.gs', 'OpsKeyFinal.gs', 'OpsKeyFinalStore.gs', 'OpsKeyStatus.gs', 'OpsNormalizer.gs', 'OpsPage.html', 'OpsQuery.gs', 'OpsRevenue.gs', 'OpsRevenueRecords.gs', 'OpsRevenueStore.gs', 'OpsSource.gs', 'OpsTasks.gs', 'OpsTasksStore.gs', 'appsscript.json'
 ];
 // 運営アプリだけが使う権限（Issue #941 追加修正で更新）。
 // 所有者が手動で用意したメモ専用スプレッドシートは、drive.file（このアプリが作成したファイルだけに届く）では読み書きできない。
 // 既存ファイルへ届く最小の権限は spreadsheets（ファイル単位では絞れない）。そのため権限ではなくコードで書込み先を固定する:
 // 書込みは OPS_TASKS_SPREADSHEET_ID のTasks表のみ・台帳IDと同一なら停止・台帳読取り(OpsSource)はGETのみ（静的テストで検査）。
 // spreadsheets.readonly と drive.file は不要になったため外した（spreadsheets に包含 / 作成しない）。drive全体・メール・トリガー等は配布しない。
+// #1003: 運営枠（Booking Admin が予約Calendarに置くタグ付きイベント）の閲覧用に calendar.readonly を追加（書込みの calendar は配布しない）。
+// 追加後の初回は所有者本人の再承認が必要（docs/ops-internal-slots-1003.md）。
 const APPROVED_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/script.external_request',
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/userinfo.email'

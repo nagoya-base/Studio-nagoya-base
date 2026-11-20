@@ -19,6 +19,16 @@
   var STATUSES = [['active', 'キャンセル除外'], ['all', 'すべて（キャンセル含む）'], ['PENDING', '仮予約'], ['CONFIRMED', '確定'], ['CANCELLED', 'キャンセル'], ['EXPIRED', '失効'], ['UNKNOWN', '不明']];
   var PHASE_LABELS = { upcoming: 'これから', in_progress: '利用中', ended: '終了済み', unknown: '開始済み（終了不明）' };
   var DENIED_CODES = ['UNAUTHENTICATED', 'FORBIDDEN'];
+  /* 運営枠（#1003。読み取り専用）の表示切替。予約の絞り込みではなく画面側だけの切替（再取得しない）。 */
+  var KINDS = [['all', '予約と運営枠'], ['res', '予約のみ'], ['slots', '運営枠のみ']];
+  /* 運営枠を取得できない理由。どれも「運営枠0件」ではない（0件と書くのは取得成功のときだけ）。 */
+  var SLOT_STATE_TEXT = {
+    not_configured: '運営枠の読取先が未設定です。',
+    no_access: '運営枠のカレンダーを開けません（見つからない、またはアクセス権がありません）。',
+    auth_required: '運営枠の読み取り承認が済んでいません。所有者本人で専用URLを開き直し、カレンダーの閲覧の承認画面が出たら承認してください。',
+    read_failed: '運営枠の取得に失敗しました。'
+  };
+  var IDLE_SLOTS = { phase: 'idle', data: null, error: null, fetchedAt: null };
 
   function esc(value) {
     return String(value === null || value === undefined ? '' : value)
@@ -53,8 +63,8 @@
 
   /* 手動再取得・連続操作で、遅れて返った古い応答が最新結果を上書きしないようにする。 */
   function createController(api, onChange) {
-    var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null, key: { phase: 'idle', data: null, error: null, fetchedAt: null }, mock: api && api.kind === 'mock' };
-    var listSeq = 0, detailSeq = 0, keySeq = 0;
+    var state = { phase: 'idle', data: null, lastSuccessAt: null, error: null, stale: false, detail: null, detailId: null, detailPhase: 'idle', detailError: null, key: { phase: 'idle', data: null, error: null, fetchedAt: null }, mock: api && api.kind === 'mock', slots: IDLE_SLOTS, kind: 'all', request: null };
+    var listSeq = 0, detailSeq = 0, keySeq = 0, slotSeq = 0;
     function emit() { if (onChange) onChange(state); }
     function fail(err) {
       state.error = err;
@@ -62,7 +72,7 @@
         /* 認可失敗では、以前の表示を残さない。 */
         state.phase = 'denied'; state.data = null; state.stale = false; state.detail = null; state.detailPhase = 'idle'; state.detailId = null; keySeq++; state.key = { phase: 'idle', data: null, error: null, fetchedAt: null };
         /* 実行中の他の要求（一覧・詳細）の遅れて返る成功応答が、消した表示を復活させないよう、保留中の要求を無効化する。 */
-        listSeq++; detailSeq++;
+        listSeq++; detailSeq++; slotSeq++; state.slots = IDLE_SLOTS;
       } else {
         state.phase = err.code === 'NOT_CONNECTED' ? 'not_connected' : 'error';
         state.stale = !!state.data;
@@ -74,14 +84,42 @@
       var items = res.items.filter(function (i) { return i.status !== 'CANCELLED'; });
       return Object.assign({}, res, { items: items, counts: Object.assign({}, res.counts, { matched: items.length }), applied: Object.assign({}, res.applied, { status: 'active' }) });
     }
+    /* 運営枠（#1003）は予約台帳とは別の要求。失敗しても予約一覧は壊さず、取得失敗として別に表示する（0件にしない）。 */
+    function loadSlots() {
+      var mine = ++slotSeq;
+      if (!api.internalSlots) { state.slots = IDLE_SLOTS; return; }
+      state.slots = { phase: 'loading', data: null, error: null, fetchedAt: null };
+      api.internalSlots(function (res) {
+        if (mine !== slotSeq) return;
+        if (res && res.ok && res.internalSlots && typeof res.internalSlots.state === 'string') {
+          state.slots = { phase: 'ready', data: res.internalSlots, error: null, fetchedAt: res.fetchedAt || null };
+        } else if (res && res.error && DENIED_CODES.indexOf(res.error.code) !== -1) {
+          fail(res.error);
+        } else {
+          state.slots = { phase: 'error', data: null, error: res && res.error ? res.error : { message: '運営枠の取得に失敗しました。' }, fetchedAt: null };
+        }
+        emit();
+      }, function () {
+        if (mine !== slotSeq) return;
+        state.slots = { phase: 'error', data: null, error: { message: '運営枠の取得に失敗しました。' }, fetchedAt: null };
+        emit();
+      });
+    }
+    function setKind(kind) {
+      state.kind = KINDS.some(function (k) { return k[0] === kind; }) ? kind : 'all';
+      emit();
+    }
     function load(params) {
       var mine = ++listSeq;
+      /* 要求した条件を保持する。台帳の取得に失敗しても、運営枠へ同じ期間・サービスの絞り込みをかけるため（#1003）。 */
+      state.request = { service: params.service || 'all', status: params.status || 'all', scope: params.scope || 'upcoming', from: params.from || '', to: params.to || '' };
       var hideCancelled = params.status === 'active';
       if (hideCancelled) params = Object.assign({}, params, { status: 'all' });
       /* 詳細を開いたまま再取得した場合も、詳細を最新の台帳から取り直す。 */
       if (state.detailId !== null) openDetail(state.detailId);
       state.phase = 'loading';
       state.error = null;
+      loadSlots();
       emit();
       api.list(params, function (res) {
         if (mine !== listSeq) return;
@@ -134,7 +172,7 @@
       });
     }
     function closeDetail() { detailSeq++; keySeq++; state.detailId = null; state.detail = null; state.detailPhase = 'idle'; state.detailError = null; state.key = { phase: 'idle', data: null, error: null, fetchedAt: null }; emit(); }
-    return { state: state, load: load, openDetail: openDetail, closeDetail: closeDetail };
+    return { state: state, load: load, openDetail: openDetail, closeDetail: closeDetail, setKind: setKind };
   }
 
   /* 取得失敗の診断コード（#953）。サーバーが返す固定形式（STAGE/REASON[/HTTP]）だけを表示し、
@@ -179,22 +217,97 @@
     return '<details><summary>確認が必要な行 ' + esc(issues.length) + '件（うち一覧から除外 ' + esc(errors) + '件）</summary><ul>' + list + '</ul></details>';
   }
 
+  /* ---- 運営枠（#1003）。予約とは別の種類・別の件数で、詳細・鍵・現地払いへは進めない ---- */
+  function slotCard(slot) {
+    return '<li><div class="card slot" data-slot="1">' +
+      '<div class="top"><span class="tag slot">運営枠</span><span class="tag">' + esc(slot.typeLabel) + '</span><span class="tag">' + esc(slot.placeLabel) + '</span>' + (slot.reminded ? '<span class="tag">リマインド済み</span>' : '') + '</div>' +
+      '<div class="when">' + esc(slot.date) + ' ' + show(jstText(slot.startAt)) + '〜' + show(endLabel(slot.startAt, slot.endAt)) + '</div>' +
+      '<div>' + show(slot.title) + '</div>' +
+      '<div class="note">運営枠（閲覧専用）。予約の件数・売上には含みません。</div></div></li>';
+  }
+
+  /* 台帳の応答が無いときの代替。要求した条件から期間を同じ定義（今日から30日／過去30日、JST）で求める。 */
+  function requestedRange(req) {
+    if (!req) return null;
+    function day(ms) { return new Date(ms).toISOString().slice(0, 10); }
+    var DAY = 24 * 3600 * 1000;
+    var today = Date.parse(day(Date.now() + 9 * 3600 * 1000));
+    var from = req.from, to = req.to;
+    if (req.scope === 'past') { to = to || day(today - DAY); from = from || day(Date.parse(to) - 29 * DAY); }
+    else { from = from || day(today); to = to || day(Date.parse(from) + 29 * DAY); }
+    return { service: req.service, status: req.status, from: from, to: to };
+  }
+
+  /* 取得に成功した運営枠だけを、予約と同じ条件（期間・サービス・状態）で絞る。取得失敗は null（0件と区別する）。 */
+  function visibleSlots(state) {
+    var s = state.slots;
+    if (!s || s.phase !== 'ready' || !s.data || s.data.state !== 'ready') return null;
+    /* 台帳の応答が最新の要求に対するもの（ready）のときだけ、その正規化済み applied を使う。再取得中・失敗後に残る前回の応答（古い条件）は使わず、
+       画面で要求した最新の条件から絞る（予約一覧を古いデータとして残す挙動は変えない）。 */
+    var a = state.phase === 'ready' && state.data && state.data.applied ? state.data.applied : requestedRange(state.request);
+    /* 運営枠に「確定・仮予約」などの状態は無い。個別の状態で絞っているときは運営枠を出さない（0件とも言わない）。 */
+    if (a && a.status !== 'active' && a.status !== 'all') return { items: [], statusHidden: true };
+    var items = (s.data.slots || []).filter(function (x) {
+      if (!a) return true;
+      return x.date >= a.from && x.date <= a.to && (a.service === 'all' || x.service === a.service);
+    });
+    return { items: items, statusHidden: false };
+  }
+
+  function renderSlotStatus(state) {
+    var s = state.slots;
+    if (!s || s.phase === 'idle') return '';
+    if (s.phase === 'loading') return '<div class="banner loading" role="status">運営枠を取得中…</div>';
+    if (s.phase === 'error') return '<div class="banner err" role="alert">' + esc(s.error && s.error.message || '運営枠の取得に失敗しました。') + '運営枠が0件という意味ではありません（予約の一覧には影響しません）。</div>';
+    var d = s.data;
+    if (d.state !== 'ready') {
+      return '<div class="banner err" role="alert">' + esc(SLOT_STATE_TEXT[d.state] || SLOT_STATE_TEXT.read_failed) + '運営枠が0件という意味ではありません（予約の一覧には影響しません）。</div>';
+    }
+    var html = '';
+    if (d.invalid > 0) html += '<div class="banner stale">種類・場所のタグを読めない運営枠が ' + esc(d.invalid) + ' 件あり、表示していません（タグの不一致）。</div>';
+    var v = visibleSlots(state);
+    if (v.statusHidden) return html + '<p class="note">状態で絞り込み中のため、運営枠は表示していません。</p>';
+    html += '<p class="note">運営枠 ' + esc(v.items.length) + ' 件（閲覧専用・予約の件数と売上には含みません。登録・変更・取消は Booking Admin の運営枠パネルで行います）</p>';
+    if (!v.items.length) html += '<div class="banner">条件に該当する運営枠は0件です（取得は正常に完了しています）。</div>';
+    return html;
+  }
+
+  /* 予約カードと運営枠カードを開始時刻の順に並べる（同時刻は予約が先）。 */
+  function mergedCards(state, showRes, showSlots) {
+    var order = state.data && state.data.applied && state.data.applied.order === 'desc' ? -1 : 1;
+    var rows = [];
+    if (showRes && state.data) state.data.items.forEach(function (i, n) { rows.push({ ms: Date.parse(i.startAt) || 0, rank: 0, n: n, html: renderCard(i) }); });
+    var v = showSlots ? visibleSlots(state) : null;
+    if (v) v.items.forEach(function (x, n) { rows.push({ ms: Date.parse(x.startAt) || 0, rank: 1, n: n, html: slotCard(x) }); });
+    rows.sort(function (x, y) { return (x.ms - y.ms) * order || (x.rank - y.rank) || (x.n - y.n); });
+    return rows.map(function (r) { return r.html; }).join('');
+  }
+
   function renderList(state) {
     var d = state.data;
-    if (!d) return '';
+    var kind = state.kind || 'all';
+    var showRes = kind !== 'slots';
+    var showSlots = kind !== 'res';
+    if (!d) {
+      /* 予約台帳を読めなくても、運営枠は別ソースとして表示する（予約の取得失敗は上のバナーに出ている）。 */
+      if (!showSlots) return '';
+      var only = mergedCards(state, false, true);
+      return renderSlotStatus(state) + (only ? '<ul class="cards">' + only + '</ul>' : '');
+    }
     var a = d.applied;
     var html = '<p class="note">条件: ' + esc(a.from) + '〜' + esc(a.to) + '（日本時間 0:00〜翌0:00の重なり） / ' + esc(a.order === 'asc' ? '開始が早い順' : '開始が遅い順') +
       ' / 該当 ' + esc(d.counts.matched) + '件（台帳 ' + esc(d.counts.sheetRows) + '行を全件取得）</p>';
     var notConnected = d.serviceStates.filter(function (s) { return s.state === 'not_connected'; });
     if (notConnected.length) html += '<p class="note">未接続: ' + notConnected.map(function (s) { return esc(s.label); }).join('、') + '（0件ではなく、まだ取り込んでいません）</p>';
-    if (d.notConnectedSelected) {
+    if (showSlots) html += renderSlotStatus(state);
+    if (showRes && d.notConnectedSelected) {
       html += '<div class="banner stale">選択したサービスは未接続です。予約が0件という意味ではありません。</div>';
-    } else if (!d.items.length) {
-      html += '<div class="banner">条件に該当する予約は0件です（取得は正常に完了しています）。</div>';
     } else {
-      html += '<ul class="cards">' + d.items.map(renderCard).join('') + '</ul>';
+      if (showRes && !d.items.length) html += '<div class="banner">条件に該当する予約は0件です（取得は正常に完了しています）。</div>';
+      var cards = mergedCards(state, showRes, showSlots);
+      if (cards) html += '<ul class="cards">' + cards + '</ul>';
     }
-    return html + renderIssues(d.issues);
+    return html + (showRes ? renderIssues(d.issues) : '');
   }
 
   function renderDetail(state) {
@@ -308,6 +421,7 @@
     function $(id) { return doc.getElementById(id); }
     $('f-service').innerHTML = optionsHtml(SERVICES);
     $('f-status').innerHTML = optionsHtml(STATUSES);
+    $('f-kind').innerHTML = optionsHtml(KINDS);
     var ctl = createController(api, function (state) {
       $('banner').innerHTML = renderBanner(state);
       $('view').innerHTML = renderView(state);
@@ -327,6 +441,8 @@
     if (opts.initial) setFilters(opts.initial);
     ['f-service', 'f-status', 'f-scope', 'f-from', 'f-to'].forEach(function (id) { $(id).addEventListener('change', reload); });
     $('f-reload').addEventListener('click', reload);
+    /* 運営枠の表示切替は画面側だけ（再取得しない）。 */
+    $('f-kind').addEventListener('change', function () { ctl.setKind($('f-kind').value); });
     $('view').addEventListener('click', function (e) {
       var node = e.target;
       while (node && node !== $('view')) {
@@ -341,6 +457,6 @@
     return ctl;
   }
 
-  return { esc: esc, jstText: jstText, endLabel: endLabel, createController: createController, renderBanner: renderBanner, renderView: renderView,
+  return { esc: esc, jstText: jstText, endLabel: endLabel, createController: createController, visibleSlots: visibleSlots, renderSlotStatus: renderSlotStatus, KINDS: KINDS, renderBanner: renderBanner, renderView: renderView,
     optionsHtml: optionsHtml, paramsFromInputs: paramsFromInputs, mount: mount, SERVICES: SERVICES, STATUSES: STATUSES, PHASE_LABELS: PHASE_LABELS };
 });

@@ -776,7 +776,7 @@ test('境界: 予約台帳の他の列・他のシートへ書かない。OpsSou
   /* 自動トリガー・スコープ追加なし（Phase 2は別承認） */
   ['OpsApi.gs', 'OpsKeyFinal.gs', 'OpsKeyFinalStore.gs'].forEach(function (f) { assert.ok(!/newTrigger|ScriptApp\.(newTrigger|getProjectTriggers)/.test(strip(fs.readFileSync(path.join(DIR, f), 'utf8'))), f); });
   var manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'appsscript.json'), 'utf8'));
-  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
+  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
   /* Access GAS は列名を一切参照しない（権限・入口・ロジック無変更） */
   fs.readdirSync(path.join(ROOT, 'gas', 'switchbot-access')).forEach(function (f) {
     var s = fs.readFileSync(path.join(ROOT, 'gas', 'switchbot-access', f), 'utf8');

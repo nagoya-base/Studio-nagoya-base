@@ -63,6 +63,8 @@
     [hidden] { display:none !important; }
     .banner.ok { border-color:#2e7d32; color:#2e7d32; }
     @media (prefers-color-scheme: dark) { .banner.ok { border-color:#81c995; color:#81c995; } }
+    .card.slot { border-style:dashed; border-left:4px solid var(--warn); }
+    .tag.slot { border-color:var(--warn); color:var(--warn); font-weight:700; }
     .tag.danger { border-color: var(--err); color: var(--err); font-weight:600; }
     h2 { font-size:1rem; margin:16px 0 8px; }
     .summary { margin:8px 0; display:flex; gap:8px; flex-wrap:wrap; }
@@ -187,6 +189,7 @@
     <label>サービス<select id="f-service"></select></label>
     <label>状態<select id="f-status"></select></label>
     <label>期間<select id="f-scope"><option value="upcoming">今日から30日間</option><option value="past">過去30日間</option><option value="custom">日付を指定</option></select></label>
+    <label>表示<select id="f-kind"><option value="all">予約と運営枠</option><option value="res">予約のみ</option><option value="slots">運営枠のみ</option></select></label>
     <div class="row2"><button type="button" id="f-reload">再取得</button></div>
     <label>開始日<input type="date" id="f-from"></label>
     <label>終了日<input type="date" id="f-to"></label>
@@ -241,7 +244,7 @@
       var range = OpsHomeClient.monthRange(OpsHomeClient.jstMonth(Date.now()));
       var home = null;
       var rec = null, revCtl = null;
-      var resCtl = OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok' }),
+      var resCtl = OpsClient.mount(document, OpsMockAdapter.createMockApi({ scenario: q.get('scenario') || 'ok', key: q.get('key') || 'ok', slots: q.get('slots') || 'ok' }),
         { initial: { service: 'all', status: 'active', scope: 'custom', from: range.from, to: range.to }, onChange: function (s) { if (home) home.render(); if (rec) rec.syncOnsite(s); } });
       var tasksCtl = OpsTasksClient.mount(document, OpsMockAdapter.createMockTasksApi({ scenario: q.get('tasks') || 'ok' }), { onChange: function () { if (home) home.render(); } });
       rec = OpsRecordsClient.mount(document, OpsMockAdapter.createMockRecordsApi(), { onSaved: function () { if (revCtl) revCtl.load(); } });

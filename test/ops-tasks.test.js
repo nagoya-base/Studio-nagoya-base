@@ -617,7 +617,7 @@ test('境界: 配布対象は運営アプリのファイルのみで、メモの
   var lib = require(path.join(ROOT, 'scripts', 'ops-reservations-gas-deploy-lib.js'));
   assert.ok(lib.BUNDLE_FILES.indexOf('OpsTasks.gs') !== -1 && lib.BUNDLE_FILES.indexOf('OpsTasksStore.gs') !== -1);
   assert.deepStrictEqual(lib.APPROVED_SCOPES.slice().sort(), [
-    'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
+    'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
   /* drive.file（作成ファイルのみ）は手動用意の保存先に届かないため外し、spreadsheets のみ。drive全体・readonly・旧scopeは承認リストに無い。 */
   ['drive', 'drive.file', 'spreadsheets.readonly'].forEach(function (n) { assert.ok(lib.APPROVED_SCOPES.indexOf('https://www.googleapis.com/auth/' + n) === -1, n); });
   var manifest = JSON.parse(readFile('appsscript.json'));

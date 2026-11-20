@@ -141,7 +141,7 @@ test('非回帰: 手動関数は従来どおり（引数・offset・戻り値）
   var all = fs.readdirSync(DIR).filter(function (f) { return /\.(gs|html)$/.test(f); }).map(function (f) { return fs.readFileSync(path.join(DIR, f), 'utf8'); }).join('\n');
   assert.ok(!/ScriptApp\.(newTrigger|deleteTrigger|getProjectTriggers)/.test(all), 'トリガーの自動作成・削除コードなし');
   var manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'appsscript.json'), 'utf8'));
-  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
+  assert.deepStrictEqual(manifest.oauthScopes, ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
   var sc = fs.readFileSync(path.join(DIR, 'OpsAuth.gs'), 'utf8');
   assert.ok(/getActiveEmail: function \(\) \{ return Session\.getActiveUser\(\)\.getEmail\(\); \}/.test(sc));
 });

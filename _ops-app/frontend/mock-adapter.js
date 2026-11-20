@@ -146,8 +146,35 @@
         goals: goals, forecast: year === yearNow ? Math.round(total / 300 * 365) : null, notes: { pendingCount: 0, optionUnmatchedCount: 0 } } };
     }
 
+    /* 運営枠（#1003）の架空応答。?slots=ok|empty|not_configured|no_access|auth_required|read_failed|invalid|denied */
+    var slotsScenario = opts.slots || 'ok';
+    function mockSlots() {
+      var day = 24 * 3600 * 1000;
+      function slot(n, type, label, svc, place, title, dayOffset, h1, m1, h2, m2) {
+        var d = nowMs + dayOffset * day;
+        return { id: 'internal:mock-' + n, type: type, typeLabel: label, service: svc, placeLabel: place, title: title, date: dayText(d), startAt: iso(d, h1, m1), endAt: iso(d, h2, m2), reminded: n === 2 };
+      }
+      return [
+        slot(1, 'snbc_event', 'SNBCイベント', 'snb', 'SNB', 'モック交流会', 1, 18, 0, 21, 0),
+        slot(2, 'cleaning', '清掃・メンテナンス', 'studio_x', 'Studio X', 'モック定期清掃', 0, 15, 0, 17, 0),
+        slot(3, 'setup', '設営・片付け', 'snb', 'SNB', 'モック設営', 3, 9, 0, 11, 0)
+      ];
+    }
+    function slotsView() {
+      if (slotsScenario === 'empty') return { state: 'ready', slots: [], invalid: 0 };
+      if (slotsScenario === 'invalid') return { state: 'ready', slots: mockSlots(), invalid: 2 };
+      if (['not_configured', 'no_access', 'auth_required', 'read_failed'].indexOf(slotsScenario) !== -1) return { state: slotsScenario, slots: [], invalid: 0 };
+      return { state: 'ready', slots: mockSlots(), invalid: 0 };
+    }
+
     return {
       kind: 'mock',
+      internalSlots: function (ok) {
+        defer(function () {
+          if (slotsScenario === 'denied') return ok(err('FORBIDDEN', '権限がありません。（モック）'));
+          ok({ ok: true, contractVersion: 1, source: 'mock', fetchedAt: isoNow(nowMs), internalSlots: slotsView() });
+        });
+      },
       revenue: function (params, ok) {
         defer(function () { var f = failure(); ok(f || mockRevenue(params)); });
       },

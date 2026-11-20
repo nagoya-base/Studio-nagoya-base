@@ -225,6 +225,39 @@
     return html;
   }
 
+  /*
+   * 運営枠（#1003。閲覧専用）。「直近の予約・開催」の予約とは別枠で、予約の件数・概要カード・売上には含めない。
+   * 取得失敗・未設定・権限なしは「0件」ではなく理由を表示する。0件と書くのは取得成功のときだけ。
+   */
+  var SLOT_STATE_TEXT = {
+    not_configured: '運営枠の読取先が未設定です。',
+    no_access: '運営枠のカレンダーを開けません（見つからない、またはアクセス権がありません）。',
+    auth_required: '運営枠の読み取り承認が済んでいません（所有者本人で専用URLを開き直して承認してください）。',
+    read_failed: '運営枠の取得に失敗しました。'
+  };
+  function renderInternalSlots(res, ctx) {
+    var s = res && res.slots;
+    if (!s || s.phase === 'idle') return '';
+    var head = '<h2 class="sec">運営枠（閲覧専用）</h2>';
+    if (s.phase === 'loading') return head + '<div class="banner loading" role="status">運営枠を取得中…</div>';
+    var tail = '運営枠が0件という意味ではありません。';
+    if (s.phase === 'error') return head + '<div class="banner err">' + esc(s.error && s.error.message || '運営枠の取得に失敗しました。') + tail + '</div>';
+    if (s.data.state !== 'ready') return head + '<div class="banner err">' + esc(SLOT_STATE_TEXT[s.data.state] || SLOT_STATE_TEXT.read_failed) + tail + '</div>';
+    var nowMs = typeof ctx.nowMs === 'number' ? ctx.nowMs : Date.now();
+    var list = (s.data.slots || []).filter(function (x) {
+      return x.date >= ctx.range.from && x.date <= ctx.range.to && (ctx.service === 'all' || x.service === ctx.service) && Date.parse(x.endAt) > nowMs;
+    });
+    var html = head;
+    if (s.data.invalid > 0) html += '<div class="banner stale">種類・場所のタグを読めない運営枠が ' + esc(s.data.invalid) + ' 件あり、表示していません。</div>';
+    if (!list.length) return html + '<div class="banner">表示月にこれからの運営枠はありません（取得は正常に完了しています）。</div>';
+    html += '<ul class="cards">' + list.slice(0, 3).map(function (x) {
+      var end = endText(x.startAt, x.endAt);
+      return '<li><div class="card slot"><div class="top"><span class="tag slot">運営枠</span><span class="tag">' + esc(x.typeLabel) + '</span><span class="tag">' + esc(x.placeLabel) + '</span></div>' +
+        '<div class="when">' + esc(dayLabel(x.date)) + ' ' + esc(clock(x.startAt) || '') + (end ? '〜' + esc(end) : '') + '</div><div>' + esc(x.title) + '</div></div></li>';
+    }).join('') + '</ul>';
+    return html + '<p class="note">表示月の運営枠 ' + esc(list.length) + ' 件' + (list.length > 3 ? '（開始が早い3件を表示）' : '') + '。予約の件数・概要カードには含みません。</p>';
+  }
+
   /* 画面全体（#home-view の中身）。res / tasks は各コントローラーの state。ctx: { service, range }。 */
   function renderHome(res, tasks, ctx) {
     var rs = resStatus(res, { from: ctx.range.from, to: ctx.range.to, service: ctx.service });
@@ -234,6 +267,7 @@
     html += '<h2 class="sec">概要</h2><ul class="kpis">' + buildCards(rs, ts).map(renderCard).join('') + '</ul>';
     html += renderChips(ctx.service);
     html += renderUpcoming(rs, res);
+    html += renderInternalSlots(res, ctx);
     return html;
   }
 
@@ -348,5 +382,5 @@
 
   return { esc: esc, jstMonth: jstMonth, monthRange: monthRange, addMonths: addMonths, monthOptions: monthOptions, todayText: todayText,
     selectPriority: selectPriority, selectUpcoming: selectUpcoming, resStatus: resStatus, taskStatus: taskStatus, buildCards: buildCards,
-    renderHome: renderHome, renderCard: renderCard, renderStamp: renderStamp, mount: mount, SERVICE_CHIPS: SERVICE_CHIPS };
+    renderHome: renderHome, renderInternalSlots: renderInternalSlots, renderCard: renderCard, renderStamp: renderStamp, mount: mount, SERVICE_CHIPS: SERVICE_CHIPS };
 });
