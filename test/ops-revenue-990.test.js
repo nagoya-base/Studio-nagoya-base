@@ -30,9 +30,9 @@ var SB = load();
 
 function jst(y, m, d, hh, mm) { return new Date(Date.UTC(y, m - 1, d, hh - 9, mm)); }
 var CARD = 'オンラインクレジットカード';
-var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name', 'paymentMethod', 'refundDecision', 'refundAmount', 'feePaidAmount', 'feeRefundedAmount', 'feeSettlementState'];
+var HEADER = ['bookingId', 'date', 'startAt', 'endAt', 'brand', 'status', 'paymentStatus', 'priceAmount', 'priceOverrideAmount', 'priceOverrideAt', 'name', 'paymentMethod', 'refundDecision', 'refundAmount', 'feePaidAmount', 'feeRefundedAmount', 'feeSettlementState', 'stripeAmount'];
 function booking(id, over) {
-  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME', paymentMethod: CARD, refundDecision: '', refundAmount: '', feePaidAmount: '', feeRefundedAmount: '', feeSettlementState: '' }, over || {});
+  var b = Object.assign({ bookingId: id, date: '2026-11-10', startAt: jst(2026, 11, 10, 10, 0), endAt: jst(2026, 11, 10, 12, 0), brand: 'snb', status: 'CONFIRMED', paymentStatus: 'paid', priceAmount: 10000, priceOverrideAmount: '', priceOverrideAt: '', name: 'SECRET-NAME', paymentMethod: CARD, refundDecision: '', refundAmount: '', feePaidAmount: '', feeRefundedAmount: '', feeSettlementState: '', stripeAmount: '' }, over || {});
   return HEADER.map(function (h) { return b[h]; });
 }
 function ledger(rows) { return { values: [HEADER].concat(rows) }; }
@@ -408,4 +408,28 @@ test('P2(Codex): 精算の記録（feePaidAmount）がある現地払いは、pa
   assert.strictEqual(t.onsiteUnconfirmed, 5000);
   assert.strictEqual(t.onsiteUnconfirmedCount, 1);
   assert.strictEqual(t.settlementPendingCount, 1);
+});
+
+/* ---------- タケル再レビュー(#992) 要判断1: 精算未了時の当初カード入金 ---------- */
+test('当初のカード入金は stripeAmount（Webhook検証済み）で証明し、精算の記録が無くても丸ごと落とさない。追加分は二重算入しない', function () {
+  var res = call([
+    booking('C1', { priceAmount: 6000, priceOverrideAmount: 10000, priceOverrideAt: jst(2026, 11, 9, 9, 0), feeSettlementState: 'PENDING_CHARGE', stripeAmount: 6000 }),  /* 記録なし・追加請求待ち → 当初の6,000だけ */
+    booking('C2', { priceAmount: 6000, priceOverrideAmount: 10000, priceOverrideAt: jst(2026, 11, 9, 9, 0), feeSettlementState: 'PENDING_CHARGE', stripeAmount: 6000, feePaidAmount: 10000 }), /* 累計10,000（当初を含む）→ 10,000 */
+    booking('C3', { priceAmount: 6000, priceOverrideAmount: 10000, priceOverrideAt: jst(2026, 11, 9, 9, 0), feeSettlementState: 'PENDING_CHARGE', stripeAmount: 6000, feePaidAmount: 4000 }),  /* 4,000＜当初6,000：追加分だけか累計か判別不能 → 集計しない */
+    booking('C4', { priceAmount: 6000, feeSettlementState: 'PENDING_REFUND', stripeAmount: 6000, feeRefundedAmount: 2000 }),                                                              /* 返金の記録だけ → 差引確定不可 */
+    booking('C5', { paymentMethod: '現地払い（現金）', paymentStatus: 'not_started', priceAmount: 4000, feePaidAmount: 1000, feeSettlementState: 'PENDING_CHARGE' })                      /* 現地払いはstripeAmountなし。記録の1,000だけ */
+  ]);
+  var t = res.revenue.totals;
+  assert.strictEqual(t.actual, 6000 + 10000 + 0 + 0 + 1000);
+  assert.strictEqual(t.receiptUnresolvedCount, 1, 'C3');
+  assert.strictEqual(t.settlementPendingCount, 4, 'C1・C2（PENDING）・C4・C5');
+  assert.ok(res.revenue.partial.reasons.indexOf('RECEIPT_UNRESOLVED') !== -1);
+});
+
+test('画面: 受領済みの可能性があるが集計不可の件数と理由を表示する', function () {
+  var d = resp();
+  d.revenue.totals.receiptUnresolvedCount = 2;
+  d.revenue.partial = { isPartial: true, reasons: ['SNBC_NOT_CONNECTED', 'RECEIPT_UNRESOLVED'] };
+  var html = R.renderRevenue(stateOf(d));
+  assert.ok(/受領済みの可能性があるが集計不可/.test(html) && /2件/.test(html) && /二重算入を避ける/.test(html));
 });

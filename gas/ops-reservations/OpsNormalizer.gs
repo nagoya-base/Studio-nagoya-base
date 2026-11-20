@@ -23,6 +23,8 @@ var OpsNormalizer = (function () {
     'refundDecision', 'refundAmount',
     /* 日程変更・人数変更の精算（実際に入出金を確認した累計額と精算状態）。実受領額の照合に使い、一覧・詳細の応答には出さない。 */
     'feePaidAmount', 'feeRefundedAmount', 'feeSettlementState',
+    /* カード決済のWebhook検証済み請求額（決済成功時に台帳のスナップショットと一致した額）。当初のカード入金の根拠。集計専用。 */
+    'stripeAmount',
     /* メール送信記録（Issue #967）。読み取り専用。来場案内メール・確定メールの「送信記録」であり、SwitchBot個別鍵の発行を意味しない。 */
     'accessGuideSentAt', 'confirmedMailSentAt',
     /* 個別鍵の確認済み最終状態の保存値（Issue #971）。内部用（OpsKeyFinal が検証する）。画面へは検証済みの射影だけを返し、生の値は返さない。 */
@@ -180,6 +182,7 @@ var OpsNormalizer = (function () {
       feePaidAmount: numberOrNull_(get('feePaidAmount')),
       feeRefundedAmount: numberOrNull_(get('feeRefundedAmount')),
       feeSettlementState: text_(get('feeSettlementState'), 20),
+      stripeAmount: numberOrNull_(get('stripeAmount')),
       planCode: text_(get('planCode'), 40),
       effectivePriceAmount: price,
       priceOverridden: overridden,

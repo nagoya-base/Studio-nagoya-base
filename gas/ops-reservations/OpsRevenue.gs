@@ -43,7 +43,7 @@ var OpsRevenue = (function () {
   }
   function emptyMonth_() {
     var studio = {};
-    STUDIO_SERVICES.forEach(function (s) { studio[s] = { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, actualCount: 0, retained: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, settlementPendingCount: 0 }; });
+    STUDIO_SERVICES.forEach(function (s) { studio[s] = { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, actualCount: 0, retained: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, settlementPendingCount: 0, receiptUnresolvedCount: 0 }; });
     return { studio: studio, options: { actual: 0, scheduled: 0 }, members: { actual: 0 } };
   }
 
@@ -72,16 +72,29 @@ var OpsRevenue = (function () {
    *   （feePaidAmount－feeRefundedAmount）だけを受領額とする。記録が無ければ受領額は不明（null）。いずれも差額は未確定。
    * - 精算済み・記録あり: 記録された入出金の累計を受領額とする。
    * - 精算の関与なし（通常の予約）: 料金を受領額とする。
-   * 戻り値: { amount: 受領額|null, pending: 精算未了か, involved: 日程/人数変更の精算が関与しているか }
+   * 当初のカード入金は stripeAmount（決済成功時にWebhookで台帳のスナップショットと照合済みの額）で証明する。
+   * 戻り値: { amount: 受領額|null, pending: 精算未了か, involved: 日程/人数変更の精算が関与しているか, hasRecord, unresolved: 判別不能（集計しない） }
    */
   function receiptBasis_(r, price) {
     var state = String(r.feeSettlementState || '').trim();
     var paid = num_(r.feePaidAmount), refunded = num_(r.feeRefundedAmount) || 0;
+    var stripe = num_(r.stripeAmount);
+    var isCard = String(r.paymentMethod || '').trim() === CARD_METHOD;
     var hasRecord = paid !== null && paid > 0;
     var pending = state !== '' && state !== 'SETTLED';
-    if (pending) return { amount: hasRecord ? Math.max(0, paid - refunded) : null, pending: true, involved: true, hasRecord: hasRecord };
-    if (hasRecord) return { amount: Math.max(0, paid - refunded), pending: false, involved: true, hasRecord: true };
-    return { amount: price, pending: false, involved: state !== '', hasRecord: false };
+    if (hasRecord) {
+      /* カードで、記録された累計が当初のカード入金（Webhook検証済みの stripeAmount）に満たないときは、
+         「追加分だけを記録した」のか「累計を記録した」のか台帳から判別できない。二重算入を避けるため集計しない（受領済みの可能性あり）。 */
+      if (isCard && stripe !== null && stripe > 0 && paid < stripe) return { amount: null, pending: pending, involved: true, hasRecord: true, unresolved: true };
+      return { amount: Math.max(0, paid - refunded), pending: pending, involved: true, hasRecord: true, unresolved: false };
+    }
+    if (pending) {
+      /* 精算の記録が無い。当初のカード入金だけは、決済成功時にWebhookで検証済みの請求額（stripeAmount）で証明できる。
+         追加請求・変更後の差額は未確定（実績に入れない）。返金の記録だけがあるときは差引を確定できない。 */
+      if (isCard && stripe !== null && stripe > 0 && refunded === 0) return { amount: stripe, pending: true, involved: true, hasRecord: false, unresolved: false };
+      return { amount: null, pending: true, involved: true, hasRecord: false, unresolved: false };
+    }
+    return { amount: price, pending: false, involved: state !== '', hasRecord: false, unresolved: false };
   }
 
   /* 決済状態の判定（Booking の正規化と同じ語彙）。未知の値は 'unknown'（支払い済みと断定しない）。 */
@@ -138,7 +151,8 @@ var OpsRevenue = (function () {
       if (passed && (kind === 'paid' || basis.hasRecord)) {
         /* 実績は「記録された受領額」。精算が未了（追加請求・返金待ち）で差額が未確定の分は実績に入れず、件数で示す。 */
         if (basis.amount !== null) { cell.actual += basis.amount; cell.actualCount++; }
-        if (basis.pending || basis.amount === null) cell.settlementPendingCount++;
+        if (basis.unresolved) cell.receiptUnresolvedCount++; /* 受領済みの可能性があるが集計不可 */
+        else if (basis.pending || basis.amount === null) cell.settlementPendingCount++;
       }
       else if (passed && !isCard) { cell.onsiteUnconfirmed += price; cell.onsiteUnconfirmedCount++; } /* 現地払い・受領記録なし（実績に入れない） */
       else if (passed) cell.unconfirmed += price; /* カード決済で利用済み・未入金（実績に入れない） */
@@ -179,10 +193,10 @@ var OpsRevenue = (function () {
     } else if (input.members) sources.members = { state: input.members.state || 'not_connected' };
 
     var out = months.map(function (mo, idx) {
-      var studioActual = 0, studioSched = 0, studioUnconf = 0, refundedCount = 0, unknownAmount = 0, onsite = 0, onsiteCount = 0, unsettled = 0, retained = 0, settlePending = 0;
+      var studioActual = 0, studioSched = 0, studioUnconf = 0, refundedCount = 0, unknownAmount = 0, onsite = 0, onsiteCount = 0, unsettled = 0, retained = 0, settlePending = 0, unresolvedReceipt = 0;
       STUDIO_SERVICES.forEach(function (s) {
         var c = mo.studio[s]; studioActual += c.actual; studioSched += c.scheduled; studioUnconf += c.unconfirmed; refundedCount += c.refundedCount; unknownAmount += c.unknownAmountCount;
-        onsite += c.onsiteUnconfirmed; onsiteCount += c.onsiteUnconfirmedCount; unsettled += c.refundUnsettledCount; retained += c.retained; settlePending += c.settlementPendingCount;
+        onsite += c.onsiteUnconfirmed; onsiteCount += c.onsiteUnconfirmedCount; unsettled += c.refundUnsettledCount; retained += c.retained; settlePending += c.settlementPendingCount; unresolvedReceipt += c.receiptUnresolvedCount;
       });
       var optActual = sources.options.state === 'ready' ? mo.options.actual : 0;
       var memActual = sources.members.state === 'ready' ? mo.members.actual : 0;
@@ -196,20 +210,21 @@ var OpsRevenue = (function () {
         unconfirmed: studioUnconf,
         refundedCount: refundedCount,
         unknownAmountCount: unknownAmount,
-        onsiteUnconfirmed: onsite, onsiteUnconfirmedCount: onsiteCount, refundUnsettledCount: unsettled, retained: retained, settlementPendingCount: settlePending
+        onsiteUnconfirmed: onsite, onsiteUnconfirmedCount: onsiteCount, refundUnsettledCount: unsettled, retained: retained, settlementPendingCount: settlePending, receiptUnresolvedCount: unresolvedReceipt
       };
     });
     var totals = out.reduce(function (t, m) {
       t.actual += m.actual; t.scheduled += m.scheduled; t.unconfirmed += m.unconfirmed; t.refundedCount += m.refundedCount; t.unknownAmountCount += m.unknownAmountCount;
-      t.onsiteUnconfirmed += m.onsiteUnconfirmed; t.onsiteUnconfirmedCount += m.onsiteUnconfirmedCount; t.refundUnsettledCount += m.refundUnsettledCount; t.retained += m.retained; t.settlementPendingCount += m.settlementPendingCount;
+      t.onsiteUnconfirmed += m.onsiteUnconfirmed; t.onsiteUnconfirmedCount += m.onsiteUnconfirmedCount; t.refundUnsettledCount += m.refundUnsettledCount; t.retained += m.retained; t.settlementPendingCount += m.settlementPendingCount; t.receiptUnresolvedCount += m.receiptUnresolvedCount;
       return t;
-    }, { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, retained: 0, settlementPendingCount: 0 });
+    }, { actual: 0, scheduled: 0, unconfirmed: 0, refundedCount: 0, unknownAmountCount: 0, onsiteUnconfirmed: 0, onsiteUnconfirmedCount: 0, refundUnsettledCount: 0, retained: 0, settlementPendingCount: 0, receiptUnresolvedCount: 0 });
     /* 実績は「接続済み・確認済み額の部分計」。全体年商として確定できない理由を固定コードで返す（SNBC未接続は現状常に該当）。 */
     var partialReasons = [];
     if (sources.snbc.state !== 'ready') partialReasons.push('SNBC_NOT_CONNECTED');
     if (totals.onsiteUnconfirmedCount > 0) partialReasons.push('ONSITE_PAYMENT_UNCONFIRMED');
     if (totals.refundUnsettledCount > 0) partialReasons.push('REFUND_UNSETTLED');
     if (totals.settlementPendingCount > 0) partialReasons.push('SETTLEMENT_PENDING');
+    if (totals.receiptUnresolvedCount > 0) partialReasons.push('RECEIPT_UNRESOLVED');
     if (totals.unknownAmountCount > 0) partialReasons.push('AMOUNT_UNKNOWN');
     if (sources.members.state !== 'ready') partialReasons.push('MEMBERS_UNAVAILABLE');
     if (sources.options.state !== 'ready') partialReasons.push('OPTIONS_UNAVAILABLE');
@@ -242,7 +257,7 @@ var OpsRevenue = (function () {
       partial: { isPartial: partialReasons.length > 0, reasons: partialReasons },
       months: out,
       totals: { actual: totals.actual, scheduled: totals.scheduled, unconfirmed: totals.unconfirmed, refundedCount: totals.refundedCount, unknownAmountCount: totals.unknownAmountCount,
-        onsiteUnconfirmed: totals.onsiteUnconfirmed, onsiteUnconfirmedCount: totals.onsiteUnconfirmedCount, refundUnsettledCount: totals.refundUnsettledCount, retained: totals.retained, settlementPendingCount: totals.settlementPendingCount,
+        onsiteUnconfirmed: totals.onsiteUnconfirmed, onsiteUnconfirmedCount: totals.onsiteUnconfirmedCount, refundUnsettledCount: totals.refundUnsettledCount, retained: totals.retained, settlementPendingCount: totals.settlementPendingCount, receiptUnresolvedCount: totals.receiptUnresolvedCount,
         studioByService: byService, options: optionsTotal, members: membersTotal },
       goals: goals,
       forecast: forecast,
