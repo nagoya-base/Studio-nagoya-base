@@ -3746,6 +3746,16 @@ function internalSlotOptions_(pairs) {
   return pairs.map(function (p) { return '<option value="' + escapeHtml(p[0]) + '">' + escapeHtml(p[1]) + '</option>'; }).join('');
 }
 
+/* 開始・終了は00分/30分だけの選択肢（type=time は端末により15/45分も選べるため使わない。Issue #1004）。 */
+function internalSlotTimeOptions_() {
+  var html = '<option value="">--:--</option>';
+  for (var h = 0; h < 24; h++) {
+    var hh = (h < 10 ? '0' : '') + h;
+    html += '<option value="' + hh + ':00">' + hh + ':00</option><option value="' + hh + ':30">' + hh + ':30</option>';
+  }
+  return html;
+}
+
 function internalSlotField_(id) { return document.getElementById('internal-slot-' + id); }
 
 function internalSlotFormValues_() {
@@ -3804,8 +3814,12 @@ function internalSlotStartEdit_(slot) {
   internalSlotField_('place').value = slot.place;
   internalSlotField_('title').value = slot.title;
   internalSlotField_('date').value = slot.date;
+  /* 既存の15/45分枠は候補にないので未選択（--:--）になる。黙って別の時刻で更新せず、選び直しを求める。 */
   internalSlotField_('start').value = slot.startTime;
   internalSlotField_('end').value = slot.endTime;
+  if (!internalSlotField_('start').value || !internalSlotField_('end').value) {
+    alert('この枠は00分/30分以外の時刻です。保存するには開始・終了を00分か30分から選び直してください。');
+  }
   internalSlotField_('memo').value = slot.memo;
   internalSlotField_('submit').textContent = '更新';
   internalSlotField_('cancel-edit').classList.remove('hidden');
@@ -3829,7 +3843,7 @@ function internalSlotSubmit_() {
   var values = internalSlotFormValues_();
   var id = internalSlotUi_.editingId;
   /* 端末によっては自由入力できるため、送信前にも確認する（正はサーバー側の検証）。 */
-  if (!/:(00|30)$/.test(values.startTime) || !/:(00|30)$/.test(values.endTime)) { alert('開始・終了は00分か30分で入力してください。'); return; }
+  if (!/^\d\d:(00|30)$/.test(values.startTime) || !/^\d\d:(00|30)$/.test(values.endTime)) { alert('開始・終了を00分か30分の候補から選んでください。'); return; }
   btn.disabled = true;
   var done = function (r) {
     btn.disabled = false;
@@ -3857,11 +3871,11 @@ function initInternalSlotUi_() {
     '<select id="internal-slot-place">' + internalSlotOptions_(INTERNAL_SLOT_PLACES_) + '</select> ' +
     '<input id="internal-slot-title" type="text" maxlength="60" placeholder="件名"> ' +
     '<input id="internal-slot-date" type="date"> ' +
-    '<input id="internal-slot-start" type="time" step="1800"> 〜 <input id="internal-slot-end" type="time" step="1800"> ' +
+    '<select id="internal-slot-start">' + internalSlotTimeOptions_() + '</select> 〜 <select id="internal-slot-end">' + internalSlotTimeOptions_() + '</select> ' +
     '<textarea id="internal-slot-memo" maxlength="500" placeholder="メモ（任意）"></textarea> ' +
     '<button type="button" id="internal-slot-submit">登録</button> ' +
     '<button type="button" id="internal-slot-cancel-edit" class="hidden">編集をやめる</button>' +
-    '<div class="internal-slot-note">一般予約と同じ時間は登録できません。決済・鍵・顧客メールはありません。</div>' +
+    '<div class="internal-slot-note">開始・終了は00分/30分のみ。一般予約と同じ時間は登録できません。決済・鍵・顧客メールはありません。</div>' +
     '</div><div id="internal-slot-list"></div>';
   main.insertBefore(panel, statusLine);
   internalSlotUi_.panel = panel;
