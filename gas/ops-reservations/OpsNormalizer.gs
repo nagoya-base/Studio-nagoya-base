@@ -256,9 +256,24 @@ var OpsNormalizer = (function () {
     return ERROR_REASONS[code] || WARNING_REASONS[code] || code;
   }
 
+  /*
+   * テスト予約（Issue #996）。Booking Admin（#929・admin/booking/booking-admin.js の isTestBooking_）と同一の
+   * 氏名の完全一致（前後trim済み）。大小文字は区別し、部分一致・メールでの判定はしない。
+   */
+  var TEST_BOOKING_NAMES = ['テスト', 'TEST', 'Test', '主', 'ぬし', 'ETST'];
+  function isTestBooking(rec) {
+    return !!rec && typeof rec.name === 'string' && TEST_BOOKING_NAMES.indexOf(rec.name.trim()) !== -1;
+  }
+  /* アタル（Issue #996）。氏名が「アタル」に完全一致する予約だけ。売上集計からのみ除外し、一覧には残す。 */
+  function isAtaruBooking(rec) {
+    return !!rec && typeof rec.name === 'string' && rec.name.trim() === 'アタル';
+  }
+
   return {
     ALLOWED_COLUMNS: ALLOWED_COLUMNS,
     REQUIRED_COLUMNS: REQUIRED_COLUMNS,
+    isTestBooking: isTestBooking,
+    isAtaruBooking: isAtaruBooking,
     normalize: normalize,
     reasonText: reasonText
   };
