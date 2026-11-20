@@ -138,3 +138,28 @@ test('変更の直前に別の予約が割り込んだら、時間もメタデ�
   assert.strictEqual(ev.getTitle(), '[運営 SNBCイベント] SNBC定例');
   assert.strictEqual(ev.getStartTime().getTime(), at(DATE, '13:00').getTime());
 });
+
+test('通知メールが失敗しても保存・取消は成功し、notifyFailedで知らせる。作成途中のタグ付け失敗では占有イベントを残さない', function () {
+  var t = setup(OWNER);
+  var now = at(futureJstDate(0), '19:00');
+  t.s.MailApp.sendEmail = function () { throw new Error('mail down'); };
+  var r = t.s.InternalSlots.create(input({ date: futureJstDate(1) }), now);
+  assert.strictEqual(r.success, true);
+  assert.strictEqual(r.notifyFailed, true);
+  assert.strictEqual(r.slot.reminded, false, '未送信のまま（定時リマインドの対象に残る）');
+  var c = t.s.InternalSlots.cancel(r.slot.id, now);
+  assert.strictEqual(c.success, true);
+  assert.strictEqual(c.notifyFailed, true);
+
+  var t2 = setup(OWNER);
+  var realCreate = t2.s.CalendarApp.getCalendarById;
+  t2.s.CalendarApp.getCalendarById = function (id) {
+    var cal = realCreate(id);
+    var create = cal.createEvent;
+    cal.createEvent = function (a, b, c2) { var ev = create(a, b, c2); ev.setTag = function () { throw new Error('tag failed'); }; return ev; };
+    return cal;
+  };
+  var failed = t2.s.InternalSlots.create(input(), now);
+  assert.strictEqual(failed.error.code, 'SAVE_FAILED');
+  assert.ok(t2.calendar.events.every(function (e) { return e.isDeleted(); }), 'タグのない占有イベントを残さない');
+});

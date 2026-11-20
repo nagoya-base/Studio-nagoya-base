@@ -150,7 +150,12 @@ var InternalSlots = (function () {
       if (i > 0) lines.push('');
       lines = lines.concat(slotLines_(slot));
     });
-    return BookingAdminAlerts.sendNotice(subject, lines).sent === true;
+    /* 通知の失敗・例外は保存/取消の成否に影響させない（呼び出し側は notifyFailed で画面に知らせる）。 */
+    try {
+      return BookingAdminAlerts.sendNotice(subject, lines).sent === true;
+    } catch (e) {
+      return false;
+    }
   }
 
   /* 前日18時の通常リマインドを過ぎている枠（当日分、または前日18時以降に登録した翌日分）か。 */
@@ -162,7 +167,10 @@ var InternalSlots = (function () {
     return false;
   }
 
-  function markReminded_(event, now) { event.setTag(TAG_REMINDED_, now.toISOString()); }
+  /* 送信済みの印。付けられなくても保存結果は成功のまま（最悪、前日通知が重複するだけ）。 */
+  function markReminded_(event, now) {
+    try { event.setTag(TAG_REMINDED_, now.toISOString()); return true; } catch (e) { return false; }
+  }
 
   /* 一覧（今日以降）。日付→開始の順。 */
   function list(now) {
@@ -188,8 +196,14 @@ var InternalSlots = (function () {
       var endAt = CalendarRepository.parseDateTime(v.date, v.endTime, timezone);
       if (findConflict_(calendar, startAt, endAt, null)) return err_('SLOT_CONFLICT', 'その時間帯は予約済みか、すでに枠が入っています。');
       var event = calendar.createEvent(eventTitle_(v.type, v.title), startAt, endAt);
-      event.setTag(TAG_FLAG_, '1');
-      applyFields_(event, v);
+      try {
+        event.setTag(TAG_FLAG_, '1');
+        applyFields_(event, v);
+      } catch (tagError) {
+        /* タグのない占有イベントを残さない（一覧から編集・取消できなくなるため）。 */
+        try { event.deleteEvent(); } catch (cleanupError) { Logger.log('InternalSlots: 作成途中のイベントを削除できませんでした。'); }
+        return err_('SAVE_FAILED', '運営枠を保存できませんでした。もう一度お試しください。');
+      }
       /* 作成直後に再照会（公開Web Appとはロックを共有できないため）。割り込まれていたら自分の枠を戻す。 */
       if (findConflict_(calendar, startAt, endAt, event.getId())) {
         event.deleteEvent();
@@ -197,11 +211,13 @@ var InternalSlots = (function () {
       }
       var slot = toSlot_(event, timezone);
       var notified = false;
+      var notifyFailed = false;
       if (reminderWindowPassed_(v.date, now, timezone)) {
         notified = notify_('【運営枠】登録しました（' + slot.date + '）', [slot], '運営枠を登録しました。直前のため、すぐにお知らせします。');
-        if (notified) { markReminded_(event, now); slot.reminded = true; }
+        notifyFailed = !notified;
+        if (notified && markReminded_(event, now)) slot.reminded = true;
       }
-      return { success: true, slot: slot, notified: notified };
+      return { success: true, slot: slot, notified: notified, notifyFailed: notifyFailed };
     });
   }
 
@@ -228,13 +244,18 @@ var InternalSlots = (function () {
         return err_('SLOT_CONFLICT', '変更の直前に別の予約が入りました。元の時間に戻しました。');
       }
       /* 件名・種別などは再照会に成功してから反映する（失敗時に元の枠を一部だけ変えない）。 */
-      applyFields_(event, v);
+      try {
+        applyFields_(event, v);
+      } catch (applyError) {
+        if (timeChanged) { try { event.setTime(oldStart, oldEnd); } catch (revertError) { /* 戻せない場合は一覧で確認できる */ } }
+        return err_('SAVE_FAILED', '運営枠を変更できませんでした。もう一度お試しください。');
+      }
       /* 日時が変わったら通知状態を戻し、最終の日時で改めて前日リマインドの対象にする。 */
-      if (timeChanged) event.deleteTag(TAG_REMINDED_);
+      if (timeChanged) { try { event.deleteTag(TAG_REMINDED_); } catch (tagError) { /* 前日通知が重複するだけ */ } }
       var slot = toSlot_(event, timezone);
       var notified = notify_('【運営枠】変更しました（' + slot.date + '）', [slot], '運営枠を変更しました。');
-      if (notified && reminderWindowPassed_(v.date, now, timezone)) { markReminded_(event, now); slot.reminded = true; }
-      return { success: true, slot: slot, notified: notified };
+      if (notified && reminderWindowPassed_(v.date, now, timezone) && markReminded_(event, now)) slot.reminded = true;
+      return { success: true, slot: slot, notified: notified, notifyFailed: !notified };
     });
   }
 
@@ -246,7 +267,7 @@ var InternalSlots = (function () {
       var slot = toSlot_(event, timezone);
       event.deleteEvent();
       var notified = notify_('【運営枠】取り消しました（' + slot.date + '）', [slot], '運営枠を取り消しました。空き枠に戻っています。');
-      return { success: true, notified: notified };
+      return { success: true, notified: notified, notifyFailed: !notified };
     });
   }
 

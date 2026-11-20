@@ -3817,6 +3817,7 @@ function internalSlotCancel_(slot) {
   google.script.run
     .withSuccessHandler(function (r) {
       if (!r || !r.success) alert('取り消せませんでした: ' + (r && r.error && r.error.message));
+      else if (r.notifyFailed) alert('取り消しました。ただし運営者宛の通知メールを送れませんでした。');
       loadInternalSlots_();
     })
     .withFailureHandler(function (e) { alert('取消でエラーが発生しました: ' + (e && e.message ? e.message : e)); loadInternalSlots_(); })
@@ -3833,6 +3834,7 @@ function internalSlotSubmit_() {
     if (!r || !r.success) { alert((id ? '更新' : '登録') + 'できませんでした: ' + (r && r.error && r.error.message)); return; }
     internalSlotResetForm_();
     loadInternalSlots_();
+    if (r.notifyFailed) alert('保存しました。ただし運営者宛の通知メールを送れませんでした。');
   };
   var fail = function (e) { btn.disabled = false; alert('エラーが発生しました: ' + (e && e.message ? e.message : e)); };
   var run = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
