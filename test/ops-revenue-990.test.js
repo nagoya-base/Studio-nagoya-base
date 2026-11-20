@@ -494,3 +494,21 @@ test('画面: 取消計上月不明の件数を表示し、月の行は利用日
   assert.ok(/取消計上月不明/.test(html) && /2件/.test(html) && /利用予定月へは振り替えず/.test(html));
   assert.ok(/利用日ベース/.test(html) && /取消確定月/.test(html));
 });
+
+test('レビュー対応(#992): 取消・失効に紐づく支払い済みオプションは実績に入れず、件数で警告する', function () {
+  var extra = { options: { state: 'ready', rows: [
+    { bookingId: 'OC', amountJpy: 3000, paymentStatus: 'PAID', status: 'CONFIRMED' },
+    { bookingId: 'OE', amountJpy: 2000, paymentStatus: 'PAID', status: 'CONFIRMED' },
+    { bookingId: 'OK', amountJpy: 1000, paymentStatus: 'PAID', status: 'CONFIRMED' }
+  ] }, members: { state: 'ready', periods: [], months: [], refunds: [] } };
+  var res = call([
+    booking('OC', { status: 'CANCELLED', paymentStatus: 'not_started', priceAmount: 5000 }),
+    booking('OE', { status: 'EXPIRED', priceAmount: 5000 }),
+    booking('OK', { priceAmount: 5000 })
+  ], extra);
+  assert.strictEqual(res.revenue.totals.options, 1000);
+  assert.strictEqual(res.revenue.notes.optionInactiveCount, 2);
+  assert.ok(res.revenue.partial.reasons.indexOf('OPTION_ON_INACTIVE_BOOKING') !== -1);
+  var d = resp(); d.revenue.notes.optionInactiveCount = 2;
+  assert.ok(/取消・失効・仮予約に紐づく支払い済みオプションが 2 件/.test(R.renderRevenue(stateOf(d))));
+});

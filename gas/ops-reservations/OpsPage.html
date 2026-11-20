@@ -1346,6 +1346,7 @@
     AMOUNT_UNKNOWN: '金額が読めない確定予約がある',
     MEMBERS_UNAVAILABLE: '会員費を取得できていない',
     OPTIONS_UNAVAILABLE: '有料オプションを取得できていない',
+    OPTION_ON_INACTIVE_BOOKING: '取消・失効・仮予約に紐づく支払い済みオプションがある（返金判断が必要。実績に入れていません）',
     OPTION_UNMATCHED: '紐づく予約のない支払い済みオプションがある'
   };
   function partialText(reasons) {
@@ -1383,6 +1384,7 @@
     if (n1) incomplete.push(n1); if (n2) incomplete.push(n2);
     if (d.excludedRows > 0) incomplete.push('台帳の ' + d.excludedRows + ' 件が読み込めず一覧から除外されています');
     if (rev.notes && rev.notes.optionUnmatchedCount > 0) incomplete.push('紐づく予約が見つからない支払い済みオプションが ' + rev.notes.optionUnmatchedCount + ' 件あります（金額に含めていません）');
+    if (rev.notes && rev.notes.optionInactiveCount > 0) incomplete.push('取消・失効・仮予約に紐づく支払い済みオプションが ' + rev.notes.optionInactiveCount + ' 件あります（返金判断が必要。金額に含めていません）');
     if (t.unknownAmountCount > 0) incomplete.push('金額が読めない確定予約が ' + t.unknownAmountCount + ' 件あります（金額に含めていません）');
     if (incomplete.length) html += '<div class="banner stale" role="alert"><strong>実績は不完全です：</strong>' + incomplete.map(esc).join(' ／ ') + '</div>';
 

@@ -116,7 +116,7 @@ var OpsRevenue = (function () {
     var months = [];
     for (var i = 0; i < 12; i++) months.push(emptyMonth_());
     var usage = {}; /* bookingId → { passed, ym }（オプションの紐づけ用） */
-    var notes = { pendingCount: 0, bookingsOutOfYear: 0, optionUnmatchedCount: 0, cancelMonthUnknownCount: 0 };
+    var notes = { pendingCount: 0, bookingsOutOfYear: 0, optionUnmatchedCount: 0, cancelMonthUnknownCount: 0, optionInactiveCount: 0 };
 
     (input.bookings || []).forEach(function (r) {
       var ym = ymOfDate_(r.date);
@@ -182,7 +182,9 @@ var OpsRevenue = (function () {
         if (amount === null || amount === 0) return;
         var u = usage[String(o.bookingId || '').trim()];
         if (!u) { notes.optionUnmatchedCount++; return; }
-        if (u.ym.y !== year || u.status !== 'CONFIRMED') return;
+        if (u.ym.y !== year) return;
+        /* 取消・失効・仮予約に紐づく支払い済みオプション（返金判断が必要な状態）。実績に入れず、件数で警告する。 */
+        if (u.status !== 'CONFIRMED') { notes.optionInactiveCount++; return; }
         var cell = months[u.ym.m - 1].options;
         if (u.passed) cell.actual += amount; else cell.scheduled += amount;
       });
@@ -243,6 +245,7 @@ var OpsRevenue = (function () {
     if (sources.members.state !== 'ready') partialReasons.push('MEMBERS_UNAVAILABLE');
     if (sources.options.state !== 'ready') partialReasons.push('OPTIONS_UNAVAILABLE');
     if (notes.optionUnmatchedCount > 0) partialReasons.push('OPTION_UNMATCHED');
+    if (notes.optionInactiveCount > 0) partialReasons.push('OPTION_ON_INACTIVE_BOOKING');
     var byService = {};
     STUDIO_SERVICES.forEach(function (s) { byService[s] = out.reduce(function (a, m) { return a + m.studio[s].actual; }, 0); });
     var optionsTotal = out.reduce(function (a, m) { return a + (sources.options.state === 'ready' ? m.options.actual : 0); }, 0);
@@ -275,7 +278,7 @@ var OpsRevenue = (function () {
         studioByService: byService, options: optionsTotal, members: membersTotal },
       goals: goals,
       forecast: forecast,
-      notes: { pendingCount: notes.pendingCount, optionUnmatchedCount: notes.optionUnmatchedCount }
+      notes: { pendingCount: notes.pendingCount, optionUnmatchedCount: notes.optionUnmatchedCount, optionInactiveCount: notes.optionInactiveCount }
     };
   }
 
