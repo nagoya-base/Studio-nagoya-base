@@ -362,36 +362,83 @@ test('変異テスト: 日付列・数値列・タイムゾーンの取り違え
 
 /* ---------- 4. fail-closed: 型を証明できなければ必ずレガシーへ ---------- */
 
-test('fail-closedアダプタ: 実データ同様Dateを含む台帳は常に拒否され、レガシーへ最大1回だけ戻り、出力は従来と完全一致する', function () {
+test('fail-closedアダプタ: 実データ同様の台帳（Date・料金などの数値を含む）は常に拒否され、レガシーへ最大1回だけ戻り、出力は従来と完全一致する', function () {
   var world = createWorld();
   var legacy = normalize(world.sandbox.getAdminBookings());
   var api = responseApi(world, 'SERIAL');
   var candidate = runCandidate(world, api, model.failClosedSerialAdapter);
-  assert.deepStrictEqual({ source: candidate.plan.source, reason: candidate.plan.reason }, { source: 'legacy', reason: 'AMBIGUOUS_NUMERIC_IN_DATE_COLUMN' });
+  assert.deepStrictEqual({ source: candidate.plan.source, reason: candidate.plan.reason }, { source: 'legacy', reason: 'AMBIGUOUS_NUMERIC_CELL' });
   assert.strictEqual(api.calls.n, 1, 'batchGetは1回だけ（再試行しない）');
   assert.strictEqual(candidate.counters.injectedReads || 0, 0);
   assert.deepStrictEqual(normalize(candidate.result), legacy);
 });
 
-test('fail-closedアダプタ: batchGetが採用できるのは「日付セルが1つも無い」台帳だけ（Dateが日常的に存在する本番では実質採用されない）', function () {
-  /* 全日付を文字列で保存した台帳（ISO風文字列）。この場合のみ SERIAL 応答は getValues() と一致する。 */
-  var textOnly = makeBookingRecords().map(function (r) {
-    ['createdAt', 'startAt', 'endAt', 'confirmedMailSentAt', 'priceOverrideAt', 'largePartyApprovedAt', 'largePartyPaymentDueAt', 'date'].forEach(function (k) {
-      if (model.isDate(r[k])) r[k] = r[k].toISOString();
-    });
-    return r;
-  });
-  var world = createWorld({ bookings: textOnly });
-  /* OptionOrdersのDate(createdAt等)は別途存在するため、Bookings側だけを検証対象にする。 */
-  var plan = model.planLedgerRead(responseApi(world, 'SERIAL'), 'ss1', model.failClosedSerialAdapter, {});
-  assert.strictEqual(plan.source, 'legacy', 'OptionOrders側にDateがあるため全体は拒否');
-  var bookingsOnly = model.failClosedSerialAdapter(model.renderValues(world.grid('Bookings'), renderOpts('SERIAL')));
-  assert.strictEqual(bookingsOnly.ok, true);
-  assert.deepStrictEqual(describeGrid(bookingsOnly.values), describeGrid(world.grid('Bookings')));
+test('回帰(レビュー指摘): 日付名ではない列（name・余剰列）にあるDateも、列名に依存せず拒否される（日付名の列は文字列）', function () {
+  var grid = [['createdAt', 'name', 'extraColumn'], ['2026-11-20', jst(2026, 11, 20), jst(2026, 11, 21, 9, 30)]];
+  var response = model.renderValues(grid, renderOpts('SERIAL'));
+  assert.strictEqual(typeof response[1][1], 'number', 'SERIAL表現ではDateが数値になる（元がDateかは区別できない）');
+  /* 旧実装（日付名の列だけを見る）はこの応答を ok:true で通してしまった。ヘッダーに依存しない現実装は拒否する。 */
+  assert.deepStrictEqual(model.failClosedSerialAdapter(response), { ok: false, reason: 'AMBIGUOUS_NUMERIC_CELL' });
+  /* 日付名の列だけを見る旧方式をここで再現し、誤受理することを確認（反証）。 */
+  var headerNameOnly = response[1].some(function (v, c) { return typeof v === 'number' && /^(date|.*At)$/.test(response[0][c]); });
+  assert.strictEqual(headerNameOnly, false, '列名ベースの判定ではDateを見逃す');
+});
+
+test('fail-closedアダプタ: 成功するのは数値セルが1つも無い台帳だけ。Dateや料金を含む実運用の台帳は実質すべてレガシーになる', function () {
+  var textOnlyGrid = [['bookingId', 'createdAt', 'name', 'flag'], ['A1', '2026-11-20 09:00', '架空 太郎', true], ['A2', '', '', false]];
+  var ok = model.failClosedSerialAdapter(model.renderValues(textOnlyGrid, renderOpts('SERIAL')));
+  assert.strictEqual(ok.ok, true);
+  assert.deepStrictEqual(describeGrid(ok.values), describeGrid(textOnlyGrid));
 
   var typical = createWorld();
-  var typicalResult = model.failClosedSerialAdapter(model.renderValues(typical.grid('Bookings'), renderOpts('SERIAL')));
-  assert.strictEqual(typicalResult.ok, false, '通常のDate混在台帳は拒否');
+  ['Bookings', 'OptionOrders'].forEach(function (name) {
+    var result = model.failClosedSerialAdapter(model.renderValues(typical.grid(name), renderOpts('SERIAL')));
+    assert.strictEqual(result.ok, false, name + 'は数値（料金・金額・Date）を含むため拒否');
+  });
+  /* 数値セルを1つだけ足せば、Dateが無くても拒否される（数値がDateかどうか区別できない）。 */
+  assert.strictEqual(model.failClosedSerialAdapter(model.renderValues(textOnlyGrid.concat([['A3', '', '', 1]]), renderOpts('SERIAL'))).ok, false);
+});
+
+test('例外注入(レビュー指摘): 型変換アダプタが例外・不正な戻り値を返してもレガシーへ戻り、成功扱いにしない（固定reasonのみ）', function () {
+  var world = createWorld();
+  var legacy = normalize(world.sandbox.getAdminBookings());
+  var secret = 'SECRET-PERSONAL-VALUE';
+  var cases = {
+    '例外': { adapter: function () { throw new Error(secret); }, reason: 'ADAPTER_EXCEPTION' },
+    'TypeError（未対応構造）': { adapter: function () { return null.x; }, reason: 'ADAPTER_EXCEPTION' },
+    'ok:falseでreasonが非固定文字列': { adapter: function () { return { ok: false, reason: 'free text ' + secret }; }, reason: 'ADAPTER_REFUSED' },
+    'ok:trueでvaluesが壊れている': { adapter: function () { return { ok: true, values: 'x' }; }, reason: 'ADAPTER_MALFORMED_RESULT' },
+    'ok:trueでvaluesの行が配列でない': { adapter: function () { return { ok: true, values: [1, 2] }; }, reason: 'ADAPTER_MALFORMED_RESULT' },
+    '未返却(undefined)': { adapter: function () {}, reason: 'ADAPTER_REFUSED' }
+  };
+  Object.keys(cases).forEach(function (name) {
+    var api = responseApi(world, 'SERIAL');
+    var candidate = runCandidate(world, api, cases[name].adapter);
+    assert.deepStrictEqual(candidate.plan, { source: 'legacy', reason: cases[name].reason }, name);
+    assert.ok(JSON.stringify(candidate.plan).indexOf(secret) === -1, '生の値・エラーメッセージを残さない: ' + name);
+    assert.strictEqual(api.calls.n, 1, name + ': batchGetは1回だけ');
+    assert.deepStrictEqual(normalize(candidate.result), legacy, name + ': 出力は従来と一致');
+  });
+});
+
+test('例外注入: アダプタ例外でレガシーへ戻っても、OptionOrdersだけ失敗→UNKNOWN／Bookings失敗→全体エラーの境界は従来どおり', function () {
+  var boom = function () { throw new Error('adapter failure'); };
+  var failOptions = function (w) { w.byId.ss1.OptionOrders.getDataRange = function () { return { getValues: function () { throw new Error('read failed'); } }; }; };
+  var legacyWorld = createWorld(); failOptions(legacyWorld);
+  var legacy = normalize(legacyWorld.sandbox.getAdminBookings());
+  var world = createWorld(); failOptions(world);
+  var candidate = runCandidate(world, responseApi(world, 'SERIAL'), boom);
+  assert.strictEqual(candidate.plan.reason, 'ADAPTER_EXCEPTION');
+  assert.deepStrictEqual(normalize(candidate.result), legacy);
+  assert.ok(candidate.result.bookings.some(function (b) { return b.optionSummary && b.optionSummary.state === 'UNKNOWN'; }));
+
+  var failBookings = function (w) { w.byId.ss1.Bookings.getDataRange = function () { return { getValues: function () { throw new Error('bookings read failed'); } }; }; };
+  var lw = createWorld(); failBookings(lw);
+  var legacyError; try { lw.sandbox.getAdminBookings(); } catch (e) { legacyError = e; }
+  var w2 = createWorld(); failBookings(w2);
+  var candidateError; try { runCandidate(w2, responseApi(w2, 'SERIAL'), boom); } catch (e) { candidateError = e; }
+  assert.ok(legacyError && candidateError);
+  assert.strictEqual(candidateError.message, legacyError.message);
 });
 
 /* ---------- 5. 型メタデータ付き代替（spreadsheets.get + fields） ---------- */
@@ -556,7 +603,7 @@ test('既存の初期化副作用: 空シート（valuesなし）はUNINITIALIZE
   assert.strictEqual(world.byId.ss1.OptionOrders._rows.length, 1);
 });
 
-test('構造互換: ヘッダーのみ・余剰列・途中空行・末尾空セル省略でも、getValues()と同じrowNumber・件数・値になる（Date非含有の台帳）', function () {
+test('構造互換（形状のみ。型互換の証明ではない）: ヘッダーのみ・余剰列・途中空行・末尾空セル省略でも、getValues()と同じrowNumber・件数・形になる', function () {
   function mutate(sheets) {
     var rows = sheets.Bookings._rows;
     rows.length = 6; /* ヘッダー＋5件に縮める */
@@ -578,8 +625,11 @@ test('構造互換: ヘッダーのみ・余剰列・途中空行・末尾空セ
   ];
   var response = model.buildValueRanges(spec, renderOpts('SERIAL'));
   assert.ok(response.valueRanges[0].values.some(function (r) { return r.length === 0; }), '途中空行は [] として返る');
-  var plan = model.planLedgerRead({ batchGet: function () { return response; } }, 'ss1', model.failClosedSerialAdapter, {});
-  assert.strictEqual(plan.source, 'batchGet', 'Dateなし台帳だけはfail-closedでも成功する');
+  /* 形（矩形化・行番号・途中空行・余剰列）だけを確認するため、値の変換は行わない形状専用アダプタを使う。
+     この台帳は数値セルを含むため、fail-closedアダプタは拒否する（上のテスト参照）。型の互換性の証明ではない。 */
+  var shapeOnly = function (values) { return { ok: true, values: model.rectangularize(values) }; };
+  var plan = model.planLedgerRead({ batchGet: function () { return response; } }, 'ss1', shapeOnly, {});
+  assert.strictEqual(plan.source, 'batchGet');
   assert.deepStrictEqual(describeGrid(plan.bookings), describeGrid(world.grid('Bookings')), '矩形化後の形・rowNumberの対応が一致');
   assert.strictEqual(plan.bookings.length, world.grid('Bookings').length);
 });

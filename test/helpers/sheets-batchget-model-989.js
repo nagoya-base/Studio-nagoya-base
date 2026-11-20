@@ -210,17 +210,17 @@ function naiveFormattedAdapter(values, opts) {
 
 /*
  * fail-closed アダプタ（UNFORMATTED_VALUE + SERIAL_NUMBER）。
- * 日付らしい列に数値があれば「Dateなのか、ただの数値なのか区別できない」ため変換せず拒否する。
- * 日付列に数値がなく、かつ書式なし文字列だけなら、getValues() と同じ値（文字列）をそのまま再現できる。
- * 実データではDateセルは必ず数値で返るので、Dateを含む台帳は常に拒否される＝レガシーへフォールバックする。
+ * SERIAL表現ではDateセルが「ただの数値」と区別できないため、**列名・ヘッダーに依存せず**、データ行の数値セルを
+ * 1つでも見つけたら変換せず拒否する（Dateが日付名ではない列・余剰列にあっても成功扱いにしない）。
+ * 数値が1つも無く（文字列・真偽値・空セルだけ）、書式なし文字列がそのまま getValues() と同じ値になる台帳だけ成功する。
+ * 実運用の Bookings／OptionOrders は料金・人数・Dateなどの数値セルを日常的に含むため、実質的に常にレガシーへ戻る。
  */
 function failClosedSerialAdapter(values) {
   var rows = rectangularize(values || []);
   if (!rows.length) return refusal('EMPTY_SHEET');
-  var headers = rows[0];
   for (var r = 1; r < rows.length; r++) {
     for (var c = 0; c < rows[r].length; c++) {
-      if (typeof rows[r][c] === 'number' && isDateLikeHeader(headers[c])) return refusal('AMBIGUOUS_NUMERIC_IN_DATE_COLUMN');
+      if (typeof rows[r][c] === 'number') return refusal('AMBIGUOUS_NUMERIC_CELL');
     }
   }
   return { ok: true, values: rows };
@@ -293,8 +293,15 @@ function planLedgerRead(api, spreadsheetId, adapter, adapterOpts) {
     /* `values` が無い＝空シート。従来の ensure*（シート作成・ヘッダー追記）が必要なためレガシーへ。 */
     if (!Array.isArray(vr.values) || vr.values.length === 0) return { source: 'legacy', reason: 'UNINITIALIZED_SHEET' };
     if (!vr.values.every(Array.isArray)) return { source: 'legacy', reason: 'MALFORMED_ROWS' };
-    var result = adapter(vr.values, adapterOpts || {});
-    if (!result || result.ok !== true) return { source: 'legacy', reason: (result && result.reason) || 'ADAPTER_REFUSED' };
+    var result;
+    try {
+      result = adapter(vr.values, adapterOpts || {});
+    } catch (adapterError) {
+      /* 例外の内容（ユーザー値を含み得る）は保持せず、固定コードだけ返す。 */
+      return { source: 'legacy', reason: 'ADAPTER_EXCEPTION' };
+    }
+    if (!result || result.ok !== true) return { source: 'legacy', reason: typeof (result && result.reason) === 'string' && /^[A-Z_]{1,40}$/.test(result.reason) ? result.reason : 'ADAPTER_REFUSED' };
+    if (!Array.isArray(result.values) || !result.values.every(Array.isArray)) return { source: 'legacy', reason: 'ADAPTER_MALFORMED_RESULT' };
     decoded.push(result.values);
   }
   return { source: 'batchGet', bookings: decoded[0], options: decoded[1] };
