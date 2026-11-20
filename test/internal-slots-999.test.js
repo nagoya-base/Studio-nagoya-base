@@ -6,6 +6,8 @@
 
 var test = require('node:test');
 var assert = require('node:assert');
+var fs = require('node:fs');
+var path = require('node:path');
 var loadBookingSandbox = require('./helpers/gas-sandbox').loadBookingSandbox;
 var stubs = require('./helpers/gas-stubs');
 var futureJstDate = require('./helpers/future-date').futureJstDate;
@@ -176,4 +178,16 @@ test('開始・終了は00/30分のみ許可し、15/45分はサーバーで拒�
     assert.strictEqual(t.s.adminInternalSlotUpdate(ok.slot.id, input({ startTime: '13:00', endTime: bad })).error.code, 'INVALID_TIME');
   });
   assert.strictEqual(t.calendar.events.length, 1);
+});
+
+test('運営枠の開始・終了UIは時（24件のselect）＋分（00/30だけの2択メニュー）で、type=timeを使わない（#1004）', function () {
+  var src = fs.readFileSync(path.join(__dirname, '..', 'admin', 'booking', 'booking-admin.js'), 'utf8');
+  assert.ok(!/internal-slot-(start|end)" type="time"/.test(src));
+  var hourFn = src.match(/function internalSlotHourOptions_\(\) \{[\s\S]*?\n\}\n/)[0];
+  var htmlFn = src.match(/function internalSlotTimeHtml_\(id\) \{[\s\S]*?\n\}\n/)[0];
+  var html = new Function(hourFn + htmlFn + 'return internalSlotTimeHtml_("start");')();
+  assert.strictEqual((html.match(/<select/g) || []).length, 1, '分はネイティブselect（回転ピッカー）にしない');
+  assert.strictEqual((html.match(/<option value="\d\d">/g) || []).length, 24);
+  var mins = (html.match(/role="option" data-min="(\d\d)"/g) || []).map(function (x) { return x.match(/\d\d/)[0]; });
+  assert.deepStrictEqual(mins, ['00', '30']);
 });
