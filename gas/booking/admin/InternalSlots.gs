@@ -32,6 +32,7 @@ var InternalSlots = (function () {
 
   var TYPES_ = {
     snbc_event: 'SNBCイベント',
+    kinbaku_event: '緊縛イベント',
     setup: '設営・片付け',
     cleaning: '清掃・メンテナンス',
     other: 'その他の運営確保枠'
@@ -54,7 +55,7 @@ var InternalSlots = (function () {
     return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
   }
 
-  /* 入力検証（サーバー側が正）。開始・終了は同日内の15分刻み（公開予約の開始刻みと同じ）。 */
+  /* 入力検証（サーバー側が正）。開始・終了は同日内の00分/30分のみ（Issue #1004。運営枠だけの規則で、公開予約の刻みは変えない）。 */
   function validate_(input, timezone) {
     input = input || {};
     var type = String(input.type || '');
@@ -74,7 +75,8 @@ var InternalSlots = (function () {
     if (!TIME_PATTERN_.test(startTime) || !TIME_PATTERN_.test(endTime)) return err_('INVALID_TIME', '開始・終了時刻が正しくありません。');
     var s = toMinutes_(startTime);
     var e = toMinutes_(endTime);
-    if (s % 15 !== 0 || e % 15 !== 0) return err_('INVALID_TIME', '時刻は15分刻みで指定してください。');
+    /* 登録・編集とも同じ検証を通る。過去の15分刻み枠は、日時を保存し直すときだけ30分刻みへ直してもらう（既存Calendarイベントは触らない）。 */
+    if (s % 30 !== 0 || e % 30 !== 0) return err_('INVALID_TIME', '開始・終了は00分か30分で指定してください（例 13:00 / 13:30）。');
     if (e <= s) return err_('INVALID_TIME', '終了は開始より後にしてください。');
     return { success: true, value: { type: type, place: place, title: title, memo: memo, date: date, startTime: startTime, endTime: endTime } };
   }
