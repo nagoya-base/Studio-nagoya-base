@@ -51,6 +51,7 @@
     var opts = options || {};
     var state = { phase: 'idle', items: [], storeReady: true, skipped: 0, today: null, error: null, open: false, form: emptySnbcForm(), editing: null, saving: false, message: null, formError: null, confirmDelete: false };
     var seq = 0;
+    var formGen = 0; /* フォームの世代。保存・削除の完了時に、送信したフォームがまだ現在のものか判定する。 */
     function emit() { if (onChange) onChange(state); }
     function load() {
       var mine = ++seq;
@@ -66,7 +67,7 @@
         state.phase = 'error'; state.error = { message: 'SNBC記録の取得に失敗しました（通信エラー）。' }; emit();
       });
     }
-    function resetForm() { state.form = emptySnbcForm(); state.editing = null; state.confirmDelete = false; state.formError = null; }
+    function resetForm() { formGen++; state.form = emptySnbcForm(); state.editing = null; state.confirmDelete = false; state.formError = null; }
     function setOpen(on) {
       state.open = !!on; state.message = null;
       if (state.open) { resetForm(); load(); } else resetForm();
@@ -75,8 +76,10 @@
     function toggle() { setOpen(!state.open); }
     function setField(k, v) { if (Object.prototype.hasOwnProperty.call(state.form, k)) state.form[k] = v; }
     function edit(id) {
+      if (state.saving) return; /* 保存・削除の進行中は編集対象を切り替えない（完了通知が別イベントの入力を消さないように） */
       var it = state.items.filter(function (x) { return x.eventId === id; })[0];
       if (!it) return;
+      formGen++;
       state.editing = { eventId: it.eventId, revision: it.revision }; state.confirmDelete = false; state.message = null; state.formError = null;
       state.form = { eventId: it.eventId, eventDate: it.eventDate, title: it.title, receivedJpy: String(it.receivedJpy), refundedJpy: String(it.refundedJpy), paidCount: it.paidCount === '' ? '' : String(it.paidCount), directCostJpy: it.directCostJpy === '' ? '' : String(it.directCostJpy) };
       emit();
@@ -98,12 +101,15 @@
       var built = buildInput();
       if (built.error) { state.formError = built.error; emit(); return; }
       state.saving = true; state.formError = null; state.message = null; emit();
+      var gen = formGen;
       api.snbcSave({ input: built.input, expectedRevision: state.editing ? state.editing.revision : null }, function (res) {
         state.saving = false;
         if (res && res.ok) {
+          if (gen !== formGen) { load(); if (opts.onSaved) opts.onSaved(); emit(); return; } /* 別のフォームに切り替わっていれば触れない */
           state.message = res.replayed ? '保存済みです（同じ内容の再送でした。金額は重ねていません）。' : '保存しました。年商に反映します。';
           resetForm(); load(); if (opts.onSaved) opts.onSaved();
         } else {
+          if (gen !== formGen) { emit(); return; }
           var err = res && res.error ? res.error : { message: UNCONFIRMED };
           state.formError = withHint(err);
           if (err.code === 'CONFLICT') { state.message = null; load(); }
@@ -117,8 +123,10 @@
     function confirmDelete() {
       if (state.saving || !state.editing) return;
       state.saving = true; state.formError = null; emit();
+      var gen = formGen;
       api.snbcDelete({ eventId: state.editing.eventId, expectedRevision: state.editing.revision }, function (res) {
         state.saving = false;
+        if (gen !== formGen) { if (res && res.ok) { load(); if (opts.onSaved) opts.onSaved(); } emit(); return; }
         if (res && res.ok) { state.message = '削除しました。年商から外れます。'; resetForm(); load(); if (opts.onSaved) opts.onSaved(); }
         else { state.confirmDelete = false; state.formError = withHint(res && res.error ? res.error : { message: UNCONFIRMED }); if (res && res.error && res.error.code === 'CONFLICT') load(); emit(); }
       }, function () { state.saving = false; state.confirmDelete = false; state.formError = UNCONFIRMED; emit(); });
@@ -156,7 +164,7 @@
     html += '<h3 class="sub3">登録済みのイベント（開催日・差引売上）</h3>';
     if (!state.items.length && state.phase === 'ready') html += '<div class="banner">登録済みのイベントはありません（0円という意味ではなく、未入力です）。</div>';
     else html += '<ul class="rbreak">' + state.items.map(function (it) {
-      return '<li><button type="button" class="mrow" data-rec="snbc-edit" data-id="' + esc(it.eventId) + '" style="grid-template-columns:6.5em 1fr auto"><span>' + esc(it.eventDate) + '</span><span>' + esc(it.title) + '</span><b>' + esc(yen(it.net)) + '</b></button></li>';
+      return '<li><button type="button" class="mrow" data-rec="snbc-edit"' + (state.saving ? ' disabled' : '') + ' data-id="' + esc(it.eventId) + '" style="grid-template-columns:6.5em 1fr auto"><span>' + esc(it.eventDate) + '</span><span>' + esc(it.title) + '</span><b>' + esc(yen(it.net)) + '</b></button></li>';
     }).join('') + '</ul><p class="note">行を押すと訂正・削除できます。差引売上＝受領−返金（開催月に計上）。</p>';
     return html;
   }

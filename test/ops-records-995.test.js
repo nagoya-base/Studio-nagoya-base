@@ -205,3 +205,19 @@ test('レビュー修正: 取消後の返金なし再確認は金額が同じで
   assert.strictEqual(saved, 1, '年商の再取得だけは妨げない');
   assert.strictEqual(ctl.state.saving, false, 'B はそのまま保存できる');
 });
+
+test('レビュー修正: SNBC 保存中は編集切替できず、完了通知が別フォームの入力を消さない', function () {
+  var Rc = require('../_ops-app/frontend/records-client.js');
+  var pending = [];
+  var api = {
+    snbcList: function (ok) { ok({ ok: true, storeReady: true, items: [{ eventId: 'E-aaaaaaaa1111', eventDate: '2026-11-01', title: 'A', receivedJpy: 1000, refundedJpy: 0, paidCount: '', directCostJpy: '', revision: 1, net: 1000 }, { eventId: 'E-bbbbbbbb2222', eventDate: '2026-11-02', title: 'B', receivedJpy: 2000, refundedJpy: 0, paidCount: '', directCostJpy: '', revision: 1, net: 2000 }], skippedRows: 0, todayJst: '2026-11-20' }); },
+    snbcSave: function (p, ok) { pending.push(ok); }, snbcDelete: function () {}
+  };
+  var ctl = Rc.createSnbcController(api, function () {}, {});
+  ctl.setOpen(true); ctl.edit('E-aaaaaaaa1111'); ctl.setField('receivedJpy', '1500'); ctl.save();
+  ctl.edit('E-bbbbbbbb2222'); /* 保存中は切り替わらない */
+  assert.strictEqual(ctl.state.editing.eventId, 'E-aaaaaaaa1111');
+  pending[0]({ ok: true, record: { revision: 2 } });
+  assert.strictEqual(ctl.state.saving, false);
+  assert.strictEqual(ctl.state.message, '保存しました。年商に反映します。');
+});
