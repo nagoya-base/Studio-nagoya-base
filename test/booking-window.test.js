@@ -380,6 +380,7 @@ test('preflightBookingAdminEmails: OK/NGと件数のみ返し、実値を戻り�
    { email: ADMIN_EMAIL, props: { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL + ',bad' } }].forEach(function (c) {
     assert.strictEqual(run(c.email, c.props).r.ok, false);
   });
+  assert.strictEqual(run(ADMIN_EMAIL, { BOOKING_ADMIN_EMAILS: 'Admin@Example.com, admin@example.com' }).r.ok, true, '重複・大小違いは有効な設定');
   var out = JSON.stringify(ok) + JSON.stringify(run('other@example.com', { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL }));
   assert.strictEqual(out.indexOf('example.com'), -1, '実値（メール）を出力しない');
 });

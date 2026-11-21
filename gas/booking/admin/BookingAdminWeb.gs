@@ -1033,7 +1033,8 @@ function preflightBookingAdminEmails() {
     var list = BookingConfig.getBookingAdminEmails();
     result.propertyPresent = pieces.length > 0;
     result.entryCount = list.length;
-    result.allEntriesValid = pieces.length > 0 && pieces.length === list.length;
+    var emailShape = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
+    result.allEntriesValid = pieces.length > 0 && pieces.every(function (x) { return emailShape.test(x); });
     var me = '';
     try { me = Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || ''; } catch (e) { me = ''; }
     result.executorListed = BookingWindow.isAdminEmail(me, list);
