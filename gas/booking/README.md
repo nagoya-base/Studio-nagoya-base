@@ -8304,7 +8304,15 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### 管理者（Script Properties `BOOKING_ADMIN_EMAILS`）
 
-`nagoyabase2023@gmail.com` は `Config.gs` の既定allowlistに持つ。`BOOKING_ADMIN_EMAILS`（カンマ区切り）で追加できる。メール取得不可・未設定・不一致はfail-closed。
+認可の正本は **Booking Admin GASプロジェクト** のScript Properties `BOOKING_ADMIN_EMAILS`（カンマ区切り）のみ（Issue #1010）。コード内に既定の管理者アドレスは持たない。未設定・空・不正のみ・Properties取得失敗・メール取得不可・不一致はすべてfail-closed（管理者特権なし。既定管理者へのフォールバックなし）。入力は小文字化・trim・重複除去・メール形式検証を行う。
+
+**本番切替手順（オーナー作業）**: ①Booking AdminプロジェクトのScript Propertiesに `BOOKING_ADMIN_EMAILS` が設定済みか、値を表示せずに確認する（未設定のままデプロイすると管理者機能が使えなくなるため、未設定なら更新を止める）→②テスト→③適用。実アドレスをIssue/PR/CIログ/テストデータへ転記しない。
+
+### GAS接続先URLの公開境界（Issue #1010）
+
+- 管理専用の内部接続先（`BOOKING_ADMIN_URL`）はScript Propertiesで管理する（現行仕様どおり。値はログ・公開ページへ出さない）。
+- 公開サイトの `scripts/booking-config.js` / `survey-config.js` / `feedback-config.js` の `BASE_URL` は、**ブラウザが公開GAS Web Appへ直接アクセスする通信先**であり、ネットワークタブで必ず利用者に見える。Script Propertiesへ移しても、公開画面へURLを返す方式や別設定ファイルへ移す方式でも**秘匿にはならない**。そのため非公開化は不可とし、現状のままGit管理する。URLは秘密鍵とみなさず、公開エンドポイント側の認可・入力検証・レート制限で守る。
+- フロント側URLのGit管理をやめる案は、設計妥当性・初期設定・接続断対策・運用複雑化の提案とオーナー承認が必要なため、本Issueでは置換しない。
 
 ## Issue #490: SNB MEMBERプレスタート（2026/10/26〜11/30）
 

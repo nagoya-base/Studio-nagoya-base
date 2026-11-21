@@ -31,7 +31,7 @@ var MEMBER_LAST = '2027-01-24'; /* +90日 */
 var MEMBER_OVER = '2027-01-25'; /* +91日 */
 var MEMBER_EMAIL = 'member@example.com';
 var PERMANENT_EMAIL = 'koishi.s@gmail.com';
-var ADMIN_EMAIL = 'nagoyabase2023@gmail.com';
+var ADMIN_EMAIL = 'admin@example.com'; /* テスト用ダミー。本番の実アドレスは置かない（Issue #1010） */
 
 function setup(opts) {
   var o = opts || {};
@@ -108,7 +108,7 @@ test('BookingWindow: 月またぎ・年またぎ・うるう日でも暦日で�
 
 test('BookingWindow: 管理者判定は認証済みメール×allowlistのみ。未設定・空・不一致はfail-closed', function () {
   var W = setup().sandbox.BookingWindow;
-  assert.strictEqual(W.isAdminEmail(' NagoyaBase2023@gmail.com ', [ADMIN_EMAIL]), true);
+  assert.strictEqual(W.isAdminEmail(' Admin@Example.com ', [ADMIN_EMAIL]), true);
   assert.strictEqual(W.isAdminEmail('', [ADMIN_EMAIL]), false);
   assert.strictEqual(W.isAdminEmail(null, [ADMIN_EMAIL]), false);
   assert.strictEqual(W.isAdminEmail(ADMIN_EMAIL, []), false);
@@ -343,10 +343,32 @@ test('管理者: Booking Admin側の認証済みGoogleアカウントがallowlis
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'gas', 'booking', 'admin', 'BookingAdminWeb.gs'), 'utf8'), ctx.sandbox);
     return vm.runInContext('isBookingAdminVerified_()', ctx.sandbox);
   }
-  assert.strictEqual(verified(ADMIN_EMAIL), true);
+  assert.strictEqual(verified(ADMIN_EMAIL, { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL }), true);
   assert.strictEqual(verified('Extra@Example.com', { BOOKING_ADMIN_EMAILS: 'extra@example.com' }), true);
   assert.strictEqual(verified('attacker@example.com'), false);
   assert.strictEqual(verified(''), false, 'メール取得不可はfail-closed');
+});
+
+test('管理者: BOOKING_ADMIN_EMAILSが未設定・空・不正のみ・取得失敗ならfail-closed（既定管理者へフォールバックしない）', function () {
+  var vm = require('node:vm');
+  [undefined, '', ' , ', 'not-an-email'].forEach(function (raw) {
+    var props = raw === undefined ? {} : { BOOKING_ADMIN_EMAILS: raw };
+    var ctx = setup({ properties: props });
+    assert.deepStrictEqual(JSON.parse(vm.runInContext('JSON.stringify(BookingConfig.getBookingAdminEmails())', ctx.sandbox)), []);
+    var c2 = adminCtx(ADMIN_EMAIL, props);
+    var r = c2.admin(payload({ date: farDate }));
+    assert.strictEqual(r.success, false);
+    assert.strictEqual(r.error.code, 'FORBIDDEN');
+  });
+  var broken = setup({});
+  broken.sandbox.PropertiesService = { getScriptProperties: function () { throw new Error('boom'); } };
+  assert.deepStrictEqual(JSON.parse(vm.runInContext('JSON.stringify(BookingConfig.getBookingAdminEmails())', broken.sandbox)), []);
+});
+
+test('管理者: BOOKING_ADMIN_EMAILSは正規化・重複除去され、不正要素は捨てられる', function () {
+  var vm = require('node:vm');
+  var ctx = setup({ properties: { BOOKING_ADMIN_EMAILS: ' A@Example.com, a@example.com ,bad, b@example.com ' } });
+  assert.deepStrictEqual(JSON.parse(vm.runInContext('JSON.stringify(BookingConfig.getBookingAdminEmails())', ctx.sandbox)), ['a@example.com', 'b@example.com']);
 });
 
 test('管理者: Session取得で例外が出てもfalse（fail-closed）', function () {
@@ -369,7 +391,10 @@ test('管理者・永久会員のメールアドレスを公開JS・公開HTML�
       var text = fs.readFileSync(p, 'utf8');
       var rel2 = path.relative(root, p);
       /* 公開Googleカレンダー埋め込みのsrc（Issue #480以前から公開済みのカレンダーID）は管理者allowlistではないため除外する。 */
-      var adminHit = text.indexOf(ADMIN_EMAIL) !== -1 && rel2 !== path.join('_includes', 'calendar_embed.html');
+      /* 旧管理者アドレスはSHA-256で照合する（テスト自体にも実アドレスを転記しない。Issue #1010）。 */
+      var adminHit = (text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []).some(function (m) {
+        return require('node:crypto').createHash('sha256').update(m.toLowerCase()).digest('hex') === 'a96cf80f14924081f61aa96d3600fb5f4d50ce6fbdc6691afc9fcc2f656e2a0d';
+      }) && rel2 !== path.join('_includes', 'calendar_embed.html');
       if (text.indexOf(PERMANENT_EMAIL) !== -1 || adminHit) offenders.push(rel2);
     })(base);
   });
@@ -404,8 +429,8 @@ function adminCtx(sessionEmail, properties) {
 
 var farDate = require('./helpers/future-date').futureJstDate(150); /* 90日を大きく超える（実行日に依存しない） */
 
-test('管理者: 認証済みnagoyabase2023@gmail.comは91日超の新規予約を作成できる（会員資格不要・台帳を照会しない）', function () {
-  var ctx = adminCtx(ADMIN_EMAIL);
+test('管理者: 認証済みallowlist内アカウントは91日超の新規予約を作成できる（会員資格不要・台帳を照会しない）', function () {
+  var ctx = adminCtx(ADMIN_EMAIL, { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL });
   var r = ctx.admin(payload({ date: farDate, email: 'guest@example.com' }));
   assert.strictEqual(r.success, true);
   var found = ctx.sandbox.SpreadsheetRepository.findRowByBookingId(r.bookingId);
@@ -434,7 +459,7 @@ test('管理者: 公開経路ではpayloadのメール・フラグ・第4引数�
 });
 
 test('管理者: 上限だけを解除し、重複予約・営業時間・過去日・オプション同時申込の既存制約は維持される', function () {
-  var ctx = adminCtx(ADMIN_EMAIL);
+  var ctx = adminCtx(ADMIN_EMAIL, { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL });
   assert.strictEqual(ctx.admin(payload({ date: farDate, startTime: '10:00' })).success, true);
   var dup = ctx.admin(payload({ date: farDate, startTime: '11:00', email: 'b@example.com' }));
   assert.strictEqual(dup.success, false);
