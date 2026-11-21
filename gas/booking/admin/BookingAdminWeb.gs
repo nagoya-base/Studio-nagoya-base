@@ -1016,14 +1016,14 @@ function isBookingAdminVerified_() {
 }
 
 /**
- * 本番切替前のpreflight（Issue #1010。読み取り専用）。Booking Adminプロジェクトのエディタから、
+ * 本番適用後の検証（Issue #1010。読み取り専用）。Booking Adminプロジェクトのエディタから、
  * オーナーが自分のGoogleアカウントで手動実行する。実値（メールアドレス）は戻り値・Loggerのどちらにも出さず、
  * OK/NGと件数だけを返す。書き込み・外部通信は行わない。
  *  - propertyPresent: BOOKING_ADMIN_EMAILS が設定され、空でない
  *  - allEntriesValid: すべての要素がメール形式（不正要素なし）
  *  - entryCount>=1:   有効な管理者が1件以上
  *  - executorListed:  実行者本人（Session.getActiveUser／getEffectiveUser）がallowlistに含まれる
- * ok=false の間は本番更新（clasp push／デプロイ）を行わない。
+ * 更新前はScript Propertiesをエディタで手動確認する（READMEの切替手順）。ok=false なら管理者機能が全拒否のため、プロパティを直して再実行する。
  */
 function preflightBookingAdminEmails() {
   var result = { ok: false, propertyPresent: false, allEntriesValid: false, entryCount: 0, executorListed: false };
