@@ -8304,7 +8304,23 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 ### 管理者（Script Properties `BOOKING_ADMIN_EMAILS`）
 
-`nagoyabase2023@gmail.com` は `Config.gs` の既定allowlistに持つ。`BOOKING_ADMIN_EMAILS`（カンマ区切り）で追加できる。メール取得不可・未設定・不一致はfail-closed。
+認可の正本は **Booking Admin GASプロジェクト** のScript Properties `BOOKING_ADMIN_EMAILS`（カンマ区切り）のみ（Issue #1010）。コード内に既定の管理者アドレスは持たない。未設定・空・不正のみ・Properties取得失敗・メール取得不可・不一致はすべてfail-closed（管理者特権なし。既定管理者へのフォールバックなし）。入力は小文字化・trim・重複除去・メール形式検証を行う。
+
+**本番切替手順（オーナー作業。既存workflow・Secrets・デプロイ設定は変更しない）**:
+1. **更新前（手動確認）**: 既存の本番Booking AdminのGASエディタ「プロジェクトの設定 → スクリプト プロパティ」で、(a) 設定先が**Booking Adminプロジェクト**であること（Booking Web App側ではない）、(b) キー `BOOKING_ADMIN_EMAILS` が登録済みであること、(c) 管理者本人のアドレスが含まれていることを、オーナーが目視確認する。実値はGitHub・PR・CIログに記載しない。1つでもNG（未設定・設定先違い・本人不在）なら、`booking-gas-production.yml` を承認・実行しない（未設定のまま更新すると管理者機能が全拒否になる）。
+2. **テスト→適用**: 現行workflow（`scripts/deploy-booking-gas-target.sh admin preflight` は資格情報・Deployment・manifest等の確認であり、`BOOKING_ADMIN_EMAILS` の設定値は検証しない。CI成功も設定値の存在を証明しない）をそのまま使う。
+3. **適用後の検証**: 配布後のAdminエディタで、下記 `preflightBookingAdminEmails` を実行し `ok:true` を確認する。`ok:false` の場合は管理者機能が使えない状態のため、Script Propertiesを直し、再実行して `ok:true` を確認する。
+4. 元のメールアドレスをIssue/PR/CIログ/テストデータへ転記しない。
+
+**preflight（読み取り専用・実値非表示。適用後の検証用）**: 本PRで新設した関数のため、配布後のBooking Adminプロジェクトのエディタで `preflightBookingAdminEmails` を実行者本人（オーナー）が手動実行する。戻り値・ログは `OK/NG` と `propertyPresent` / `allEntriesValid` / `entryCount` / `executorListed` の真偽・件数のみで、メールアドレスの実値は出さない。更新前の手動確認（手順1）が事前ゲートで、本関数はその後の検証である。本番プロパティ値はGitHub・CIからは検証できないため、運用ゲートはオーナーの確認で担保する。「更新前に新関数を実行可能にするため、pushとデプロイを分離する」等のworkflow変更は、オーナー承認が必要なため本PRでは行わない（必要なら別Issueで提案）。
+
+**今回の限界（公開残存箇所）**: 今回除去したのは `Config.gs` のallowlist固定値のみ。公開リポジトリには、(a) `_includes/calendar_embed.html` のGoogle Calendar埋め込みURL（公開カレンダーIDとして元々公開されているもの。IDの別化は予約連携へ影響するため本PRでは変更しない）、(b) 過去のGit履歴、が残る。旧ドキュメント中の実値は伏せ字にした。(a)の対応が必要なら別Issueで提案する。(b)は履歴の書き換え対象外（Public→Private化・履歴改変は本Issueのスコープ外）。
+
+### GAS接続先URLの公開境界（Issue #1010）
+
+- 管理専用の内部接続先（`BOOKING_ADMIN_URL`）はScript Propertiesで管理する（現行仕様どおり。値はログ・公開ページへ出さない）。
+- 公開サイトの `scripts/booking-config.js` / `survey-config.js` / `feedback-config.js` の `BASE_URL` は、**ブラウザが公開GAS Web Appへ直接アクセスする通信先**であり、ネットワークタブで必ず利用者に見える。Script Propertiesへ移しても、公開画面へURLを返す方式や別設定ファイルへ移す方式でも**秘匿にはならない**。そのため非公開化は不可とし、現状のままGit管理する。URLは秘密鍵とみなさず、公開エンドポイント側の認可・入力検証・レート制限で守る。
+- フロント側URLのGit管理をやめる案は、設計妥当性・初期設定・接続断対策・運用複雑化の提案とオーナー承認が必要なため、本Issueでは置換しない。
 
 ## Issue #490: SNB MEMBERプレスタート（2026/10/26〜11/30）
 

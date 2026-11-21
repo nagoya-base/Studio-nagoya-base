@@ -82,7 +82,7 @@ Issue #267 は「スペースマーケットと自社予約システムが、同
 - [x] `gas/booking/` がWeb Appとしてデプロイ済み（`Execute as: Me` / `Who has access: Anyone`）
   （Apps Scriptプロジェクト `studio_nagoya_base_booking` としてデプロイ。`/exec` URLへの実アクセスで動作確認済み）
 - [x] Script Propertiesの `CALENDAR_ID` がスペースマーケットと共用している実際のCalendar IDである
-  （`nagoyabase2023@gmail.com`。このCalendar上の実予定を占有判定していることを2-3で確認）
+  （運営用Googleアカウントのカレンダー。アドレスは伏せ字。このCalendar上の実予定を占有判定していることを2-3で確認）
 
 ### 2-2. 反映タイミング実測（最低3回）
 

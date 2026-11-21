@@ -478,8 +478,14 @@ var BookingConfig = (function () {
    */
   var DEFAULT_PERMANENT_MEMBER_EMAILS_ = ['koishi.s@gmail.com'];
 
+  /* カンマ区切り→小文字・trim・重複除去。メール形式でない要素は捨てる（空・不正入力は空配列に倒れる）。 */
   function parseEmailList_(raw) {
-    return String(raw || '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(function (s) { return s; });
+    var seen = {};
+    return String(raw || '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(function (s) {
+      if (!s || !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(s) || seen[s]) return false;
+      seen[s] = true;
+      return true;
+    });
   }
 
   function getPermanentMemberEmails() {
@@ -488,15 +494,18 @@ var BookingConfig = (function () {
   }
 
   /*
-   * Booking Admin（認証済みGoogleアカウント）の管理者メール。予約可能期間の上限を外せる唯一の経路。
-   * 既定値に、Script Properties BOOKING_ADMIN_EMAILS（カンマ区切り）を加える。
+   * Booking Admin（認証済みGoogleアカウント）の管理者メール。予約可能期間の上限を外せる唯一の経路（Issue #1010）。
+   * 正本は **Booking Admin GASプロジェクト** のScript Properties BOOKING_ADMIN_EMAILS（カンマ区切り）のみ。
+   * コード内に既定の管理者アドレスは持たない（Publicリポジトリへ実アドレスを置かない）。
+   * 未設定・空・不正のみ・取得失敗は空配列を返し、呼び出し側（BookingWindow.isAdminEmail）が管理者認可を拒否する（fail closed）。
    * 公開予約フォームの予約メールはここと照合しない（BookingWindow.isAdminEmailの注意参照）。
    */
-  var DEFAULT_BOOKING_ADMIN_EMAILS_ = ['nagoyabase2023@gmail.com'];
-
   function getBookingAdminEmails() {
-    var raw = PropertiesService.getScriptProperties().getProperty('BOOKING_ADMIN_EMAILS') || '';
-    return DEFAULT_BOOKING_ADMIN_EMAILS_.concat(parseEmailList_(raw));
+    try {
+      return parseEmailList_(PropertiesService.getScriptProperties().getProperty('BOOKING_ADMIN_EMAILS'));
+    } catch (e) {
+      return [];
+    }
   }
 
   return {
