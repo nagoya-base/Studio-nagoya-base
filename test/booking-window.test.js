@@ -365,6 +365,25 @@ test('管理者: BOOKING_ADMIN_EMAILSが未設定・空・不正のみ・取得�
   assert.deepStrictEqual(JSON.parse(vm.runInContext('JSON.stringify(BookingConfig.getBookingAdminEmails())', broken.sandbox)), []);
 });
 
+test('preflightBookingAdminEmails: OK/NGと件数のみ返し、実値を戻り値にもログにも出さない', function () {
+  function run(email, props) {
+    var ctx = adminCtx(email, props);
+    var logs = [];
+    ctx.sandbox.Logger = { log: function (m) { logs.push(String(m)); } };
+    var r = require('node:vm').runInContext('preflightBookingAdminEmails', ctx.sandbox)();
+    return { r: JSON.parse(JSON.stringify(r)), logs: logs };
+  }
+  var ok = run(ADMIN_EMAIL, { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL });
+  assert.strictEqual(ok.r.ok, true);
+  assert.strictEqual(ok.r.entryCount, 1);
+  [{ email: ADMIN_EMAIL, props: {} }, { email: 'other@example.com', props: { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL } },
+   { email: ADMIN_EMAIL, props: { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL + ',bad' } }].forEach(function (c) {
+    assert.strictEqual(run(c.email, c.props).r.ok, false);
+  });
+  var out = JSON.stringify(ok) + JSON.stringify(run('other@example.com', { BOOKING_ADMIN_EMAILS: ADMIN_EMAIL }));
+  assert.strictEqual(out.indexOf('example.com'), -1, '実値（メール）を出力しない');
+});
+
 test('管理者: BOOKING_ADMIN_EMAILSは正規化・重複除去され、不正要素は捨てられる', function () {
   var vm = require('node:vm');
   var ctx = setup({ properties: { BOOKING_ADMIN_EMAILS: ' A@Example.com, a@example.com ,bad, b@example.com ' } });

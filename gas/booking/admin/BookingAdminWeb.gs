@@ -1015,6 +1015,36 @@ function isBookingAdminVerified_() {
   }
 }
 
+/**
+ * 本番切替前のpreflight（Issue #1010。読み取り専用）。Booking Adminプロジェクトのエディタから、
+ * オーナーが自分のGoogleアカウントで手動実行する。実値（メールアドレス）は戻り値・Loggerのどちらにも出さず、
+ * OK/NGと件数だけを返す。書き込み・外部通信は行わない。
+ *  - propertyPresent: BOOKING_ADMIN_EMAILS が設定され、空でない
+ *  - allEntriesValid: すべての要素がメール形式（不正要素なし）
+ *  - entryCount>=1:   有効な管理者が1件以上
+ *  - executorListed:  実行者本人（Session.getActiveUser／getEffectiveUser）がallowlistに含まれる
+ * ok=false の間は本番更新（clasp push／デプロイ）を行わない。
+ */
+function preflightBookingAdminEmails() {
+  var result = { ok: false, propertyPresent: false, allEntriesValid: false, entryCount: 0, executorListed: false };
+  try {
+    var raw = String(PropertiesService.getScriptProperties().getProperty('BOOKING_ADMIN_EMAILS') || '');
+    var pieces = raw.split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+    var list = BookingConfig.getBookingAdminEmails();
+    result.propertyPresent = pieces.length > 0;
+    result.entryCount = list.length;
+    result.allEntriesValid = pieces.length > 0 && pieces.length === list.length;
+    var me = '';
+    try { me = Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || ''; } catch (e) { me = ''; }
+    result.executorListed = BookingWindow.isAdminEmail(me, list);
+    result.ok = result.propertyPresent && result.allEntriesValid && result.entryCount >= 1 && result.executorListed;
+  } catch (e) {
+    result.ok = false;
+  }
+  Logger.log('preflightBookingAdminEmails: ' + (result.ok ? 'OK' : 'NG') + ' ' + JSON.stringify(result));
+  return result;
+}
+
 /*
  * 管理者による新規予約作成（Issue #480）。予約可能期間の上限（一般30日／会員90日）を受けない唯一の作成経路。
  * Session.getActiveUser() × BOOKING_ADMIN_EMAILS で認証済みの管理者のときだけ、BookingWindow.TIER.ADMINを

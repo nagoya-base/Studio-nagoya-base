@@ -8308,6 +8308,10 @@ Issue #478を正本として実装した。**#469 / #472 の「Studio Xの会員
 
 **本番切替手順（オーナー作業）**: ①Booking AdminプロジェクトのScript Propertiesに `BOOKING_ADMIN_EMAILS` が設定済みか、値を表示せずに確認する（未設定のままデプロイすると管理者機能が使えなくなるため、未設定なら更新を止める）→②テスト→③適用。実アドレスをIssue/PR/CIログ/テストデータへ転記しない。
 
+**preflight（読み取り専用・実値非表示）**: Booking Adminプロジェクトのエディタで `preflightBookingAdminEmails` を実行者本人（オーナー）が手動実行する。戻り値・ログは `OK/NG` と `propertyPresent` / `allEntriesValid` / `entryCount` / `executorListed` の真偽・件数のみで、メールアドレスの実値は出さない。`ok:false` の間は本番更新（デプロイ）を行わない。本番プロパティ値はGitHub・CIからは検証できないため、運用ゲートはオーナーの実行結果確認で担保する（CIの自動ゲート化は本PRでは行わない。必要なら別Issueで提案）。
+
+**今回の限界（公開残存箇所）**: 今回除去したのは `Config.gs` のallowlist固定値のみ。公開リポジトリには、(a) `_includes/calendar_embed.html` のGoogle Calendar埋め込みURL（公開カレンダーIDとして元々公開されているもの。IDの別化は予約連携へ影響するため本PRでは変更しない）、(b) 過去のGit履歴、が残る。旧ドキュメント中の実値は伏せ字にした。(a)の対応が必要なら別Issueで提案する。(b)は履歴の書き換え対象外（Public→Private化・履歴改変は本Issueのスコープ外）。
+
 ### GAS接続先URLの公開境界（Issue #1010）
 
 - 管理専用の内部接続先（`BOOKING_ADMIN_URL`）はScript Propertiesで管理する（現行仕様どおり。値はログ・公開ページへ出さない）。

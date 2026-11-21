@@ -285,7 +285,9 @@ var EXCLUDED = {
   adminInternalSlotList: '運営枠の一覧（Calendarの読み取りのみ）',
   adminInternalSlotCreate: '運営枠の作成（Calendarのみ。台帳へ書かない）',
   adminInternalSlotUpdate: '運営枠の変更（Calendarのみ。台帳へ書かない）',
-  adminInternalSlotCancel: '運営枠の取消（Calendarのみ。台帳へ書かない）'
+  adminInternalSlotCancel: '運営枠の取消（Calendarのみ。台帳へ書かない）',
+  /* Issue #1010: 本番切替前のpreflight。Script Propertiesを読むだけで、シートへ書かず実値も出さない */
+  preflightBookingAdminEmails: '管理者allowlistのOK/NG診断（読み取りのみ。実値は出さない）'
 };
 
 test('構造: Booking Admin の公開関数は、すべて操作の表か除外の表（理由つき）のどちらかに分類されている。増えたらここで落ちる', function () {
